@@ -1,0 +1,12 @@
+[project]
+name = "orak-2025-starter-kit"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastmcp>=2.13.0.2",
+    "mcp>=1.20.0",
+    "requests>=2.32.5",
+    "rich>=14.2.0",
+]
