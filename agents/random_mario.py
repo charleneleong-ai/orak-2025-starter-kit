@@ -3,4 +3,4 @@ class RandomMarioAgent:
         pass
     
     def act(self, obs):
-        return "Level 0"
+        return "Jump Level : 3"
