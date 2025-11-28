@@ -137,6 +137,7 @@ The following steps outline the process from setting up this starter kit to appe
 When you are ready to submit your agent for official evaluation, use the same command as for local testing, but omit the `--local` flag:
 
 ```bash
+export AICROWD_API_TOKEN=`<your api key from https://www.aicrowd.com/participants/me>`
 uv run python run.py
 ```
 
