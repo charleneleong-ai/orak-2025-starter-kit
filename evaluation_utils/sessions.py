@@ -17,7 +17,7 @@ class Session:
         response = requests.post(
             f"{BASE_URL}/sessions",
             headers={"Authorization": f"Token {API_TOKEN}"},
-            json={"track": TwentyFourtyEightAgent.TRACK}
+            params={"track": TwentyFourtyEightAgent.TRACK}
         )
         if not response.ok:
             self.renderer.event(f"Failed to create session: {response.text}")
@@ -66,7 +66,7 @@ class Session:
         )
         return response.json()
     
-    def wait_for_start(self, poll_interval: float = 1.0, timeout: float = 300.0):
+    def wait_for_start(self, poll_interval: float = 1.0, timeout: float = 900.0):
         start = time.time()
         last_status = None
 
