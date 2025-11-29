@@ -44,7 +44,7 @@ class MCPGameServer:
         logger.info(f"config_path: {config_path}")
         self.mcp = mcp_server
         # Lock to serialize access to env (step/reset/cleanup) across tool calls
-        self._env_lock = threading.Lock()
+        # self._env_lock = threading.Lock()
         self.register_tools()
 
         # set env
@@ -81,12 +81,12 @@ class MCPGameServer:
 
     def load_current_obs(self) -> Tuple[str, dict]:
         logger.info("Loading current observation")
-        with self._env_lock:
-            if self.first_loading:
-                self.obs = self.env.initial_obs()
-                self.first_loading = False
-            obs_str, obs_image = self.obs.to_text(), getattr(self.obs, 'image', None)
-            game_info = self.env.get_game_info()
+        # with self._env_lock:
+        if self.first_loading:
+            self.obs = self.env.initial_obs()
+            self.first_loading = False
+        obs_str, obs_image = self.obs.to_text(), getattr(self.obs, 'image', None)
+        game_info = self.env.get_game_info()
 
         # encode image to base64
         if obs_image is not None:
@@ -127,48 +127,48 @@ class MCPGameServer:
         """Cleanup previous environment and create a new one."""
         logger.info("Resetting environment: cleaning up previous instance...")
 
-        with self._env_lock:
-            old_env = self.env
+        # with self._env_lock:
+        old_env = self.env
+        new_obs = None
+        try:
+            new_obs = self.env.reset()
+        except Exception:
+            # Fall back to creating a completely new env instance
             new_obs = None
+
+        if new_obs is None:
             try:
-                new_obs = self.env.reset()
-            except Exception:
-                # Fall back to creating a completely new env instance
-                new_obs = None
+                new_env = EnvCreator(self.cfg).create()
+            except Exception as e:
+                logger.error(f"Failed to create new environment: {e}")
+                # Keep old (cleaned) env reference to avoid None; caller will see errors instead of hanging
+                return
 
-            if new_obs is None:
-                try:
-                    new_env = EnvCreator(self.cfg).create()
-                except Exception as e:
-                    logger.error(f"Failed to create new environment: {e}")
-                    # Keep old (cleaned) env reference to avoid None; caller will see errors instead of hanging
-                    return
+            self.env = new_env
+            self.first_loading = True
+            # Prime the first observation for the new env
+            logger.info("New environment created successfully.")
+            new_obs = self.env.initial_obs()
 
-                self.env = new_env
-                self.first_loading = True
-                # Prime the first observation for the new env
-                logger.info("New environment created successfully.")
-                new_obs = self.env.initial_obs()
+        # Reset per-episode step tracking so MAX_STEPS applies per episode, not globally
+        self._steps_times = []
+        self._start_time = None
+        self._end_time = None
 
-            # Reset per-episode step tracking so MAX_STEPS applies per episode, not globally
-            self._steps_times = []
-            self._start_time = None
-            self._end_time = None
-
-            return new_obs
+        return new_obs
 
     def dispatch_action_and_get_score(self, action_str: str) -> Tuple[int, bool, bool]:
         score = -1
-        with self._env_lock:
-            action = self.env.text2action(action_str)
-            logger.info(f"executing actions: {action}")
-            pre_step_snapshot = self._snapshot_current_obs_unlocked()
-            try:
-                self.obs, reward, terminated, truncated, info = self.env.step(action)
-            except Exception as e:
-                logger.error(traceback.format_exc())
-                raise e
-            score, done = self.env.evaluate(self.obs)
+        # with self._env_lock:
+        action = self.env.text2action(action_str)
+        logger.info(f"executing actions: {action}")
+        pre_step_snapshot = self._snapshot_current_obs_unlocked()
+        try:
+            self.obs, reward, terminated, truncated, info = self.env.step(action)
+        except Exception as e:
+            logger.error(traceback.format_exc())
+            raise e
+        score, done = self.env.evaluate(self.obs)
         # retries = 0
         # while score is None and retries < 30:
         #     self.obs, reward, terminated, truncated, info = self.env.step(action)
