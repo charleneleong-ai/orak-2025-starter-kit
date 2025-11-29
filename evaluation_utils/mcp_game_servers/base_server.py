@@ -61,6 +61,9 @@ class MCPGameServer:
         self._steps_times = []
         self._episodes = 0
         self._max_steps = MAX_STEPS[GAME_ID]
+        self._all_episodes_finished = False
+        self._latched_final_obs = None
+        self._latched_final_result = None
 
     def create_config(self, config_path: str, expand_log_path: bool):
         cfg = omegaconf.OmegaConf.load(config_path)
@@ -91,6 +94,22 @@ class MCPGameServer:
         else:
             obs_image_str = ""
         return obs_str, obs_image_str, game_info
+    
+    def _snapshot_current_obs_unlocked(self):
+        """Capture the current observation and game info. Caller must hold _env_lock."""
+        if self.obs is None:
+            obs_str = ""
+            obs_image_str = ""
+        else:
+            obs_str = self.obs.to_text()
+            obs_image = getattr(self.obs, 'image', None)
+            obs_image_str = self.image2str(obs_image) if obs_image is not None else ""
+        game_info = self.env.get_game_info()
+        return {
+            "obs_str": obs_str,
+            "obs_image_str": obs_image_str,
+            "game_info": game_info
+        }
     
     def log_game_results(self):
         self._end_time = time.time()
@@ -138,21 +157,12 @@ class MCPGameServer:
 
             return new_obs
 
-    def _delayed_exit(self):
-        """Cleanup and exit after a short delay to allow response to be sent."""
-        logger.info("Performing final cleanup and exiting...")
-        if hasattr(self.env, 'cleanup'):
-            try:
-                self.env.cleanup()
-            except Exception as e:
-                logger.warning(f"Error during final env cleanup: {e}")
-        os._exit(0)
-
     def dispatch_action_and_get_score(self, action_str: str) -> Tuple[int, bool, bool]:
         score = -1
         with self._env_lock:
             action = self.env.text2action(action_str)
             logger.info(f"executing actions: {action}")
+            pre_step_snapshot = self._snapshot_current_obs_unlocked()
             try:
                 self.obs, reward, terminated, truncated, info = self.env.step(action)
             except Exception as e:
@@ -183,9 +193,11 @@ class MCPGameServer:
             if self._episodes < MAX_EPISODES:
                 self.obs = self.reset_env()
             else:
-                # Max episodes reached - mark for exit after response is sent
+                # Max episodes reached - latch final observation
                 max_episodes_reached = True
-                logger.info(f"Max episodes ({MAX_EPISODES}) reached. Will exit after response.")
+                self._all_episodes_finished = True
+                self._latched_final_obs = pre_step_snapshot
+                logger.info(f"Max episodes ({MAX_EPISODES}) reached. Latching final observation.")
         
         return score, is_finished, max_episodes_reached
     
@@ -199,6 +211,9 @@ class MCPGameServer:
         @self.mcp.tool(name="load-obs", description="Load observation and game info from the server.")
         def load_obs() -> str:
             logger.info("Request for loading observation")
+            if self._all_episodes_finished and self._latched_final_obs is not None:
+                logger.info("Game finished. Returning latched final observation.")
+                return json.dumps(self._latched_final_obs)
             self.wait_for_env()
             if not self._start_time:
                 self._start_time = time.time()
@@ -233,6 +248,9 @@ class MCPGameServer:
 
         @self.mcp.tool(name="dispatch-final-action", description="Dispatch a client final action to the server and return score and termination flag")
         def dispatch_final_action(action_str: str) -> str:
+            if self._all_episodes_finished and self._latched_final_result is not None:
+                logger.info("Game finished. Returning latched final result.")
+                return json.dumps(self._latched_final_result)
             self.wait_for_env()
             try:
                 score, is_finished, max_episodes_reached = self.dispatch_action_and_get_score(action_str)
@@ -240,24 +258,19 @@ class MCPGameServer:
                 logger.error(traceback.format_exc())
                 raise e
             logger.info(f"dispatch_final_action result: {score}, {is_finished}")
-            if is_finished:
-                self.log_game_results()
             
-            # Prepare response first
-            response = json.dumps({
+            response_dict = {
                 "score": score,
                 "avg_score": (self._total_score / self._episodes) if self._episodes > 0 else 0,
                 "is_finished": is_finished
-            })
+            }
             
-            # Schedule exit after response is sent (if max episodes reached)
             if max_episodes_reached:
-                # Use a timer to exit after a short delay, allowing response to be sent
-                timer = threading.Timer(1.0, self._delayed_exit)
-                timer.daemon = True
-                timer.start()
+                self._latched_final_result = response_dict
+                self._all_episodes_finished = True
+                self.log_game_results()
             
-            return response
+            return json.dumps(response_dict)
         
         @self.mcp.tool(name="get-game-config", description="Get the game config")
         def get_game_config() -> str:

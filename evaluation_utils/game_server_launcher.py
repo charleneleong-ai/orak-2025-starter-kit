@@ -117,25 +117,31 @@ class GameLauncher:
             self.stop_game_server(game_name, silent=True)
     
     def wait_for_games_to_finish(self):
-        while self.game_servers_procs:
-            time.sleep(10)
-            for game_name in list(self.game_servers_procs.keys()):
-                results_path = os.path.join(GAME_DATA_DIR, game_name, "game_results.json")
-                proc = self.game_servers_procs[game_name]
+        completed_games: set[str] = set()
+        total_games = len(self.game_servers_procs)
 
-                if os.path.exists(results_path) or proc.poll() is not None:
-                    return_code = proc.returncode
-                    if return_code is not None and return_code != 0:
+        while len(completed_games) < total_games:
+            time.sleep(10)
+            for game_name, proc in self.game_servers_procs.items():
+                if game_name in completed_games:
+                    continue
+
+                results_path = os.path.join(GAME_DATA_DIR, game_name, "game_results.json")
+                return_code = proc.poll()
+
+                if return_code is not None:
+                    if return_code != 0 or not os.path.exists(results_path):
                         self.renderer.warn(f"Game server {game_name} crashed with return code {return_code}")
                         self.renderer.set_server_status(game_name, "failed")
                         self.force_stop_all_games()
                         return
 
+                if os.path.exists(results_path):
                     time.sleep(5)  # give a buffer for any pending writes
                     self.renderer.set_server_status(game_name, "completed")
                     self._update_scores_from_disk()
                     self.renderer.event(f"Game {game_name} completed")
-                    self.stop_game_server(game_name)
+                    completed_games.add(game_name)
 
 
 
