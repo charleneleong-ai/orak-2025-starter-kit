@@ -278,7 +278,9 @@ class MCPGameServer:
             return json.dumps({
                 "game_id": GAME_ID,
                 "max_steps": self._max_steps,
-                "max_episodes": MAX_EPISODES
+                "max_episodes": MAX_EPISODES,
+                "current_episode": self._episodes,
+                "current_step": len(self._steps_times),
             })
 
     async def run(self):

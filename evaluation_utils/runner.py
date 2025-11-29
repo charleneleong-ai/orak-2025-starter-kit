@@ -175,8 +175,8 @@ class Runner:
 
             try:
                 # Game loop
-                iteration = 0
-                episode = 0
+                iteration = game_config.get("current_step", 0)
+                episode = game_config.get("current_episode", 0)
                 avg_score = 0
                 while episode < max_episodes:
                     iteration += 1
