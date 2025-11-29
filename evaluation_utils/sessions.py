@@ -66,7 +66,7 @@ class Session:
         )
         return response.json()
     
-    def wait_for_start(self, poll_interval: float = 1.0, timeout: float = 900.0):
+    def wait_for_start(self, poll_interval: float = 1.0, timeout: float = 1500.0):
         start = time.time()
         last_status = None
 
