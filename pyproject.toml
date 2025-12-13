@@ -60,6 +60,7 @@ dependencies = [
     "transformers>=4.57.1",
     "ultralytics>=8.3.225",
     "burnysc2==7.1.1",
+    "screeninfo>=0.8.1",
 ]
 
 [tool.uv]

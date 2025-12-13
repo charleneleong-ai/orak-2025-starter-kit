@@ -5,6 +5,9 @@ import json
 import backoff
 from typing import Any
 
+import base64
+from io import BytesIO
+
 # from evaluation_utils.sessions import Session
 from evaluation_utils.game_env import GameEnv
 from evaluation_utils.commons import GAME_SERVER_PORTS, GAME_DATA_DIR
@@ -20,6 +23,27 @@ AGENT_MAP = {
     "super_mario": SuperMarioAgent,
     "star_craft": StarCraftAgent,
 }
+
+
+def pil_image_to_base64(image_object):
+    """
+    Converts a PIL Image object to a base64 string.
+    """
+    if image_object is None:
+        return None
+    # Create a buffer in memory
+    buffered = BytesIO()
+    # Save the image object to the buffer in JPEG format
+    # Note: If the original image has an RGBA mode, convert it to RGB first 
+    # if saving as JPEG, as JPEG does not support the alpha channel.
+    if image_object.mode == 'RGBA':
+        image_object = image_object.convert('RGB')
+        
+    image_object.save(buffered, format="JPEG")
+    # Get the value from the buffer and encode it in base64
+    img_bytes = buffered.getvalue()
+    encoded_string = base64.b64encode(img_bytes).decode('utf-8')
+    return encoded_string
 
 
 class Runner:
@@ -212,6 +236,8 @@ class Runner:
 
                     # Append per-iteration JSONL record
                     try:
+                        obs["obs_image"] = pil_image_to_base64(obs["obs_image"])
+                        result.pop("obs")
                         states_f.write(json.dumps({
                             "iteration": iteration,
                             "obs": obs,
@@ -220,8 +246,11 @@ class Runner:
                             "current_score": current_score
                         }, ensure_ascii=False) + "\n")
                         states_f.flush()
-                    except Exception:
+                    except Exception as e:
                         # Do not fail the game loop on logging issues
+                        import traceback
+                        traceback.format_exc()
+                        self.renderer.event(f"{game_display_name}: Error writing game states: {e}, traceback: {traceback.format_exc()}, obs: {obs.keys()}, result: {result.keys()}")
                         pass
 
                     # Update game progress (score and elapsed time)

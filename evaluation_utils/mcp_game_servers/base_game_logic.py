@@ -80,6 +80,7 @@ class GameLogic:
         self._total_score = 0
         self._episodes = 0
         self._max_steps = MAX_STEPS[GAME_ID]
+        self._current_step = 0
 
         # Latched final observation logic
         # When all episodes are finished, we latch the final observation
@@ -177,6 +178,12 @@ class GameLogic:
 
         self.obs, reward, terminated, truncated, info = self.env.step(action_obj)
         score, done = self.env.evaluate(self.obs)
+        self._current_step += 1
+
+        if self._current_step >= self._max_steps:
+            terminated = True
+            truncated = True
+            done = True
 
         # Determine if episode is finished
         is_finished = terminated or truncated or done
@@ -231,6 +238,7 @@ class GameLogic:
             "max_steps": self._max_steps,
             "max_episodes": MAX_EPISODES,
             "current_episode": self._episodes,
+            "current_step": self._current_step,
             # Note: current_step tracking removed as it was tied to _steps_times
             # which was used for timing metrics. Caller should track steps if needed.
         }
@@ -268,6 +276,7 @@ class GameLogic:
                 raise
 
         self.obs = new_obs
+        self._current_step = 0
         return new_obs
 
     def get_total_score(self) -> float:

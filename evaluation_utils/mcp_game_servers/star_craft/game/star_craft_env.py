@@ -32,6 +32,7 @@ LADDER_MAP_2023 = [
 ]
 
 def wait_for_window(window_name: str, timeout: int = 30, interval: float = 1.0) -> WindowCapture:
+    return None
     start_time = time.time()
     while time.time() - start_time < timeout:
         try:
@@ -46,6 +47,7 @@ def wait_for_window(window_name: str, timeout: int = 30, interval: float = 1.0) 
 class StarCraftObs(Obs):
     observation: dict
     image: Optional[Image.Image] = None
+    minimap_image: Optional[Image.Image] = None
 
     def to_text(self):
 
@@ -261,14 +263,17 @@ class StarCraftEnv(BaseEnv):
         self.game_end_event.clear()
 
         image = None
+        minimap_image = None
         if self.use_image:
             try:
-                image = self.window_capture.capture(log_path=self.cfg.log_path)
+                # image = self.window_capture.capture(log_path=self.cfg.log_path)
+                image = self.transaction['map_image']
+                minimap_image = self.transaction['minimap_image']
             except Exception as e:
                 print(f"[WARNING] Failed to capture image: {e}")
-                image = None
+                pass
             
-        state = from_dict(StarCraftObs, {'observation': self.transaction['information'], 'image': image})
+        state = from_dict(StarCraftObs, {'observation': self.transaction['information'], 'image': image, 'minimap_image': minimap_image})
 
         return state
 
@@ -347,10 +352,13 @@ class StarCraftEnv(BaseEnv):
                 self.summary[f'Summary {summary_idx}'] = obs
 
         image = None
+        minimap_image = None
         if self.use_image:
-            image = self.window_capture.capture(log_path=self.cfg.log_path)
+            # image = self.window_capture.capture(log_path=self.cfg.log_path)
+            image = self.transaction['map_image']
+            minimap_image = self.transaction['minimap_image']
             
-        state = from_dict(StarCraftObs, {'observation': self.summary, 'image': image})
+        state = from_dict(StarCraftObs, {'observation': self.summary, 'image': image, 'minimap_image': minimap_image})
 
         return state, 0, done, False, None
 

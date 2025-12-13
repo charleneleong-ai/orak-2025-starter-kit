@@ -6,6 +6,7 @@ from typing import Set, List
 import math
 from collections import Counter
 
+from PIL import Image
 from sc2 import maps
 from sc2.bot_ai import BotAI
 
@@ -56,7 +57,11 @@ def sc2_run_game(transaction, lock, isReadyForNextStep, game_end_event, done_eve
                       [Bot(Race.Protoss, Protoss_Bot(transaction, lock, isReadyForNextStep)),
                        Computer(map_race(bot_race), map_difficulty(DIFFICULTY_LEVELS[bot_difficulty]), map_ai_build(AI_BUILD_TYPES[bot_build]))],
                       realtime=False,
-                      save_replay_as=replay_path)
+                      save_replay_as=replay_path,
+                      rgb_render_config={  
+                        "window_size": (640, 480),  # Main map render size  
+                        "minimap_size": (128, 128)     # Minimap render size  
+                      } )
 
     with lock:
         transaction['done'] = True
@@ -2167,6 +2172,25 @@ class Protoss_Bot(BotAI):
             # print("self.transaction['action_failures']", self.transaction['action_failures'])
             # print("self.transaction['action_executed']", self.transaction['action_executed'])
             self.temp_failure_list.clear()  # 清空临时列表
+
+            if self.state.observation.HasField("render_data"):  
+                render_data = self.state.observation.render_data  
+
+            # Extract map image data  
+            map_width = render_data.map.size.x  
+            map_height = render_data.map.size.y  
+            map_image_data = render_data.map.data  # Raw RGB bytes  
+              
+            # Extract minimap image data  
+            minimap_width = render_data.minimap.size.x  
+            minimap_height = render_data.minimap.size.y  
+            minimap_image_data = render_data.minimap.data  # Raw RGB bytes
+
+            map_image = Image.frombytes('RGB', (map_width, map_height), map_image_data)
+            minimap_image = Image.frombytes('RGB', (minimap_width, minimap_height), minimap_image_data)
+            
+            self.transaction['map_image'] = map_image
+            self.transaction['minimap_image'] = minimap_image
 
         self.isReadyForNextStep.set()
 

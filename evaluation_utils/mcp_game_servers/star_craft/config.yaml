@@ -6,7 +6,7 @@ env_name: StarCraft
 log_path: ./logs
 env:
   task: 1 vs 1 battle againt built-in ai
-  input_modality: "text" # text, image, text_image
+  input_modality: "text_image" # text, image, text_image
   map_idx: 0
   player_race: Protoss
   bot_race: Zerg
