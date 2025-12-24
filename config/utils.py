@@ -72,4 +72,6 @@ def load_agent_map(settings: Settings) -> dict[str, Any]:
         agent_map["star_craft"] = get_module_by_class_path(
             settings.star_craft.class_name
         )(config=settings.star_craft, wandb_config=settings.wandb)
+    
+    logger.info(f"Loaded agent map: {agent_map}")
     return agent_map

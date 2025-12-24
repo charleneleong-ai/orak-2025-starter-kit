@@ -16,6 +16,7 @@ from evaluation_utils.renderer import Renderer
 from evaluation_utils.sessions import Session
 from config.base import Settings
 from config.utils import load_agent_map
+from loguru import logger
 
 def pil_image_to_base64(image_object):
     """
@@ -196,6 +197,7 @@ class Runner:
         else:
             grpc_address = self.session.get()["grpc_addresses"][game_name]
         agent = self.agent_map[game_name]
+        logger.info(f"Starting evaluation for game {game_name} using gRPC address {grpc_address}")
         env = GameEnv(grpc_address)
 
         self.renderer.event(f"{game_display_name}: Waiting for client to connect...")

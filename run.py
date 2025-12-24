@@ -7,7 +7,7 @@ from evaluation_utils.commons import setup_logging, GAME_DATA_DIR, GAME_SERVER_P
 from evaluation_utils.renderer import get_renderer
 from dotenv import load_dotenv
 from config.utils import load_hydra_settings
-
+from loguru import logger
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -30,7 +30,7 @@ def main(
             help="Hydra config name for evaluation setup.",
             case_sensitive=False,
         ),
-    ] = ExperimentConfigName.OPENAI,
+    ] = ExperimentConfigName.GEMINI,
     session_id: str | None = typer.Option(
         None,
         "--session-id",
@@ -53,6 +53,7 @@ def main(
     setup_logging(verbose=verbose)
 
     settings = load_hydra_settings(config_name=config_name.value)
+    logger.info(f"Loading Hydra settings {config_name}...")
 
     # Initialize the centralized renderer
     renderer = get_renderer()
@@ -61,6 +62,8 @@ def main(
     try:
         # Only pass a game subset in local mode; remote mode always runs all games
         selected_games = games if local else None
+        renderer.event("Starting evaluation run ...")
+        renderer.event(f"Settings: {settings.model_dump()}...")
         runner = Runner(
             session_id=session_id,
             local=local,
@@ -68,6 +71,7 @@ def main(
             games=selected_games,
             settings=settings,
         )
+        
         asyncio.run(runner.evaluate_all_games())
 
         # Show final summary with total score

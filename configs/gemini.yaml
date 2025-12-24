@@ -16,4 +16,4 @@ wandb:
 defaults:
   - _self_
 
-  - twenty_fourty_eight: openai
+  - twenty_fourty_eight: gemini
