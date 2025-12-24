@@ -5,9 +5,16 @@ import wandb
 import weave
 from langchain_google_vertexai import ChatVertexAI
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
 
 from config.agent_config import GeminiConfig
 from config.base import WandbConfig
+
+class GameAction(BaseModel):
+    """Structured output for 2048 game actions"""
+    reasoning: str = Field(description="Detailed explanation of why this action was chosen")
+    action: str = Field(description="The action to take: up, down, left, or right")
+    content: str = Field(description="Full raw output from the model") 
 
 SYSTEM_PROMPT = """
 You are an expert AI agent specialized in playing the 2048 game with advanced strategic reasoning. 
@@ -81,11 +88,9 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
         config: GeminiConfig = None, 
         wandb_config: WandbConfig = None,
     ):
-        # Load configurations
         config = config or GeminiConfig()
         wandb_config = wandb_config or WandbConfig()
-        
-        # Initialize with Weave Model
+
         super().__init__(
             config=config,
             wandb_config=wandb_config,
@@ -93,7 +98,6 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
         
         self.wandb_config.tags.extend(["gemini", "vertex-ai"])
         
-        # Initialize wandb
         if self.wandb_config.enabled:
             wandb.init(
                 project=self.wandb_config.project, 
@@ -103,18 +107,13 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
                 name=None,  # Auto-generate run name
             )
         
-        # Initialize ChatVertexAI - Weave will auto-track this
         self._llm = ChatVertexAI(
             model_name=self.config.model,
             temperature=self.config.temperature,
             project=self.config.gcp_project,
             location=self.config.gcp_location,
-        )
+        ).with_structured_output(GameAction)
         
-        # self._prev_state_str initialized via PrivateAttr
-        # self._last_action initialized via PrivateAttr
-        # self._step_count initialized via PrivateAttr
-        # self._last_score initialized via PrivateAttr
 
     @weave.op()
     def act(self, obs):
@@ -135,7 +134,6 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
             cur_state_str=cur_state_str
         )
 
-        # Log to wandb
         if self.wandb_config.enabled:
             log_data = {
                 "step": self._step_count,
@@ -181,9 +179,9 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
         output_text = response.content if hasattr(response, 'content') else str(response)
 
         # Parse the reasoning
-        reasoning = self._parse_reasoning(output_text.strip())
+        reasoning = response.reasoning if hasattr(response, 'reasoning') else self._parse_reasoning(output_text)
         
-        action = self._parse_actions(output_text.strip())
+        action = response.action if hasattr(response, 'action') else self._parse_actions(output_text.strip())
         if action not in ["left", "right", "up", "down"]:
             action = "left"  # Fall back to left if the action is not valid
 
