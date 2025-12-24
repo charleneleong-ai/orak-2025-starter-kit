@@ -14,3 +14,7 @@ executables/pokemon_red/pyboy/pokered.gbc
 .DS_Store
 .cursor/
 logs/
+
+
+# Wandb
+wandb/
