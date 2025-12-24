@@ -53,7 +53,7 @@ from evaluation_utils.protos import game_service_pb2_grpc as pb2_grpc
 logger = logging.getLogger(__name__)
 
 # Session timeout: 2 minutes of inactivity
-SESSION_TIMEOUT_SECONDS = 120
+SESSION_TIMEOUT_SECONDS = 600
 
 
 class GameEnvServiceServicer(pb2_grpc.GameEnvServiceServicer):

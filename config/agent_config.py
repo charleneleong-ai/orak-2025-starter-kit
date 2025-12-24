@@ -38,7 +38,6 @@ class GeminiConfig(AgentConfig):
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for wandb logging."""
         return {
-            "agent_type": "gemini",
             "model": self.model,
             "temperature": self.temperature,
             "gcp_project": self.gcp_project,
@@ -66,7 +65,6 @@ class OpenAIConfig(AgentConfig):
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for wandb logging."""
         return {
-            "agent_type": "openai",
             "model": self.model,
             "temperature": self.temperature,
             "reasoning_effort": self.reasoning_effort,
