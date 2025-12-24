@@ -6,6 +6,7 @@ All agent configurations are defined here and can be logged to wandb.
 import os
 from dataclasses import dataclass
 from typing import Literal, Optional, Dict, Any
+from pydantic import ConfigDict
 
 
 @dataclass
@@ -18,6 +19,7 @@ class AgentConfig:
 
 @dataclass
 class GeminiConfig(AgentConfig):
+    __pydantic_config__ = ConfigDict(extra="forbid")
     """Configuration for Gemini (Vertex AI) agent."""
 
     model: str = "gemini-pro-3"
@@ -49,6 +51,7 @@ class GeminiConfig(AgentConfig):
 
 @dataclass
 class OpenAIConfig(AgentConfig):
+    __pydantic_config__ = ConfigDict(extra="forbid")
     """Configuration for OpenAI agent."""
 
     model: str = "gpt-5-nano"
@@ -73,4 +76,4 @@ class OpenAIConfig(AgentConfig):
         }
 
 
-AgentConfig = GeminiConfig | OpenAIConfig
+AgentConfig = OpenAIConfig | GeminiConfig

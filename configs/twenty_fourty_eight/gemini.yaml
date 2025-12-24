@@ -1,6 +1,6 @@
 class_name: "agents.gemini_twenty_fourty_eight.GeminiTwentyFourtyEightAgent"
-model: "gemini-pro-3"
+model: "gemini-2.5-flash"
 temperature: 0.1
 gcp_location: "europe-west1"
 reasoning_effort: "high"
-track: "TRACK1"
+track: "TRACK1" 

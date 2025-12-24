@@ -67,6 +67,7 @@ dependencies = [
     "burnysc2==7.1.1",
     "screeninfo>=0.8.1",
     "wandb>=0.23.1",
+    "weave>=0.52.22",
 ]
 
 [tool.uv]

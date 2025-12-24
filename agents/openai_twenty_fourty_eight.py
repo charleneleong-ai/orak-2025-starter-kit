@@ -1,6 +1,9 @@
 import openai
 import re
 import wandb
+import weave
+from typing import ClassVar
+from pydantic import PrivateAttr
 
 from config.agent_config import OpenAIConfig
 from config.base import WandbConfig
@@ -59,17 +62,38 @@ Provide your response in the strict format:
 """
 
 
-class OpenAITwentyFourtyEightAgent:
-    TRACK = "TRACK1"
+class OpenAITwentyFourtyEightAgent(weave.Model):
+    TRACK: ClassVar[str] = "TRACK1"
     
-    def __init__(self, config: OpenAIConfig = None, wandb_config: WandbConfig = None):
+    config: OpenAIConfig
+    wandb_config: WandbConfig
+    
+    _client: openai.OpenAI = PrivateAttr()
+    _prev_state_str: str = PrivateAttr(default="N/A")
+    _last_action: str = PrivateAttr(default="No action yet")
+    _step_count: int = PrivateAttr(default=0)
+    _last_score: int = PrivateAttr(default=0)
+    
+    def __init__(
+        self, 
+        config: OpenAIConfig = None, 
+        wandb_config: WandbConfig = None,# Keep for backward compatibility, but use wandb_config
+    ):
         # Load configurations
-        self.config = config or OpenAIConfig()
-        self.wandb_config = wandb_config or WandbConfig()
+        config = config or OpenAIConfig()
+        wandb_config = wandb_config or WandbConfig()
+        
+        # Initialize with Weave Model
+        super().__init__(
+            config=config,
+            wandb_config=wandb_config
+        )
+        
+        
         self.wandb_config.tags.extend(["openai"])
         
         # Initialize wandb
-        if self.wandb_config.enabled:
+        if hasattr(self, "wandb_config") and self.wandb_config and self.wandb_config.enabled:
             wandb.init(
                 project=self.wandb_config.project,
                 entity=self.wandb_config.entity,
@@ -78,15 +102,17 @@ class OpenAITwentyFourtyEightAgent:
                 name=None, 
             )
         
-        # Initialize OpenAI client
-        self.client = openai.OpenAI()
+        # Initialize OpenAI client - Weave will auto-track this
+        self._client = openai.OpenAI()
         
-        self.prev_state_str = "N/A"
-        self.last_action = "No action yet"
-        self.step_count = 0
-        self.last_score = 0
+        self._prev_state_str = "N/A"
+        self._last_action = "No action yet"
+        self._step_count = 0
+        self._last_score = 0
 
+    @weave.op()
     def act(self, obs):
+        """Main action method tracked by Weave."""
         game_info = obs.get("game_info", {})
         cur_state_str = obs.get("obs_str", "")
         
@@ -95,14 +121,54 @@ class OpenAITwentyFourtyEightAgent:
         current_score = int(info.get("score", 0)) if info.get("score") else 0
         max_tile = int(info.get("max_tile", 0)) if info.get("max_tile") else 0
         
-        self.step_count += 1
+        self._step_count += 1
 
-        response = self.client.responses.create(
+        # Get action from LLM
+        action, reasoning, output_text, usage = self._get_action(
+            task_description=game_info.get("task_description", ""),
+            cur_state_str=cur_state_str
+        )
+
+        # Log to wandb
+        if hasattr(self, "wandb_config") and self.wandb_config and self.wandb_config.enabled:
+            log_data = {
+                "step": self._step_count,
+                "score": current_score,
+                "max_tile": max_tile,
+                "action": action,
+                "score_delta": current_score - self._last_score,
+            }
+            
+            # Log action distribution
+            log_data[f"action/{action}"] = 1
+            
+            # Log reasoning length
+            if reasoning:
+                log_data["reasoning_length"] = len(reasoning)
+            
+            # Log API usage if available
+            if usage:
+                log_data["tokens_prompt"] = usage.get('prompt_tokens', 0)
+                log_data["tokens_completion"] = usage.get('completion_tokens', 0)
+                log_data["tokens_total"] = usage.get('total_tokens', 0)
+            
+            wandb.log(log_data)
+
+        self._prev_state_str = cur_state_str
+        self._last_action = action
+        self._last_score = current_score
+
+        return action
+
+    @weave.op()
+    def _get_action(self, task_description: str, cur_state_str: str) -> tuple[str, str, str, dict]:
+        """Get action from LLM. This method is tracked by Weave for observability."""
+        response = self._client.responses.create(
             model=self.config.model,
             input=USER_PROMPT.format(
-                task_description=game_info.get("task_description", ""),
-                prev_state_str=self.prev_state_str, 
-                action=self.last_action, 
+                task_description=task_description,
+                prev_state_str=self._prev_state_str, 
+                action=self._last_action, 
                 cur_state_str=cur_state_str
             ),
             instructions=SYSTEM_PROMPT,
@@ -120,36 +186,16 @@ class OpenAITwentyFourtyEightAgent:
         if action not in ["left", "right", "up", "down"]:
             action = "left"  # Fall back to left if the action is not valid
 
-        # Log to wandb
-        if self.wandb_config.enabled:
-            log_data = {
-                "step": self.step_count,
-                "score": current_score,
-                "max_tile": max_tile,
-                "action": action,
-                "score_delta": current_score - self.last_score,
+        # Extract usage info
+        usage = None
+        if hasattr(response, 'usage'):
+            usage = {
+                'prompt_tokens': getattr(response.usage, 'prompt_tokens', 0),
+                'completion_tokens': getattr(response.usage, 'completion_tokens', 0),
+                'total_tokens': getattr(response.usage, 'total_tokens', 0)
             }
-            
-            # Log action distribution
-            log_data[f"action/{action}"] = 1
-            
-            # Log reasoning length
-            if reasoning:
-                log_data["reasoning_length"] = len(reasoning)
-            
-            # Log API usage if available
-            if hasattr(response, 'usage'):
-                log_data["tokens_prompt"] = getattr(response.usage, 'prompt_tokens', 0)
-                log_data["tokens_completion"] = getattr(response.usage, 'completion_tokens', 0)
-                log_data["tokens_total"] = getattr(response.usage, 'total_tokens', 0)
-            
-            wandb.log(log_data)
 
-        self.prev_state_str = cur_state_str
-        self.last_action = action
-        self.last_score = current_score
-
-        return action
+        return action, reasoning, output_text, usage
 
     def _parse_reasoning(self, output):
         """Extract reasoning section from output."""
@@ -168,7 +214,7 @@ class OpenAITwentyFourtyEightAgent:
     
     def __del__(self):
         """Cleanup wandb on agent destruction."""
-        if self.wandb_config.enabled:
+        if hasattr(self, "wandb_config") and self.wandb_config and self.wandb_config.enabled:
             try:
                 wandb.finish()
             except:

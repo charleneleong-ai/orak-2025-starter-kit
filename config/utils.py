@@ -8,8 +8,6 @@ from omegaconf import OmegaConf
 
 from pathlib import Path
 
-# from app.config import PROMPTS_FOLDER, ROOT_DIR
-# from app.config.settings import Settings
 from config.base import Settings
 
 ROOT_DIR = Path(__file__).parent.parent

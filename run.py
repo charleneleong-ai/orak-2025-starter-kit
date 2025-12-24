@@ -8,6 +8,7 @@ from evaluation_utils.renderer import get_renderer
 from dotenv import load_dotenv
 from config.utils import load_hydra_settings
 from loguru import logger
+import weave
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -55,6 +56,14 @@ def main(
     settings = load_hydra_settings(config_name=config_name.value)
     logger.info(f"Loading Hydra settings {config_name}...")
 
+    # Initialize Weave if enabled (uses same W&B credentials)
+    if settings.wandb.weave_enabled:
+        try:
+            weave.init(settings.wandb.project_name)
+            logger.info(f"Weave initialized for project: {settings.wandb.project_name}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Weave: {e}")
+
     # Initialize the centralized renderer
     renderer = get_renderer()
     renderer.start(local=local, session_id=session_id, game_data_path=GAME_DATA_DIR)
@@ -83,6 +92,12 @@ def main(
         raise
     finally:
         renderer.stop()
+        # Finish Weave tracking
+        if settings.wandb.weave_enabled:
+            try:
+                weave.finish()
+            except:
+                pass
 
 
 if __name__ == "__main__":

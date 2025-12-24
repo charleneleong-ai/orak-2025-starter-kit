@@ -1,10 +1,13 @@
+from typing import ClassVar, Any
+from pydantic import PrivateAttr
 import re
 import wandb
+import weave
 from langchain_google_vertexai import ChatVertexAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config.agent_config import GeminiConfig
-from config.base import WandbConfig 
+from config.base import WandbConfig
 
 SYSTEM_PROMPT = """
 You are an expert AI agent specialized in playing the 2048 game with advanced strategic reasoning. 
@@ -60,41 +63,62 @@ Provide your response in the strict format:
 """
 
 
-class GeminiTwentyFourtyEightAgent:
-    TRACK = "TRACK1"
+class GeminiTwentyFourtyEightAgent(weave.Model):
+    TRACK: ClassVar[str] = "TRACK1"
     
-    def __init__(self, config: GeminiConfig = None, wandb_config: WandbConfig = None):
+    config: GeminiConfig
+    wandb_config: WandbConfig
+    _llm: Any = PrivateAttr()
+    _prev_state_str: str = PrivateAttr(default="N/A")
+    _last_action: str = PrivateAttr(default="No action yet")
+    _step_count: int = PrivateAttr(default=0)
+    _last_score: int = PrivateAttr(default=0)
+
+
+    
+    def __init__(
+        self, 
+        config: GeminiConfig = None, 
+        wandb_config: WandbConfig = None,
+    ):
         # Load configurations
-        self.config = config or GeminiConfig()
-        self.wandb_config = wandb_config or WandbConfig()
+        config = config or GeminiConfig()
+        wandb_config = wandb_config or WandbConfig()
+        
+        # Initialize with Weave Model
+        super().__init__(
+            config=config,
+            wandb_config=wandb_config,
+        )
+        
         self.wandb_config.tags.extend(["gemini", "vertex-ai"])
         
         # Initialize wandb
         if self.wandb_config.enabled:
             wandb.init(
-                project=self.wandb_config.project,
+                project=self.wandb_config.project, 
                 entity=self.wandb_config.entity,
                 config=self.config.to_dict(),
                 tags=self.wandb_config.tags,
                 name=None,  # Auto-generate run name
             )
         
-        # Initialize ChatVertexAI
-        self.llm = ChatVertexAI(
-            model=self.config.model,
+        # Initialize ChatVertexAI - Weave will auto-track this
+        self._llm = ChatVertexAI(
+            model_name=self.config.model,
+            temperature=self.config.temperature,
             project=self.config.gcp_project,
             location=self.config.gcp_location,
-            temperature=self.config.temperature,
         )
         
-        self.prev_state_str = "N/A"
-        self.last_action = "No action yet"
-        self.step_count = 0
-        self.last_score = 0
+        # self._prev_state_str initialized via PrivateAttr
+        # self._last_action initialized via PrivateAttr
+        # self._step_count initialized via PrivateAttr
+        # self._last_score initialized via PrivateAttr
 
+    @weave.op()
     def act(self, obs):
-        return "left"
-    def old_act(self, obs):
+        """Main action method tracked by Weave."""
         game_info = obs.get("game_info", {})
         cur_state_str = obs.get("obs_str", "")
         
@@ -103,40 +127,22 @@ class GeminiTwentyFourtyEightAgent:
         current_score = int(info.get("score", 0)) if info.get("score") else 0
         max_tile = int(info.get("max_tile", 0)) if info.get("max_tile") else 0
         
-        self.step_count += 1
+        self._step_count += 1
 
-        prompt = USER_PROMPT.format(
+        # Get action from LLM
+        action, reasoning, output_text = self._get_action(
             task_description=game_info.get("task_description", ""),
-            prev_state_str=self.prev_state_str, 
-            action=self.last_action, 
             cur_state_str=cur_state_str
         )
-
-        # Create messages with system and user prompts
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=prompt)
-        ]
-        
-        # Invoke the model
-        response = self.llm.invoke(messages)
-        output_text = response.content if hasattr(response, 'content') else str(response)
-
-        # Parse the reasoning
-        reasoning = self._parse_reasoning(output_text.strip())
-        
-        action = self._parse_actions(output_text.strip())
-        if action not in ["left", "right", "up", "down"]:
-            action = "left"  # Fall back to left if the action is not valid
 
         # Log to wandb
         if self.wandb_config.enabled:
             log_data = {
-                "step": self.step_count,
+                "step": self._step_count,
                 "score": current_score,
                 "max_tile": max_tile,
                 "action": action,
-                "score_delta": current_score - self.last_score,
+                "score_delta": current_score - self._last_score,
             }
             
             # Log action distribution
@@ -148,11 +154,40 @@ class GeminiTwentyFourtyEightAgent:
             
             wandb.log(log_data)
 
-        self.prev_state_str = cur_state_str
-        self.last_action = action
-        self.last_score = current_score
+        self._prev_state_str = cur_state_str
+        self._last_action = action
+        self._last_score = current_score
 
         return action
+
+    @weave.op()
+    def _get_action(self, task_description: str, cur_state_str: str) -> tuple[str, str, str]:
+        """Get action from LLM. This method is tracked by Weave for observability."""
+        prompt = USER_PROMPT.format(
+            task_description=task_description,
+            prev_state_str=self._prev_state_str, 
+            action=self._last_action, 
+            cur_state_str=cur_state_str
+        )
+
+        # Create messages with system and user prompts
+        messages = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=prompt)
+        ]
+        
+        # Invoke the model - Weave will automatically track this
+        response = self._llm.invoke(messages)
+        output_text = response.content if hasattr(response, 'content') else str(response)
+
+        # Parse the reasoning
+        reasoning = self._parse_reasoning(output_text.strip())
+        
+        action = self._parse_actions(output_text.strip())
+        if action not in ["left", "right", "up", "down"]:
+            action = "left"  # Fall back to left if the action is not valid
+
+        return action, reasoning, output_text
 
     def _parse_reasoning(self, output):
         """Extract reasoning section from output."""
