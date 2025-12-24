@@ -2,7 +2,8 @@ import openai
 import re
 import wandb
 
-from agents.agent_config import OpenAIConfig, WandbConfig
+from config.agent_config import OpenAIConfig
+from config.base import WandbConfig
 
 SYSTEM_PROMPT = """
 You are an expert AI agent specialized in playing the 2048 game with advanced strategic reasoning. 

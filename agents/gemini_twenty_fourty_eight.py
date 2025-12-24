@@ -3,7 +3,8 @@ import wandb
 from langchain_google_vertexai import ChatVertexAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from agents.agent_config import GeminiConfig, WandbConfig
+from config.agent_config import GeminiConfig
+from config.base import WandbConfig 
 
 SYSTEM_PROMPT = """
 You are an expert AI agent specialized in playing the 2048 game with advanced strategic reasoning. 

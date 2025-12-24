@@ -14,16 +14,8 @@ from evaluation_utils.commons import GAME_SERVER_PORTS, GAME_DATA_DIR
 from evaluation_utils.game_server_launcher import GameLauncher
 from evaluation_utils.renderer import Renderer
 from evaluation_utils.sessions import Session
-
-from agents.config import PokemonAgent, TwentyFourtyEightAgent, SuperMarioAgent, StarCraftAgent
-
-AGENT_MAP = {
-    "pokemon_red": PokemonAgent,
-    "twenty_fourty_eight": TwentyFourtyEightAgent,
-    "super_mario": SuperMarioAgent,
-    "star_craft": StarCraftAgent,
-}
-
+from config.base import Settings
+from config.utils import load_agent_map
 
 def pil_image_to_base64(image_object):
     """
@@ -56,10 +48,13 @@ class Runner:
         grpc_host: str = "localhost",
         grpc_ports: dict[str, int] | None = None,
         manage_local_game_servers: bool = True,
+        settings: Settings | None = None,
     ):
         self.local = local
         self.renderer = renderer
         self.manage_local_game_servers = manage_local_game_servers
+        self.settings = settings
+        self.agent_map = load_agent_map(self.settings)
 
         # Determine which games to run
         if self.local:
@@ -200,7 +195,7 @@ class Runner:
             grpc_address = self.grpc_addresses[game_name]
         else:
             grpc_address = self.session.get()["grpc_addresses"][game_name]
-        agent = AGENT_MAP[game_name]()
+        agent = self.agent_map[game_name]
         env = GameEnv(grpc_address)
 
         self.renderer.event(f"{game_display_name}: Waiting for client to connect...")

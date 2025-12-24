@@ -1,42 +1,73 @@
 import asyncio
-import argparse
-
+from typing import Any, Annotated
+import typer
+from enum import StrEnum
 from evaluation_utils.runner import Runner
 from evaluation_utils.commons import setup_logging, GAME_DATA_DIR, GAME_SERVER_PORTS
 from evaluation_utils.renderer import get_renderer
+from dotenv import load_dotenv
+from config.utils import load_hydra_settings
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Orak Starter Kit Runner")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
-    parser.add_argument("--session-id", default=None, help="Use existing session id instead of creating a new session")
-    parser.add_argument("--local", action="store_true", help="Run in local mode")
-    parser.add_argument(
+app = typer.Typer(pretty_exceptions_enable=False)
+
+
+class ExperimentConfigName(StrEnum):
+    GEMINI = "gemini"
+    OPENAI = "openai"
+
+
+load_dotenv()
+
+
+@app.command()
+def main(
+    config_name: Annotated[
+        ExperimentConfigName,
+        typer.Option(
+            "--config-name",
+            "-c",
+            help="Hydra config name for evaluation setup.",
+            case_sensitive=False,
+        ),
+    ] = ExperimentConfigName.OPENAI,
+    session_id: str | None = typer.Option(
+        None,
+        "--session-id",
+        help="Use existing session id instead of creating a new session",
+    ),
+    local: bool = typer.Option(False, "--local", help="Run in local mode"),
+    games: Annotated[list[str], typer.Option(
         "--games",
-        nargs="+",
-        choices=list(GAME_SERVER_PORTS.keys()),
         help="Only run these games (space-separated list). Only supported in LOCAL mode.",
-    )
-    args = parser.parse_args()
+    )] =list(GAME_SERVER_PORTS.keys()),   
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Enable verbose logging"
+    ),
+):
+    """Run evaluation for Orak 2025 games."""
 
     # Enforce that game selection is only supported in local mode
-    if args.games and not args.local:
-        parser.error("--games can only be used together with --local")
+    if games and not local:
+        raise typer.BadParameter("--games can only be used together with --local")
+    setup_logging(verbose=verbose)
 
-    setup_logging(verbose=args.verbose)
+    settings = load_hydra_settings(config_name=config_name.value)
 
     # Initialize the centralized renderer
     renderer = get_renderer()
-    renderer.start(
-        local=args.local,
-        session_id=args.session_id,
-        game_data_path=GAME_DATA_DIR
-    )
+    renderer.start(local=local, session_id=session_id, game_data_path=GAME_DATA_DIR)
 
     try:
         # Only pass a game subset in local mode; remote mode always runs all games
-        selected_games = args.games if args.local else None
-        runner = Runner(session_id=args.session_id, local=args.local, renderer=renderer, games=selected_games)
+        selected_games = games if local else None
+        runner = Runner(
+            session_id=session_id,
+            local=local,
+            renderer=renderer,
+            games=selected_games,
+            settings=settings,
+        )
         asyncio.run(runner.evaluate_all_games())
 
         # Show final summary with total score
@@ -51,4 +82,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    app()
