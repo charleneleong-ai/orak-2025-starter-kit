@@ -211,6 +211,19 @@ class Runner:
             # Prepare per-iteration state logging
             game_data_dir = os.path.join(GAME_DATA_DIR, game_name)
             os.makedirs(game_data_dir, exist_ok=True)
+
+            # Configure agent logging and save model declaration
+            if hasattr(agent, "set_log_dir"):
+                agent.set_log_dir(game_data_dir)
+            
+            if hasattr(agent, "get_model_declaration"):
+                try:
+                    model_decl = agent.get_model_declaration()
+                    with open(os.path.join(game_data_dir, "model_declaration.json"), "w") as f:
+                        json.dump(model_decl, f, indent=2)
+                except Exception as e:
+                    logger.error(f"Failed to save model declaration: {e}")
+
             game_states_path = os.path.join(game_data_dir, "game_states.jsonl")
             states_f = open(game_states_path, "a", encoding="utf-8")
 
@@ -270,6 +283,16 @@ class Runner:
                             self.renderer.event(f"{game_display_name}: Max episodes reached. Game finished.")
 
                 self.scores[game_name] = avg_score
+
+                # Save evaluation summary
+                if hasattr(agent, "get_evaluation_summary"):
+                    try:
+                        summary = agent.get_evaluation_summary(episode)
+                        with open(os.path.join(game_data_dir, "evaluation_summary.json"), "w") as f:
+                            json.dump(summary, f, indent=2)
+                    except Exception as e:
+                        logger.error(f"Failed to save evaluation summary: {e}")
+
                 # Mark game as completed
                 self.renderer.complete_game(game_name, avg_score)
             except Exception as e:

@@ -124,7 +124,7 @@ class OpenAITwentyFourtyEightAgent(TwentyFourtyEightAgent):
         return "left", text
 
     @weave.op()
-    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, Any]:
+    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, Any, str]:
         """Get action from LLM. This method is tracked by Weave for observability."""
         
         prompt_text = USER_PROMPT.format(
@@ -220,4 +220,4 @@ class OpenAITwentyFourtyEightAgent(TwentyFourtyEightAgent):
             logger.warning(f"Invalid action '{action}', defaulting to 'left'")
             action = "left"
             
-        return action, reasoning, output_text, usage
+        return action, reasoning, output_text, usage, prompt_text

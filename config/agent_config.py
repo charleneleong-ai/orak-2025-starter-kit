@@ -5,7 +5,7 @@ All agent configurations are defined here and can be logged to wandb.
 
 import os
 from dataclasses import dataclass
-from typing import Literal, Optional, Dict, Any
+from typing import Literal, Optional, Any
 from pydantic import ConfigDict
 
 
@@ -26,7 +26,7 @@ class GeminiConfig(AgentConfig):
     temperature: float = 0.1
     gcp_project: Optional[str] = None
     gcp_location: str = "us-central1"
-    reasoning_effort: str = "high"  # low, medium, high
+    thinking_level: str = "high"  # low,, high
     track: str = "TRACK1"
 
     def __post_init__(self):
@@ -37,14 +37,14 @@ class GeminiConfig(AgentConfig):
         if not self.gcp_project:
             raise ValueError("GCP_PROJECT environment variable not set")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dict for wandb logging."""
         return {
             "model": self.model,
             "temperature": self.temperature,
             "gcp_project": self.gcp_project,
             "gcp_location": self.gcp_location,
-            "reasoning_effort": self.reasoning_effort,
+            "thinking_level": self.thinking_level,
             "track": self.track,
         }
 
@@ -66,7 +66,7 @@ class OpenAIConfig(AgentConfig):
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY environment variable not set")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dict for wandb logging."""
         return {
             "model": self.model,

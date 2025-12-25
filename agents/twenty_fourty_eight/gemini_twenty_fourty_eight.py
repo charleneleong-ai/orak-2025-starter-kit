@@ -95,7 +95,7 @@ class GeminiTwentyFourtyEightAgent(TwentyFourtyEightAgent):
         return ["gemini", "vertex-ai"]
 
     @weave.op()
-    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> Tuple[str, str, str, Any]:
+    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> Tuple[str, str, str, Any, str]:
         """Get action from LLM. This method is tracked by Weave for observability."""
         prompt = USER_PROMPT.format(
             task_description=task_description,
@@ -133,7 +133,7 @@ class GeminiTwentyFourtyEightAgent(TwentyFourtyEightAgent):
         if action not in ["left", "right", "up", "down"]:
             action = "left"  # Fall back to left if the action is not valid
 
-        return action, reasoning, output_text, None # Usage not available in this implementation easily
+        return action, reasoning, output_text, None, prompt # Usage not available in this implementation easily
 
     def _parse_reasoning(self, output):
         """Extract reasoning section from output."""
