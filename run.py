@@ -42,6 +42,12 @@ def main(
         "--games",
         help="Only run these games (space-separated list). Only supported in LOCAL mode.",
     )] =list(GAME_SERVER_PORTS.keys()),   
+    experiment_description: str | None = typer.Option(
+        None,
+        "--experiment-description",
+        "-d",
+        help="Description for the experiment (logged to W&B notes)",
+    ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Enable verbose logging"
     ),
@@ -54,6 +60,11 @@ def main(
     setup_logging(verbose=verbose)
 
     settings = load_hydra_settings(config_name=config_name.value)
+    
+    # Override W&B notes if provided
+    if experiment_description:
+        settings.wandb.notes = experiment_description
+        
     logger.info(f"Loading Hydra settings {config_name}...")
 
     # Initialize Weave if enabled (uses same W&B credentials)

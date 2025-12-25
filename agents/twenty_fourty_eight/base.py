@@ -38,6 +38,7 @@ class TwentyFourtyEightAgent(weave.Model):
                 entity=self.wandb_config.entity,
                 config=self.config.to_dict() if hasattr(self.config, "to_dict") else {},
                 tags=tags,
+                notes=self.wandb_config.notes,
                 name=None,  # Auto-generate run name
             )
 

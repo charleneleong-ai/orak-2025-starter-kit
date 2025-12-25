@@ -11,6 +11,7 @@ class WandbConfig(BaseModel):
     entity: Optional[str] = None
     mode: str = "online"  # "online", "offline", or "disabled"
     tags: list = ["2048"]
+    notes: Optional[str] = None
     
     # Weave-specific settings
     weave_enabled: bool = True
@@ -21,8 +22,7 @@ class WandbConfig(BaseModel):
         self.mode = os.environ.get("WANDB_MODE", self.mode)
         
         # Check if Weave is explicitly disabled
-        weave_enabled_env = os.environ.get("WEAVE_ENABLED", "true").lower()
-        self.weave_enabled = weave_enabled_env in ["true", "1", "yes"]
+        self.weave_enabled = os.environ.get("WEAVE_ENABLED", "true").lower() in ["true", "1", "yes"]
         
         if self.tags is None:
             self.tags = ["2048"]
