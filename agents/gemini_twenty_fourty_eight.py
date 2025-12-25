@@ -6,7 +6,7 @@ import weave
 from langchain_google_vertexai import ChatVertexAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
-
+from loguru import logger
 from config.agent_config import GeminiConfig
 from config.base import WandbConfig
 
@@ -81,7 +81,6 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
     _step_count: int = PrivateAttr(default=0)
     _last_score: int = PrivateAttr(default=0)
 
-
     
     def __init__(
         self, 
@@ -120,11 +119,14 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
         """Main action method tracked by Weave."""
         game_info = obs.get("game_info", {})
         cur_state_str = obs.get("obs_str", "")
+        obs_image = obs.get("obs_image", None)
         
-        # Extract metrics from observation
-        info = obs.get("info", {})
-        current_score = int(info.get("score", 0)) if info.get("score") else 0
-        max_tile = int(info.get("max_tile", 0)) if info.get("max_tile") else 0
+        # Extract metrics directly from game_info
+        current_score = int(game_info.get("score", 0))
+        max_tile = int(game_info.get("max_tile", 0))
+        
+        # Calculate evaluation score as per 2048.md: min((score / 20000) * 100, 100)
+        evaluation_score = min((current_score / 20000) * 100, 100)
         
         self._step_count += 1
 
@@ -138,6 +140,7 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
             log_data = {
                 "step": self._step_count,
                 "score": current_score,
+                "evaluation_score": evaluation_score,  # Un-Normalized score
                 "max_tile": max_tile,
                 "action": action,
                 "score_delta": current_score - self._last_score,
@@ -149,6 +152,18 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
             # Log reasoning length as a proxy for model complexity
             if reasoning:
                 log_data["reasoning_length"] = len(reasoning)
+            
+            # Log obs_str as text
+            if cur_state_str:
+                log_data["obs_str"] = wandb.Html(f"<pre>{cur_state_str}</pre>")
+            
+            # Log obs_image if available
+            if obs_image is not None:
+                try:
+                    log_data["obs_image"] = wandb.Image(obs_image, caption=f"Step {self._step_count}")
+                except Exception as e:
+                    # If image logging fails, just continue
+                    logger.error(f"Warning: Could not log image: {e}")
             
             wandb.log(log_data)
 
