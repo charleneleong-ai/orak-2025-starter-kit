@@ -3,6 +3,9 @@ from pydantic import PrivateAttr
 import re
 import wandb
 import weave
+import io
+import base64
+from PIL import Image
 from langchain_google_vertexai import ChatVertexAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
@@ -133,7 +136,8 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
         # Get action from LLM
         action, reasoning, output_text = self._get_action(
             task_description=game_info.get("task_description", ""),
-            cur_state_str=cur_state_str
+            cur_state_str=cur_state_str,
+            obs_image=obs_image
         )
 
         if self.wandb_config.enabled:
@@ -174,7 +178,7 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
         return action
 
     @weave.op()
-    def _get_action(self, task_description: str, cur_state_str: str) -> tuple[str, str, str]:
+    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str]:
         """Get action from LLM. This method is tracked by Weave for observability."""
         prompt = USER_PROMPT.format(
             task_description=task_description,
@@ -183,10 +187,22 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
             cur_state_str=cur_state_str
         )
 
+        content = [
+            {"type": "text", "text": prompt}
+        ]
+
+        if obs_image:
+             # Convert PIL to base64
+             buffered = io.BytesIO()
+             obs_image.save(buffered, format="JPEG")
+             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+             image_url = f"data:image/jpeg;base64,{img_str}"
+             content.append({"type": "image_url", "image_url": {"url": image_url}})
+
         # Create messages with system and user prompts
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=prompt)
+            HumanMessage(content=content)
         ]
         
         # Invoke the model - Weave will automatically track this
