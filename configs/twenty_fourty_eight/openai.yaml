@@ -1,0 +1,5 @@
+class_name: "agents.twenty_fourty_eight.openai_twenty_fourty_eight.OpenAITwentyFourtyEightAgent"
+model: "gpt-5-nano"
+temperature: 1.0
+reasoning_effort: "high"
+track: "TRACK2"

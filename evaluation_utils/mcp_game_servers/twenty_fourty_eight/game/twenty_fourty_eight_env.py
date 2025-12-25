@@ -30,6 +30,7 @@ class TwentyFourtyEightObs(Obs):
     observation: list
     terminated: bool
     score: int = 0
+    max_tile: int = 0
     image: Image.Image = None
 
     def to_text(self):
@@ -63,7 +64,7 @@ class TwentyFourtyEightEnv(BaseEnv):
         log_path: str
         target_tile: int
         task: str
-        input_modality: str = "text"
+        input_modality: str = "text_image"
 
     cfg: Config
 
@@ -74,6 +75,7 @@ class TwentyFourtyEightEnv(BaseEnv):
         self.target_tile = self.cfg.target_tile
         self.input_modality = self.cfg.input_modality
         self.score = 0 
+        self.max_tile = 0
 
         self.consecutive_nochange_step = 0
         self._env = newGame(THEME, TEXT_COL, SIZE, self.show_graphic) 
@@ -88,10 +90,18 @@ class TwentyFourtyEightEnv(BaseEnv):
         width, height = surface.get_size()
         image = Image.frombytes('RGB', (width, height), data)
         return image
+    
+    def _get_max_tile(self, board):
+        """Calculate max tile from the board"""
+        try:
+            return max(max(row) for row in board)
+        except Exception:
+            return 0
 
     def initial_obs(self) -> Obs:
         observation = self._env
         terminated = False
+        self.max_tile = self._get_max_tile(observation)
 
         image = None
         if self.use_image:
@@ -100,6 +110,8 @@ class TwentyFourtyEightEnv(BaseEnv):
         obs = TwentyFourtyEightObs(
              observation=observation,
              terminated=terminated,
+             score=self.score,
+             max_tile=self.max_tile,
              image=image,
         )
         return obs
@@ -109,7 +121,7 @@ class TwentyFourtyEightEnv(BaseEnv):
         return text
 
     def text2action(self, text: str) -> Action:
-        matches = re.findall(r"\**([\w ]+)\**.?", text)
+        matches = re.findall(r"\**([\w ]+)\**.*", text)
         # Convert matched actions to lowercase for case-insensitive comparison
         action = ["".join(match).lower() for match in matches]
         return TwentyFourtyEightAction(actions=action)
@@ -146,6 +158,7 @@ class TwentyFourtyEightEnv(BaseEnv):
                 terminated = True
 
         observation = self._env
+        self.max_tile = self._get_max_tile(observation)
 
         image = None
         if self.use_image:
@@ -158,6 +171,7 @@ class TwentyFourtyEightEnv(BaseEnv):
             observation=observation,
             terminated=terminated,
             score=self.score,
+            max_tile=self.max_tile,
             image=image,
         )
 
@@ -170,5 +184,7 @@ class TwentyFourtyEightEnv(BaseEnv):
     def get_game_info(self) -> dict:
         return {
             "prev_state_str": None,
-            "task_description": "Merge tiles to make a tile with the value of 2048"
+            "task_description": "Merge tiles to make a tile with the value of 2048",
+            "score": self.score,
+            "max_tile": self.max_tile
         }

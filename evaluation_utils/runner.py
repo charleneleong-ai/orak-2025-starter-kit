@@ -14,16 +14,9 @@ from evaluation_utils.commons import GAME_SERVER_PORTS, GAME_DATA_DIR
 from evaluation_utils.game_server_launcher import GameLauncher
 from evaluation_utils.renderer import Renderer
 from evaluation_utils.sessions import Session
-
-from agents.config import PokemonAgent, TwentyFourtyEightAgent, SuperMarioAgent, StarCraftAgent
-
-AGENT_MAP = {
-    "pokemon_red": PokemonAgent,
-    "twenty_fourty_eight": TwentyFourtyEightAgent,
-    "super_mario": SuperMarioAgent,
-    "star_craft": StarCraftAgent,
-}
-
+from config.base import Settings
+from config.utils import load_agent_map
+from loguru import logger
 
 def pil_image_to_base64(image_object):
     """
@@ -56,10 +49,13 @@ class Runner:
         grpc_host: str = "localhost",
         grpc_ports: dict[str, int] | None = None,
         manage_local_game_servers: bool = True,
+        settings: Settings | None = None,
     ):
         self.local = local
         self.renderer = renderer
         self.manage_local_game_servers = manage_local_game_servers
+        self.settings = settings
+        self.agent_map = load_agent_map(self.settings)
 
         # Determine which games to run
         if self.local:
@@ -200,7 +196,8 @@ class Runner:
             grpc_address = self.grpc_addresses[game_name]
         else:
             grpc_address = self.session.get()["grpc_addresses"][game_name]
-        agent = AGENT_MAP[game_name]()
+        agent = self.agent_map[game_name]
+        logger.info(f"Starting evaluation for game {game_name} using gRPC address {grpc_address}")
         env = GameEnv(grpc_address)
 
         self.renderer.event(f"{game_display_name}: Waiting for client to connect...")
@@ -214,6 +211,19 @@ class Runner:
             # Prepare per-iteration state logging
             game_data_dir = os.path.join(GAME_DATA_DIR, game_name)
             os.makedirs(game_data_dir, exist_ok=True)
+
+            # Configure agent logging and save model declaration
+            if hasattr(agent, "set_log_dir"):
+                agent.set_log_dir(game_data_dir)
+            
+            if hasattr(agent, "get_model_declaration"):
+                try:
+                    model_decl = agent.get_model_declaration()
+                    with open(os.path.join(game_data_dir, "model_declaration.json"), "w") as f:
+                        json.dump(model_decl, f, indent=2)
+                except Exception as e:
+                    logger.error(f"Failed to save model declaration: {e}")
+
             game_states_path = os.path.join(game_data_dir, "game_states.jsonl")
             states_f = open(game_states_path, "a", encoding="utf-8")
 
@@ -262,6 +272,21 @@ class Runner:
 
                     if finished:
                         steps_this_episode = iteration
+                        
+                        # Record episode stats
+                        if hasattr(agent, "record_episode_end"):
+                            seed = "unknown"
+                            # Try to find seed in game info
+                            final_game_info = result.get("obs", {}).get("game_info", {})
+                            current_game_info = obs.get("game_info", {})
+                            
+                            if "seed" in final_game_info:
+                                seed = final_game_info["seed"]
+                            elif "seed" in current_game_info:
+                                seed = current_game_info["seed"]
+                                
+                            agent.record_episode_end(episode + 1, game_name, seed, current_score)
+
                         episode += 1
                         iteration = 0
                         self.renderer.event(
@@ -273,6 +298,16 @@ class Runner:
                             self.renderer.event(f"{game_display_name}: Max episodes reached. Game finished.")
 
                 self.scores[game_name] = avg_score
+
+                # Save evaluation summary
+                if hasattr(agent, "get_evaluation_summary"):
+                    try:
+                        summary = agent.get_evaluation_summary(episode)
+                        with open(os.path.join(game_data_dir, "evaluation_summary.json"), "w") as f:
+                            json.dump(summary, f, indent=2)
+                    except Exception as e:
+                        logger.error(f"Failed to save evaluation summary: {e}")
+
                 # Mark game as completed
                 self.renderer.complete_game(game_name, avg_score)
             except Exception as e:

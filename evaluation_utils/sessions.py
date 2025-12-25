@@ -2,7 +2,6 @@ import requests
 import time
 
 from evaluation_utils.commons import BASE_URL, API_TOKEN
-from agents.config import TwentyFourtyEightAgent
 
 
 class Session:
@@ -17,7 +16,7 @@ class Session:
         response = requests.post(
             f"{BASE_URL}/sessions",
             headers={"Authorization": f"Token {API_TOKEN}"},
-            params={"track": TwentyFourtyEightAgent.TRACK}
+            params={"track": "TRACK1"}
         )
         if not response.ok:
             self.renderer.event(f"Failed to create session: {response.text}")

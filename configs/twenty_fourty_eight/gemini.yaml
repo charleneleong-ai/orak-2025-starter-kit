@@ -1,0 +1,6 @@
+class_name: "agents.twenty_fourty_eight.gemini_twenty_fourty_eight.GeminiTwentyFourtyEightAgent"
+model: "gemini-2.5-flash"
+temperature: 1.0
+gcp_location: "europe-west1"
+thinking_level: "high"
+track: "TRACK2" 
