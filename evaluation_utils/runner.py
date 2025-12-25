@@ -272,6 +272,21 @@ class Runner:
 
                     if finished:
                         steps_this_episode = iteration
+                        
+                        # Record episode stats
+                        if hasattr(agent, "record_episode_end"):
+                            seed = "unknown"
+                            # Try to find seed in game info
+                            final_game_info = result.get("obs", {}).get("game_info", {})
+                            current_game_info = obs.get("game_info", {})
+                            
+                            if "seed" in final_game_info:
+                                seed = final_game_info["seed"]
+                            elif "seed" in current_game_info:
+                                seed = current_game_info["seed"]
+                                
+                            agent.record_episode_end(episode + 1, game_name, seed, current_score)
+
                         episode += 1
                         iteration = 0
                         self.renderer.event(

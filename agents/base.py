@@ -28,6 +28,15 @@ class OrakAgent(weave.Model):
     })
     _requests_log_path: Optional[str] = PrivateAttr(default=None)
 
+    # Per-episode stats
+    _episode_stats: list[dict[str, Any]] = PrivateAttr(default_factory=list)
+    _current_episode_stats: dict[str, int] = PrivateAttr(default_factory=lambda: {
+        "inference_calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "tokens": 0
+    })
+
     def __init__(self, config: AgentConfig = None, wandb_config: WandbConfig = None):
         super().__init__(config=config, wandb_config=wandb_config)
         
@@ -70,6 +79,25 @@ class OrakAgent(weave.Model):
             "evaluation_episodes": episodes,
             "mean_calls_per_episode": self._stats["total_inference_calls"] / episodes if episodes > 0 else 0,
             "mean_tokens_per_episode": self._stats["total_tokens"] / episodes if episodes > 0 else 0,
+            "episodes": self._episode_stats,
+        }
+
+    def record_episode_end(self, episode_id: int, game_name: str, seed: Any, final_score: float):
+        """Record stats for a completed episode."""
+        self._episode_stats.append({
+            "episode_id": episode_id,
+            "game_name": game_name,
+            "seed": seed,
+            "inference_calls": self._current_episode_stats["inference_calls"],
+            "tokens": self._current_episode_stats["tokens"],
+            "final_score": final_score
+        })
+        # Reset current episode stats
+        self._current_episode_stats = {
+            "inference_calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "tokens": 0
         }
 
     @weave.op()
@@ -87,6 +115,8 @@ class OrakAgent(weave.Model):
         
         # Update stats
         self._stats["total_inference_calls"] += 1
+        self._current_episode_stats["inference_calls"] += 1
+        
         if log_extras:
             tokens_prompt = log_extras.get("tokens_prompt", 0)
             tokens_completion = log_extras.get("tokens_completion", 0)
@@ -99,6 +129,10 @@ class OrakAgent(weave.Model):
             self._stats["total_input_tokens"] += tokens_prompt
             self._stats["total_output_tokens"] += tokens_completion
             self._stats["total_tokens"] += tokens_total
+            
+            self._current_episode_stats["input_tokens"] += tokens_prompt
+            self._current_episode_stats["output_tokens"] += tokens_completion
+            self._current_episode_stats["tokens"] += tokens_total
 
         # Log raw request if prompt is available
         if self._requests_log_path and log_extras and "prompt" in log_extras:
