@@ -2,11 +2,16 @@ import openai
 import re
 import wandb
 import weave
-from typing import ClassVar
+import io
+import base64
+import json
+from typing import Any, ClassVar
 from pydantic import PrivateAttr
+from loguru import logger
 
 from config.agent_config import OpenAIConfig
 from config.base import WandbConfig
+from agents.twenty_fourty_eight.base import TwentyFourtyEightAgent, GameAction
 
 SYSTEM_PROMPT = """
 You are an expert AI agent specialized in playing the 2048 game with advanced strategic reasoning. 
@@ -29,15 +34,10 @@ Your primary goal is to achieve the highest possible tile value while maintainin
 
 ### Decision Output Format ### 
 Analyze the provided game state and determine the **single most optimal action** to take next. 
-Return your decision in the following exact format: 
-### Reasoning
-<a detailed summary of why this action was chosen>
-### Actions
-<up, right, left, or down>
 
-Ensure that: 
-- The '### Reasoning' field provides a clear explanation of why the action is the best choice, including analysis of current tile positions, merge opportunities, and future flexibility. 
-- The '### Actions' field contains only one of the four valid directions. 
+You must respond with a JSON object containing:
+- "reasoning": A detailed explanation of why this action was chosen
+- "action": The action to take (must be one of: up, down, left, or right)
 """
 
 USER_PROMPT = """
@@ -52,32 +52,19 @@ USER_PROMPT = """
 
 ### Current state
 {cur_state_str}
-
-You should only respond in the format described below, and you should not output comments or other information.
-Provide your response in the strict format: 
-### Reasoning
-<a detailed summary of why this action was chosen>
-### Actions
-<direction>
 """
 
 
-class OpenAITwentyFourtyEightAgent(weave.Model):
-    TRACK: ClassVar[str] = "TRACK1"
-    
+class OpenAITwentyFourtyEightAgent(TwentyFourtyEightAgent):
     config: OpenAIConfig
-    wandb_config: WandbConfig
     
     _client: openai.OpenAI = PrivateAttr()
-    _prev_state_str: str = PrivateAttr(default="N/A")
-    _last_action: str = PrivateAttr(default="No action yet")
-    _step_count: int = PrivateAttr(default=0)
-    _last_score: int = PrivateAttr(default=0)
+    _is_reasoning_model: bool = PrivateAttr(default=False)
     
     def __init__(
         self, 
         config: OpenAIConfig = None, 
-        wandb_config: WandbConfig = None,# Keep for backward compatibility, but use wandb_config
+        wandb_config: WandbConfig = None,
     ):
         # Load configurations
         config = config or OpenAIConfig()
@@ -89,133 +76,148 @@ class OpenAITwentyFourtyEightAgent(weave.Model):
             wandb_config=wandb_config
         )
         
+        # Initialize OpenAI client
+        self._client = openai.OpenAI(api_key=self.config.api_key)
         
-        self.wandb_config.tags.extend(["openai"])
+        # Detect if this is a reasoning model (o1, o3, gpt-5, etc.)
+        # These models use the responses API instead of chat completions
+        model_lower = self.config.model.lower()
+        self._is_reasoning_model = any(keyword in model_lower for keyword in ['o1', 'o3', 'gpt-5'])
         
-        # Initialize wandb
-        if hasattr(self, "wandb_config") and self.wandb_config and self.wandb_config.enabled:
-            wandb.init(
-                project=self.wandb_config.project,
-                entity=self.wandb_config.entity,
-                config=self.config.to_dict(),
-                tags=self.wandb_config.tags,
-                name=None, 
-            )
+        logger.info(f"Initialized OpenAI agent with model: {self.config.model}, using reasoning API: {self._is_reasoning_model}")
+
+    @property
+    def AGENT_TAGS(self):
+        return ["openai"]
+
+    def _parse_action_from_text(self, text: str) -> tuple[str, str]:
+        """Parse action and reasoning from text response.
         
-        # Initialize OpenAI client - Weave will auto-track this
-        self._client = openai.OpenAI()
+        Returns:
+            tuple[str, str]: (action, reasoning)
+        """
+        # Try to parse as JSON first
+        try:
+            # Look for JSON object in the text
+            json_match = re.search(r'\{[^}]*"action"[^}]*\}', text, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group())
+                action = data.get("action", "").lower()
+                reasoning = data.get("reasoning", text)
+                if action in ["left", "right", "up", "down"]:
+                    return action, reasoning
+        except:
+            pass
         
-        self._prev_state_str = "N/A"
-        self._last_action = "No action yet"
-        self._step_count = 0
-        self._last_score = 0
+        # Fallback: look for action keywords in text
+        text_lower = text.lower()
+        for action in ["left", "right", "up", "down"]:
+            if f'"{action}"' in text_lower or f"'{action}'" in text_lower or f"action: {action}" in text_lower:
+                return action, text
+        
+        # Last resort: find first occurrence of an action word
+        for action in ["left", "right", "up", "down"]:
+            if action in text_lower:
+                return action, text
+        
+        # Default fallback
+        return "left", text
 
     @weave.op()
-    def act(self, obs):
-        """Main action method tracked by Weave."""
-        game_info = obs.get("game_info", {})
-        cur_state_str = obs.get("obs_str", "")
+    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, Any]:
+        """Get action from LLM. This method is tracked by Weave for observability."""
         
-        # Extract metrics from observation
-        info = obs.get("info", {})
-        current_score = int(info.get("score", 0)) if info.get("score") else 0
-        max_tile = int(info.get("max_tile", 0)) if info.get("max_tile") else 0
-        
-        self._step_count += 1
-
-        # Get action from LLM
-        action, reasoning, output_text, usage = self._get_action(
-            task_description=game_info.get("task_description", ""),
+        prompt_text = USER_PROMPT.format(
+            task_description=task_description,
+            prev_state_str=self._prev_state_str, 
+            action=self._last_action, 
             cur_state_str=cur_state_str
         )
 
-        # Log to wandb
-        if hasattr(self, "wandb_config") and self.wandb_config and self.wandb_config.enabled:
-            log_data = {
-                "step": self._step_count,
-                "score": current_score,
-                "max_tile": max_tile,
-                "action": action,
-                "score_delta": current_score - self._last_score,
+        if self._is_reasoning_model:
+            # Use responses API for reasoning models (o1, o3, gpt-5)
+            # These models don't support system messages or structured outputs
+            # Combine system and user prompts
+            combined_prompt = f"{SYSTEM_PROMPT}\n\n{prompt_text}"
+            
+            # Build the input based on whether we have an image
+            if obs_image:
+                # Convert PIL to base64
+                buffered = io.BytesIO()
+                obs_image.save(buffered, format="JPEG")
+                img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+                image_url = f"data:image/jpeg;base64,{img_str}"
+                
+                user_content = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": combined_prompt},
+                            {"type": "input_image", "image_url": image_url}
+                        ]
+                    }
+                ]
+            else:
+                user_content = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": combined_prompt}
+                        ]
+                    }
+                ]
+            
+            # Call responses API
+            api_params = {
+                "model": self.config.model,
+                "input": user_content,
             }
             
-            # Log action distribution
-            log_data[f"action/{action}"] = 1
+            # Add reasoning parameter if configured
+            if hasattr(self.config, "reasoning_effort") and self.config.reasoning_effort:
+                api_params["reasoning"] = {"effort": self.config.reasoning_effort}
             
-            # Log reasoning length
-            if reasoning:
-                log_data["reasoning_length"] = len(reasoning)
+            response = self._client.responses.create(**api_params)
             
-            # Log API usage if available
-            if usage:
-                log_data["tokens_prompt"] = usage.get('prompt_tokens', 0)
-                log_data["tokens_completion"] = usage.get('completion_tokens', 0)
-                log_data["tokens_total"] = usage.get('total_tokens', 0)
+            # Extract response text
+            output_text = response.output_text
+            usage = response.usage if hasattr(response, 'usage') else None
             
-            wandb.log(log_data)
+            # Parse action and reasoning from text
+            action, reasoning = self._parse_action_from_text(output_text)
+            
+        else:
+            # Use chat completions API for standard models (gpt-4o, etc.)
+            user_content = [{"type": "text", "text": prompt_text}]
 
-        self._prev_state_str = cur_state_str
-        self._last_action = action
-        self._last_score = current_score
+            if obs_image:
+                # Convert PIL to base64
+                buffered = io.BytesIO()
+                obs_image.save(buffered, format="JPEG")
+                img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+                image_url = f"data:image/jpeg;base64,{img_str}"
+                user_content.append({"type": "image_url", "image_url": {"url": image_url}})
 
-        return action
-
-    @weave.op()
-    def _get_action(self, task_description: str, cur_state_str: str) -> tuple[str, str, str, dict]:
-        """Get action from LLM. This method is tracked by Weave for observability."""
-        response = self._client.responses.create(
-            model=self.config.model,
-            input=USER_PROMPT.format(
-                task_description=task_description,
-                prev_state_str=self._prev_state_str, 
-                action=self._last_action, 
-                cur_state_str=cur_state_str
-            ),
-            instructions=SYSTEM_PROMPT,
-            reasoning={
-                "effort": self.config.reasoning_effort,
-            }
-        )
+            # Use Structured Outputs (parse)
+            response = self._client.beta.chat.completions.parse(
+                model=self.config.model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content}
+                ],
+                response_format=GameAction,
+            )
+            
+            parsed_response = response.choices[0].message.parsed
+            usage = response.usage
+            
+            action = parsed_response.action.lower()
+            reasoning = parsed_response.reasoning
+            output_text = ""
         
-        output_text = response.output_text.strip()
-        
-        # Parse the reasoning
-        reasoning = self._parse_reasoning(output_text)
-        
-        action = self._parse_actions(output_text)
+        # Validate action
         if action not in ["left", "right", "up", "down"]:
-            action = "left"  # Fall back to left if the action is not valid
-
-        # Extract usage info
-        usage = None
-        if hasattr(response, 'usage'):
-            usage = {
-                'prompt_tokens': getattr(response.usage, 'prompt_tokens', 0),
-                'completion_tokens': getattr(response.usage, 'completion_tokens', 0),
-                'total_tokens': getattr(response.usage, 'total_tokens', 0)
-            }
-
+            logger.warning(f"Invalid action '{action}', defaulting to 'left'")
+            action = "left"
+            
         return action, reasoning, output_text, usage
-
-    def _parse_reasoning(self, output):
-        """Extract reasoning section from output."""
-        reasoning_match = re.search(r"### Reasoning\s*\n(.+?)(?=### Actions|$)", output, re.IGNORECASE | re.DOTALL)
-        if reasoning_match:
-            return reasoning_match.group(1).strip()
-        return ""
-
-    def _parse_actions(self, output):
-        """Return the full string after ### Actions."""
-        actions_match = re.search(r"### Actions\s*\n(.+)", output, re.IGNORECASE | re.DOTALL)
-        if actions_match:
-            actions_section = actions_match.group(1).strip()
-            return actions_section
-        return ""
-    
-    def __del__(self):
-        """Cleanup wandb on agent destruction."""
-        if hasattr(self, "wandb_config") and self.wandb_config and self.wandb_config.enabled:
-            try:
-                wandb.finish()
-            except:
-                pass

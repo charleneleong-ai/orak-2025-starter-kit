@@ -59,10 +59,11 @@ class OpenAIConfig(AgentConfig):
     reasoning_effort: str = "high"  # low, medium, high
     max_tokens: Optional[int] = None
     track: str = "TRACK1"
+    api_key: str = os.environ.get("OPENAI_API_KEY")
 
     def __post_init__(self):
         # Validate OpenAI API key exists
-        if not os.environ.get("OPENAI_API_KEY"):
+        if not self.api_key:
             raise ValueError("OPENAI_API_KEY environment variable not set")
 
     def to_dict(self) -> Dict[str, Any]:

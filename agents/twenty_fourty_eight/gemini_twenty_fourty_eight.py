@@ -1,23 +1,16 @@
-from typing import ClassVar, Any
+from typing import ClassVar, Any, Tuple
 from pydantic import PrivateAttr
 import re
 import wandb
 import weave
 import io
 import base64
-from PIL import Image
 from langchain_google_vertexai import ChatVertexAI
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel, Field
 from loguru import logger
 from config.agent_config import GeminiConfig
 from config.base import WandbConfig
-
-class GameAction(BaseModel):
-    """Structured output for 2048 game actions"""
-    reasoning: str = Field(description="Detailed explanation of why this action was chosen")
-    action: str = Field(description="The action to take: up, down, left, or right")
-    content: str = Field(description="Full raw output from the model") 
+from agents.twenty_fourty_eight.base import TwentyFourtyEightAgent, GameAction
 
 SYSTEM_PROMPT = """
 You are an expert AI agent specialized in playing the 2048 game with advanced strategic reasoning. 
@@ -73,18 +66,10 @@ Provide your response in the strict format:
 """
 
 
-class GeminiTwentyFourtyEightAgent(weave.Model):
-    TRACK: ClassVar[str] = "TRACK1"
-    
+class GeminiTwentyFourtyEightAgent(TwentyFourtyEightAgent):
     config: GeminiConfig
-    wandb_config: WandbConfig
     _llm: Any = PrivateAttr()
-    _prev_state_str: str = PrivateAttr(default="N/A")
-    _last_action: str = PrivateAttr(default="No action yet")
-    _step_count: int = PrivateAttr(default=0)
-    _last_score: int = PrivateAttr(default=0)
 
-    
     def __init__(
         self, 
         config: GeminiConfig = None, 
@@ -98,17 +83,6 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
             wandb_config=wandb_config,
         )
         
-        self.wandb_config.tags.extend(["gemini", "vertex-ai"])
-        
-        if self.wandb_config.enabled:
-            wandb.init(
-                project=self.wandb_config.project, 
-                entity=self.wandb_config.entity,
-                config=self.config.to_dict(),
-                tags=self.wandb_config.tags,
-                name=None,  # Auto-generate run name
-            )
-        
         self._llm = ChatVertexAI(
             model_name=self.config.model,
             temperature=self.config.temperature,
@@ -116,69 +90,12 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
             location=self.config.gcp_location,
         ).with_structured_output(GameAction)
         
+    @property
+    def AGENT_TAGS(self):
+        return ["gemini", "vertex-ai"]
 
     @weave.op()
-    def act(self, obs):
-        """Main action method tracked by Weave."""
-        game_info = obs.get("game_info", {})
-        cur_state_str = obs.get("obs_str", "")
-        obs_image = obs.get("obs_image", None)
-        
-        # Extract metrics directly from game_info
-        current_score = int(game_info.get("score", 0))
-        max_tile = int(game_info.get("max_tile", 0))
-        
-        # Calculate evaluation score as per 2048.md: min((score / 20000) * 100, 100)
-        evaluation_score = min((current_score / 20000) * 100, 100)
-        
-        self._step_count += 1
-
-        # Get action from LLM
-        action, reasoning, output_text = self._get_action(
-            task_description=game_info.get("task_description", ""),
-            cur_state_str=cur_state_str,
-            obs_image=obs_image
-        )
-
-        if self.wandb_config.enabled:
-            log_data = {
-                "step": self._step_count,
-                "score": current_score,
-                "evaluation_score": evaluation_score,  # Un-Normalized score
-                "max_tile": max_tile,
-                "action": action,
-                "score_delta": current_score - self._last_score,
-            }
-            
-            # Log action distribution
-            log_data[f"action/{action}"] = 1
-            
-            # Log reasoning length as a proxy for model complexity
-            if reasoning:
-                log_data["reasoning_length"] = len(reasoning)
-            
-            # Log obs_str as text
-            if cur_state_str:
-                log_data["obs_str"] = wandb.Html(f"<pre>{cur_state_str}</pre>")
-            
-            # Log obs_image if available
-            if obs_image is not None:
-                try:
-                    log_data["obs_image"] = wandb.Image(obs_image, caption=f"Step {self._step_count}")
-                except Exception as e:
-                    # If image logging fails, just continue
-                    logger.error(f"Warning: Could not log image: {e}")
-            
-            wandb.log(log_data)
-
-        self._prev_state_str = cur_state_str
-        self._last_action = action
-        self._last_score = current_score
-
-        return action
-
-    @weave.op()
-    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str]:
+    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> Tuple[str, str, str, Any]:
         """Get action from LLM. This method is tracked by Weave for observability."""
         prompt = USER_PROMPT.format(
             task_description=task_description,
@@ -216,7 +133,7 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
         if action not in ["left", "right", "up", "down"]:
             action = "left"  # Fall back to left if the action is not valid
 
-        return action, reasoning, output_text
+        return action, reasoning, output_text, None # Usage not available in this implementation easily
 
     def _parse_reasoning(self, output):
         """Extract reasoning section from output."""
@@ -232,11 +149,3 @@ class GeminiTwentyFourtyEightAgent(weave.Model):
             actions_section = actions_match.group(1).strip()
             return actions_section
         return ""
-    
-    def __del__(self):
-        """Cleanup wandb on agent destruction."""
-        if self.wandb_config.enabled:
-            try:
-                wandb.finish()
-            except:
-                pass
