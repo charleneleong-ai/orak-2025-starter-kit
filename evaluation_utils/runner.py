@@ -86,7 +86,7 @@ class Runner:
                 raise ValueError(f"Missing port(s) for game(s): {', '.join(missing)}")
 
             self.grpc_addresses = {game: f"{grpc_host}:{ports[game]}" for game in self.games}
-            self.game_launcher = GameLauncher(renderer, games=self.games) if self.manage_local_game_servers else None
+            self.game_launcher = GameLauncher(renderer, games=self.games, settings=self.settings) if self.manage_local_game_servers else None
         else:
             self.renderer.event("Running in REMOTE mode")
             self.session = Session(session_id=session_id, renderer=self.renderer)
