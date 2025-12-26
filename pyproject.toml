@@ -1,3 +1,4 @@
+requires = ["setuptools>=61.0", "wheel"]
 [project]
 name = "orak-2025-starter-kit"
 version = "0.1.0"
@@ -29,7 +30,7 @@ dependencies = [
     "imageio[ffmpeg]>=2.37.2",
     "langchain-chroma>=1.0.0",
     "langchain-openai>=1.0.2",
-    "langchain-google-vertexai>=3.2.0",
+     "langchain-google-vertexai>=3.2.0",
     "loguru>=0.7.0",
     "matplotlib>=3.10.7",
     "mss>=10.1.0",
@@ -69,6 +70,8 @@ dependencies = [
     "wandb>=0.23.1",
     "weave>=0.52.22",
 ]
+[tool.setuptools.packages.find]
+include = ["agents", "config", "evaluation_utils"]
 
 [tool.uv]
 # burnysc2==7.1.1 declares `numpy>=2.0.0`, but this project intentionally pins numpy==1.26.4.
