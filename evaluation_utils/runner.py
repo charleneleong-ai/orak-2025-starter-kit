@@ -86,7 +86,7 @@ class Runner:
                 raise ValueError(f"Missing port(s) for game(s): {', '.join(missing)}")
 
             self.grpc_addresses = {game: f"{grpc_host}:{ports[game]}" for game in self.games}
-            self.game_launcher = GameLauncher(renderer, games=self.games, settings=self.settings) if self.manage_local_game_servers else None
+            self.game_launcher = GameLauncher(renderer, settings=self.settings) if self.manage_local_game_servers else None
         else:
             self.renderer.event("Running in REMOTE mode")
             self.session = Session(session_id=session_id, renderer=self.renderer)
@@ -228,7 +228,16 @@ class Runner:
             states_f = open(game_states_path, "a", encoding="utf-8")
 
             game_config = await self._call_in_thread(env.get_game_config)
-            max_episodes = game_config.get("max_episodes")
+            
+            # Prefer max_episodes from settings if available
+            if self.settings:
+                game_settings = getattr(self.settings, game_name, None)
+                if game_settings and hasattr(game_settings, "env") and hasattr(game_settings.env, "max_episodes"):
+                    max_episodes = game_settings.env.max_episodes
+                else:
+                    max_episodes = game_config.get("max_episodes")
+            else:
+                max_episodes = game_config.get("max_episodes")
 
             try:
                 # Game loop

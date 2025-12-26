@@ -14,24 +14,24 @@ from pygame.locals import *
 from mcp_game_servers.twenty_fourty_eight.game.logic import *
 import yaml
 
-base_dir = os.path.dirname(os.path.abspath(__file__))
-base_dir = os.path.dirname(base_dir)
-config_path = os.path.join(base_dir, "config.yaml")
+screen = None
+c = {}
+my_font = None
+WHITE = (255, 255, 255)
 
-with open(config_path, "r") as file:
-    config = yaml.safe_load(file)
-
-if config.get("env", {}).get("show_graphic", False):
-    # show_graphic
-    # set up pygame for main gameplay
-    pygame.init()
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    constants_path = os.path.join(BASE_DIR, "constants.json")
-    c = json.load(open(constants_path, "r"))
-    screen = pygame.display.set_mode(
-        (c["size"], c["size"]))
-    my_font = pygame.font.SysFont(c["font"], c["font_size"], bold=True)
-    WHITE = (255, 255, 255)
+def init_game(show_graphic=False):
+    global screen, c, my_font
+    if show_graphic:
+        # show_graphic
+        # set up pygame for main gameplay
+        pygame.init()
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        constants_path = os.path.join(BASE_DIR, "constants.json")
+        with open(constants_path, "r") as f:
+            c = json.load(f)
+        screen = pygame.display.set_mode(
+            (c["size"], c["size"]))
+        my_font = pygame.font.SysFont(c["font"], c["font_size"], bold=True)
 
 def winCheck(board, status, theme, text_col, size):
     """

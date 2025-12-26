@@ -65,6 +65,8 @@ class TwentyFourtyEightEnv(BaseEnv):
         target_tile: int
         task: str
         input_modality: str = "text_image"
+        max_episodes: int = 10
+        max_steps: int = 1000
 
     cfg: Config
 
@@ -72,6 +74,7 @@ class TwentyFourtyEightEnv(BaseEnv):
         self.observations = []
         self.previous_actions = []
         self.show_graphic = self.cfg.show_graphic
+        init_game(self.show_graphic)
         self.target_tile = self.cfg.target_tile
         self.input_modality = self.cfg.input_modality
         self.score = 0 
