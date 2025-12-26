@@ -1,0 +1,14 @@
+env_name: StarCraft
+log_path: ./logs
+task: 1 vs 1 battle againt built-in ai
+input_modality: "text_image"
+map_idx: 0
+player_race: Protoss
+bot_race: Zerg
+bot_difficulty: 4
+bot_build: 2
+query_interval: 10
+num_summaries: 1
+num_actions: 5
+max_episodes: 3
+max_steps: 1000

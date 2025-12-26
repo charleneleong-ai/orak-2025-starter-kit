@@ -10,10 +10,10 @@ LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
 wandb:
   project: "orak-2048"
   mode: "online"
-  tags: ["2048"]
+  tags: ["2048", "gemini"]
 
 
 defaults:
   - _self_
-
-  - twenty_fourty_eight: gemini
+  - twenty_fourty_eight: base
+  - override twenty_fourty_eight/agent: gemini

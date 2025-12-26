@@ -9,6 +9,8 @@ class TwentyFourtyEightEnvConfig:
     task: str = "Merge Tiles to Reach the Target"
     input_modality: str = "text_image"
     env_name: str = "TwentyFourtyEight"
+    max_episodes: int = 3
+    max_steps: int = 1000
 
 @dataclass
 class PokemonRedEnvConfig:
@@ -18,6 +20,8 @@ class PokemonRedEnvConfig:
     input_modality: str = "text"
     rom_path: str = "./executables/pokemon_red/pyboy/pokered.gbc"
     success_condition: str = "get_boulder_badge"
+    max_episodes: int = 3
+    max_steps: int = 200
 
 @dataclass
 class SuperMarioEnvConfig:
@@ -26,6 +30,8 @@ class SuperMarioEnvConfig:
     task: str = "Complete stage 1-1"
     input_modality: str = "image+text"
     logging: bool = False
+    max_episodes: int = 3
+    max_steps: int = 100
 
 @dataclass
 class StarCraftEnvConfig:
@@ -41,4 +47,6 @@ class StarCraftEnvConfig:
     query_interval: int = 10
     num_summaries: int = 1
     num_actions: int = 5
+    max_episodes: int = 3
+    max_steps: int = 1000
 

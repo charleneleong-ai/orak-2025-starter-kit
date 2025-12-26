@@ -1,0 +1,7 @@
+env_name: SuperMario
+log_path: ./logs
+task: Complete stage 1-1
+input_modality: "image+text"
+logging: false
+max_episodes: 3
+max_steps: 100
