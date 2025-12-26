@@ -81,7 +81,7 @@ class GameLogic:
         self._score = 0
         self._total_score = 0
         self._episodes = 0
-        self._max_steps = MAX_STEPS[GAME_ID]
+        self._max_steps = self.cfg.env.get("max_steps", MAX_STEPS.get(GAME_ID, 1000))
         self._current_step = 0
         self._start_time = time.time()
         self._end_time = None
@@ -207,7 +207,8 @@ class GameLogic:
             self._episodes += 1
             self._total_score += score
 
-            if self._episodes < MAX_EPISODES:
+            max_episodes = self.cfg.env.get("max_episodes", MAX_EPISODES)
+            if self._episodes < max_episodes:
                 # Start new episode
                 logger.info(f"Episode {self._episodes} finished. Starting new episode...")
                 self.obs = self.reset_env()
@@ -222,7 +223,7 @@ class GameLogic:
                 )
                 self._latched_final_result = (score, is_finished, max_episodes_reached)
                 self.log_game_results()
-                logger.info(f"Max episodes ({MAX_EPISODES}) reached. Latching final observation.")
+                logger.info(f"Max episodes ({max_episodes}) reached. Latching final observation.")
 
         return score, is_finished, max_episodes_reached
 
@@ -253,7 +254,7 @@ class GameLogic:
         return {
             "game_id": GAME_ID,
             "max_steps": self._max_steps,
-            "max_episodes": MAX_EPISODES,
+            "max_episodes": self.cfg.env.get("max_episodes", MAX_EPISODES),
             "current_episode": self._episodes,
             "current_step": self._current_step,
             # Note: current_step tracking removed as it was tied to _steps_times

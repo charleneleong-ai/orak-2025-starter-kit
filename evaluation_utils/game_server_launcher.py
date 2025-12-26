@@ -4,16 +4,22 @@ import subprocess
 import time
 import shutil
 import json
+import omegaconf
+from dotenv import load_dotenv
 
 from evaluation_utils.commons import GAME_SERVER_PORTS, GAME_DATA_DIR
-from evaluation_utils.renderer import Renderer
+from evaluation_utils.renderer import get_renderer, Renderer
+from config.base import Settings
+from config.utils import load_hydra_settings
 
+load_dotenv()
 
 class GameLauncher:
-    def __init__(self, renderer: Renderer, games: list[str] | None = None):
+    def __init__(self, renderer: Renderer, settings: Settings | None = None):
         self.renderer = renderer
+        self.settings = settings
         # If no specific games are provided, default to all known games
-        self.games = games or list(GAME_SERVER_PORTS.keys())
+        self.games = self.load_games() or list(GAME_SERVER_PORTS.keys())
         self.game_servers_procs = {}
         self.output_files = {}
 
@@ -24,6 +30,16 @@ class GameLauncher:
 
     def __del__(self):
         self.force_stop_all_games()
+        
+    def load_games(self) -> list[str]:
+        self.games = []
+        for g in list(GAME_SERVER_PORTS.keys()):
+            for s in self.settings.__dict__.keys():
+                self.renderer.info(f"Checking if game {g} is enabled in settings")
+                if g == s and getattr(self.settings, g) is not None:
+                    self.renderer.event(f"Adding game {g} to game launcher")
+                    self.games.append(g)
+        return self.games
     
     def clean_game_data_dir(self):
         if os.path.exists(GAME_DATA_DIR):
@@ -56,10 +72,46 @@ class GameLauncher:
         game_data_dir = os.path.join(GAME_DATA_DIR, game_name)
         if not os.path.exists(game_data_dir):
             os.makedirs(game_data_dir)
+            
+        # Generate config file from settings if available
+        config_path = None
+        if self.settings:
+            env_config = None
+            # Dynamically get the game config from settings using the game_name
+            game_config = getattr(self.settings, game_name, None)
+            if game_config and hasattr(game_config, "env"):
+                env_config = game_config.env
+            self.renderer.event(f"Using config for {game_name}: {env_config}")
+            if env_config and env_config is not None:
+                config_path = os.path.join(game_data_dir, "config.yaml")
+                
+                # Convert dataclass/pydantic model to dict
+                if hasattr(env_config, "model_dump"):
+                    data = env_config.model_dump()
+                else:
+                    from dataclasses import asdict
+                    data = asdict(env_config)
+                
+                # Restructure for game server config format
+                common_fields = ["env_name", "log_path"]
+                yaml_data = {k: v for k, v in data.items() if k in common_fields}
+                yaml_data["env"] = {k: v for k, v in data.items() if k not in common_fields}
+                
+                # Save using OmegaConf
+                cfg = omegaconf.OmegaConf.create(yaml_data)
+                omegaconf.OmegaConf.save(cfg, config_path)
+                self.renderer.event(f"Generated config for {game_name} at {config_path}...")
+                
+        if not config_path:
+             raise ValueError(f"Configuration for {game_name} is missing in settings. Cannot start game server.")
+
         cmd = [
             "python",
             game_server_script,
         ]
+        
+        cmd.extend(["--config", config_path])
+            
         env = os.environ.copy()
         env["PORT"] = str(GAME_SERVER_PORTS[game_name])
         env["GAME_DATA_DIR"] = game_data_dir
@@ -75,7 +127,7 @@ class GameLauncher:
         return proc
 
     def start_game_servers(self, games: list[str] | None = None):
-        self.renderer.event("Initializing game servers...")
+        self.renderer.event(f"Initializing game servers {games}...")
 
         game_list = games or self.games
 
@@ -178,15 +230,17 @@ class GameLauncher:
                     completed_games.add(game_name)
 
 
-
 if __name__ == "__main__":
-    from evaluation_utils.renderer import get_renderer
-
     renderer = get_renderer()
     renderer.start(local=True)
+    
+    # Load settings for standalone execution
+    settings = load_hydra_settings("gemini")
 
     try:
-        game_launcher = GameLauncher(renderer)
+        game_launcher = GameLauncher(renderer, settings=settings)
+       
+        renderer.event(f"Starting game servers for games: {game_launcher.games}...")
         game_launcher.start_game_servers()
         game_launcher.wait_for_games_to_finish()
     finally:

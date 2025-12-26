@@ -2,6 +2,12 @@ import os
 from typing import Optional, Any
 from pydantic import BaseModel
 from config.agent_config import AgentConfig
+from config.env_config import (
+    TwentyFourtyEightEnvConfig,
+    PokemonRedEnvConfig,
+    SuperMarioEnvConfig,
+    StarCraftEnvConfig
+)
 
 
 class WandbConfig(BaseModel):
@@ -39,10 +45,25 @@ class WandbConfig(BaseModel):
             return f"{self.entity}/{self.project}"
         return self.project
 
+class TwentyFourtyEightConfig(BaseModel):
+    agent: AgentConfig
+    env: TwentyFourtyEightEnvConfig
+
+class PokemonRedConfig(BaseModel):
+    agent: AgentConfig
+    env: PokemonRedEnvConfig
+
+class SuperMarioConfig(BaseModel):
+    agent: AgentConfig
+    env: SuperMarioEnvConfig
+
+class StarCraftConfig(BaseModel):
+    agent: AgentConfig
+    env: StarCraftEnvConfig
 
 class Settings(BaseModel):
     wandb: WandbConfig = WandbConfig()
-    twenty_fourty_eight: AgentConfig = None
-    pokemon_red: AgentConfig = None
-    super_mario: AgentConfig = None
-    star_craft: AgentConfig = None
+    twenty_fourty_eight: TwentyFourtyEightConfig = None
+    pokemon_red: PokemonRedConfig = None
+    super_mario: SuperMarioConfig = None
+    star_craft: StarCraftConfig = None

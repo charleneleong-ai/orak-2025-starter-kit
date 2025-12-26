@@ -1,0 +1,8 @@
+defaults:
+  - agent: random
+  - env: default
+
+wandb:
+  project: "orak-star-craft"
+  mode: "online"
+  tags: ["random", "star_craft"]
