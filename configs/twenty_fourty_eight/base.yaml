@@ -1,3 +1,8 @@
 defaults:
   - agent: gemini
   - env: default
+
+wandb:
+  project: "orak-2048"
+  mode: "online"
+  tags: ["gemini", "2048"]

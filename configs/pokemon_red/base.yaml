@@ -1,3 +1,8 @@
 defaults:
   - agent: random
   - env: default
+
+wandb:
+  project: "orak-pokemon-red"
+  mode: "online"
+  tags: ["random", "pokemon_red"]
