@@ -1,0 +1,20 @@
+# @package _global_
+
+ENV: ${oc.env:ENV, "dev"}
+CWD: ${hydra:runtime.cwd}
+LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
+
+wandb:
+  project: "orak-2048"
+  mode: "online"
+  tags: ["2048", "poetiq"]
+
+defaults:
+  - _self_
+  - twenty_fourty_eight: base
+  - override twenty_fourty_eight/agent: poetiq
+
+twenty_fourty_eight:
+  env:
+    max_episodes: 2
+

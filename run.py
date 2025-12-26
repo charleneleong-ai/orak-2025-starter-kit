@@ -16,6 +16,7 @@ app = typer.Typer(pretty_exceptions_enable=False)
 class ExperimentConfigName(StrEnum):
     GEMINI = "gemini"
     OPENAI = "openai"
+    POETIQ = "poetiq"
 
 
 load_dotenv()

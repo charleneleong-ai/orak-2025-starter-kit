@@ -22,7 +22,7 @@ class GeminiConfig(AgentConfig):
     __pydantic_config__ = ConfigDict(extra="forbid")
     """Configuration for Gemini (Vertex AI) agent."""
 
-    model: str = "gemini-pro-3"
+    model: str = "gemini-pro-3-preview"
     temperature: float = 0.1
     gcp_project: Optional[str] = None
     gcp_location: str = "us-central1"
@@ -77,4 +77,11 @@ class OpenAIConfig(AgentConfig):
         }
 
 
-AgentConfig = OpenAIConfig | GeminiConfig
+@dataclass
+class PoetiqConfig(GeminiConfig):
+    """Configuration for Poetiq self-evolving agent."""
+    max_history: int = 5
+    evolution_interval: int = 1
+
+
+AgentConfig = OpenAIConfig | GeminiConfig | PoetiqConfig

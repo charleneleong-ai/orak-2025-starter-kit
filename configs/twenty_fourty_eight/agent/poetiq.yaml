@@ -1,0 +1,8 @@
+class_name: "agents.twenty_fourty_eight.poetiq_twenty_fourty_eight.PoetiqTwentyFourtyEightAgent"
+model: "gemini-pro-3-preview"
+gcp_location: "europe-west1"
+thinking_level: "high"
+track: "TRACK2" 
+temperature: 0.2
+max_history: 5
+evolution_interval: 1
