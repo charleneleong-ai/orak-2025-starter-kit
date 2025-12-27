@@ -80,8 +80,19 @@ class OpenAIConfig(AgentConfig):
 @dataclass
 class PoetiqConfig(GeminiConfig):
     """Configuration for Poetiq self-evolving agent."""
-    max_history: int = 5
-    evolution_interval: int = 1
+    # Evolution parameters
+    max_iterations: int = 10  # Max evolution cycles per episode
+    max_solutions: int = 5  # Number of solutions to keep in history
+    selection_probability: float = 1.0  # Probability of showing history in prompt
+    improving_order: bool = True  # Show solutions worst->best
+    return_best_result: bool = True  # Return best across all iterations
+    
+    # LLM parameters
+    request_timeout: int = 60 * 5  # 5 minutes per LLM call
+    per_iteration_retries: int = 2  # Retries per evolution
+    
+    # Random seed
+    seed: int = 0
 
 
 AgentConfig = OpenAIConfig | GeminiConfig | PoetiqConfig

@@ -92,7 +92,7 @@ class GeminiTwentyFourtyEightAgent(TwentyFourtyEightAgent):
         
     @property
     def AGENT_TAGS(self):
-        return ["gemini", "vertex-ai"]
+        return ["2048", "gemini", self.config.model, "vertex-ai"]
 
     @weave.op()
     def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> Tuple[str, str, str, Any, str]:
