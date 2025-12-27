@@ -1,0 +1,15 @@
+class_name: "agents.twenty_fourty_eight.poetiq_twenty_fourty_eight.PoetiqTwentyFourtyEightAgent"
+model: "gemini-3-flash-preview"
+gcp_location: "global"
+thinking_level: "high"
+track: "TRACK2" 
+temperature: 1.0  # Higher temperature for more diverse strategies
+# Poetiq-specific parameters (matching ARC-AGI solver)
+max_iterations: 10
+max_solutions: 5  # Keep top 5 strategies in memory
+selection_probability: 1.0  # Always show history
+improving_order: true  # Show worst->best
+return_best_result: true
+request_timeout: 300  # 5 min per LLM call
+per_iteration_retries: 2
+seed: 0

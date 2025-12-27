@@ -4,5 +4,5 @@ target_tile: 2048
 task: "Merge Tiles to Reach the Target"
 input_modality: "text_image"
 env_name: "TwentyFourtyEight"
-max_episodes: 3
+max_episodes: 10
 max_steps: 1000
