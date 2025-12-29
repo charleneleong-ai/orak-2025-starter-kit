@@ -13,12 +13,12 @@ from config.env_config import (
 class WandbConfig(BaseModel):
     """Weights & Biases configuration (includes Weave)."""
 
-    project: str = "orak-2048"
+    project: str = ""
     entity: Optional[str] = None
     mode: str = "online"  # "online", "offline", or "disabled"
-    tags: list = ["2048"]
+    tags: list = []
     notes: Optional[str] = None
-    
+     
     # Weave-specific settings
     weave_enabled: bool = True
 
@@ -30,9 +30,6 @@ class WandbConfig(BaseModel):
         # Check if Weave is explicitly disabled
         self.weave_enabled = os.environ.get("WEAVE_ENABLED", "true").lower() in ["true", "1", "yes"]
         
-        if self.tags is None:
-            self.tags = ["2048"]
-
     @property
     def enabled(self) -> bool:
         """W&B logging enabled."""
