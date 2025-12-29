@@ -6,6 +6,7 @@ LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
 
 wandb:
   project: "orak-2048"
+  entity: "chaleong" 
   mode: "online"
   tags: ["2048", "poetiq"]
 
