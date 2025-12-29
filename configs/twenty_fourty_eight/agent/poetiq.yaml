@@ -1,6 +1,6 @@
 class_name: "agents.twenty_fourty_eight.poetiq_twenty_fourty_eight.PoetiqTwentyFourtyEightAgent"
-model: "gemini-3-flash-preview"
-gcp_location: "global"
+model: "gemini-2.5-pro"
+gcp_location: "europe-west1"
 thinking_level: "high"
 track: "TRACK2" 
 temperature: 1.0  # Higher temperature for more diverse strategies
