@@ -1,5 +1,6 @@
+import traceback
 from typing import ClassVar, Any, Optional
-from pydantic import PrivateAttr, BaseModel, Field
+from pydantic import PrivateAttr
 import wandb
 import weave
 import os
@@ -152,6 +153,7 @@ class OrakAgent(weave.Model):
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
             except Exception as e:
                 logger.error(f"Failed to log raw request: {e}")
+                raise ValueError(f"Failed to log raw request: {traceback.format_exc()}")
 
         if self.wandb_config and self.wandb_config.enabled:
             log_data = {
@@ -192,7 +194,7 @@ class OrakAgent(weave.Model):
                     log_data["obs_image"] = wandb.Image(obs_image, caption=f"Step {self._step_count}")
                 except Exception as e:
                     # If image logging fails, just continue
-                    logger.error(f"Warning: Could not log image: {e}")
+                    logger.warning(f"Warning: Could not log image: {traceback.format_exc()}")
             
             wandb.log(log_data)
 
