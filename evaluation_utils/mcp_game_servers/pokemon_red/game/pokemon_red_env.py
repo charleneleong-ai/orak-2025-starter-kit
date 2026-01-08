@@ -16,6 +16,8 @@ from pyboy.utils import WindowEvent
 from mcp_game_servers.base_env import BaseEnv
 from mcp_game_servers.utils.types.game_io import Action, Obs
 from mcp_game_servers.pokemon_red.game.pyboy_runner import PyBoyRunner
+from mcp_game_servers.pokemon_red.game.utils.pokemon_tools import PokemonToolset, execute_action_response
+from mcp_game_servers.pokemon_red.game.utils.map_utils import construct_init_map, refine_current_map
 
 
 @dataclass
@@ -35,6 +37,21 @@ class PokemonRedAction(Action):
 
     def to_json(self) -> str:
         return self.action
+
+
+class AgentMemoryWrapper:
+    """Minimal wrapper to provide agent.memory interface for PokemonToolset."""
+    def __init__(self):
+        self.state_dict = {}
+        self.map_memory_dict = {}
+        self.dialog_buffer = []
+
+
+class AgentWrapper:
+    """Minimal wrapper to provide agent interface for PokemonToolset."""
+    def __init__(self, env):
+        self.env = env
+        self.memory = AgentMemoryWrapper()
 
 
 class PokemonRedEnv(BaseEnv):
@@ -67,6 +84,10 @@ class PokemonRedEnv(BaseEnv):
         self.state_text = ""
         self.prev_state_dict = {}
         self.state_dict = {}
+
+        # Initialize agent wrapper and toolset for use_tool() support
+        self._agent_wrapper = AgentWrapper(self)
+        self._toolset = PokemonToolset(self._agent_wrapper)
 
         self.map_flag, self.ball_flag, self.catch_flag, self.pewter_flag, self.leader_flag = False, False, False, False, False
 
@@ -198,13 +219,44 @@ class PokemonRedEnv(BaseEnv):
             self._send_action(action)
             time.sleep(0.1)
         
+    def _sync_toolset_state(self):
+        """Sync current state to the toolset's agent wrapper."""
+        self._agent_wrapper.memory.state_dict = self.state_dict
+        # Update map memory dict
+        current_map = self.state_dict['map_info']['map_name']
+        if self.state_dict['map_info']['x_max'] is not None:
+            if current_map not in self._agent_wrapper.memory.map_memory_dict:
+                self._agent_wrapper.memory.map_memory_dict[current_map] = {
+                    "explored_map": construct_init_map(
+                        self.state_dict['map_info']['x_max'],
+                        self.state_dict['map_info']['y_max'],
+                        self.state_dict['map_info']['map_screen_raw']
+                    ),
+                    "history": [],
+                }
+            else:
+                self._agent_wrapper.memory.map_memory_dict[current_map]["explored_map"] = refine_current_map(
+                    self._agent_wrapper.memory.map_memory_dict[current_map]["explored_map"],
+                    self.state_dict['map_info']['x_max'],
+                    self.state_dict['map_info']['y_max'],
+                    self.state_dict['map_info']['map_screen_raw']
+                )
+
     def step(self, action: Action):
-        actions = action.action.strip("'\"").lower()
-        commands = re.split(r'[|/;, \t\n]+', actions)
+        action_str = action.action.strip()
 
-        self.send_action_set(commands)
+        # Check if this is a use_tool() action
+        if action_str.lower().startswith("use_tool("):
+            self._sync_toolset_state()
+            execute_action_response(self._toolset, action_str)
+            time.sleep(0.5)
+        else:
+            # Normal low-level action handling
+            actions = action_str.strip("'\"").lower()
+            commands = re.split(r'[|/;, \t\n]+', actions)
+            self.send_action_set(commands)
+            time.sleep(3)
 
-        time.sleep(3)
         state_text = self._receive_state()
 
         self.prev_state_text = self.state_text
@@ -213,7 +265,7 @@ class PokemonRedEnv(BaseEnv):
         self.state_dict = self.parse_game_state(self.state_text)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+
         image = self.runner.take_screenshot(dir_name=os.path.join(self.log_path, 'screenshots'), img_name=f'screenshot_{timestamp}.png')
         obs = PokemonRedObs(state_text=state_text, image=image)
         reward, terminated, truncated, info = 0, False, False, {}
@@ -241,24 +293,8 @@ class PokemonRedEnv(BaseEnv):
         elif self.score == 6:
             if not "OAK's PARCEL" in self.state_dict['inventory']:
                 self.score += 1
-        elif self.score > 6:
-            if not self.map_flag and "TOWN MAP" in self.state_dict['inventory']:
-                self.score += 1
-                self.map_flag = True
-            if not self.ball_flag and "BALL" in self.state_dict['inventory']:
-                self.score += 1
-                self.ball_flag = True
-            if not self.catch_flag and '\nName' in self.state_dict['your_party']:
-                self.score += 1
-                self.catch_flag = True
-            if not self.pewter_flag and "Pewter" in self.state_dict['map_info']['map_name']:
-                self.score += 1
-                self.pewter_flag = True
-            if not self.leader_flag and "Boulder" in self.state_dict['badge_list']:
-                self.score += 1
-                self.leader_flag = True
 
-        if self.score == 12 or self.runner.quit_flag:
+        if self.score == 7 or self.runner.quit_flag:
             done = True
         else:
             done = False

@@ -1,5 +1,5 @@
 [![banner image](https://images.aicrowd.com/raw_images/challenges/social_media_image_file/1172/d7e88fdb24345bdbd026.jpg)](https://www.aicrowd.com/challenges/orak-game-agent-challenge-2025)
-[![Discord](https://img.shields.io/discord/565639094860775436.svg)](https://discord.gg/yWurtB2huX)
+[![Discord](https://img.shields.io/discord/565639094860775436.svg)](https://discord.gg/gjCpRPQuEc)
 
 # Orak Game Agent Challenge 2025 Starter Kit 🎮
 
@@ -126,6 +126,13 @@ Valid game identifiers are:
 - `super_mario`
 - `pokemon_red`
 - `star_craft`
+
+#### Game-specific setup (local only)
+
+Some games require additional setup before they can run locally:
+
+- **`pokemon_red`**: Follow the official Pokémon Red setup guide (ROM + assets): [docs/setup_pokemon.md](https://github.com/krafton-ai/Orak/blob/release/docs/setup_pokemon.md)
+- **`star_craft`**: Follow the official StarCraft II setup guide (Battle.net install + maps): [docs/setup_star_craft.md](https://github.com/krafton-ai/Orak/blob/release/docs/setup_star_craft.md)
 
 A successful execution will conclude with an evaluation summary. An example output is shown below:
 
