@@ -1,8 +1,6 @@
-import re
-import ast
 import heapq
 import numpy as np
-from typing import Any, Optional, Dict, List, Tuple
+from typing import Any, Optional
 from pydantic import PrivateAttr, BaseModel, Field
 from langchain_google_vertexai import ChatVertexAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -235,7 +233,7 @@ class PoetiqTwentyFourtyEightAgent(TwentyFourtyEightAgent):
         
         return "\n".join(analysis) if analysis else "No specific failure patterns detected."
 
-    def get_action(self, obs: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    def get_action(self, obs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         # Track stats
         game_info = obs.get("game_info", {})
         self._last_max_tile = int(game_info.get("max_tile", 0))

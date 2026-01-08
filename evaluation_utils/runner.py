@@ -222,7 +222,7 @@ class Runner:
                     with open(os.path.join(game_data_dir, "model_declaration.json"), "w") as f:
                         json.dump(model_decl, f, indent=2)
                 except Exception as e:
-                    logger.error(f"Failed to save model declaration: {e}")
+                    logger.warning(f"Failed to save model declaration: {e}")
 
             game_states_path = os.path.join(game_data_dir, "game_states.jsonl")
             states_f = open(game_states_path, "a", encoding="utf-8")
@@ -316,6 +316,7 @@ class Runner:
                             json.dump(summary, f, indent=2)
                     except Exception as e:
                         logger.error(f"Failed to save evaluation summary: {e}")
+                        raise
 
                 # Mark game as completed
                 self.renderer.complete_game(game_name, avg_score)
