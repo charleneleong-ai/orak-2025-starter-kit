@@ -83,14 +83,14 @@ def main(
     if games and not local:
         raise typer.BadParameter("--games can only be used together with --local")
     setup_logging(verbose=verbose)
-
+    
+    logger.info(f"Loading Hydra settings {config_name}...")
     settings = load_hydra_settings(config_name=config_name.value)
     
     # Override W&B notes if provided
     if experiment_description:
         settings.wandb.notes = experiment_description
         
-    logger.info(f"Loading Hydra settings {config_name}...")
 
     # Initialize Weave if enabled (uses same W&B credentials)
     if settings.wandb.weave_enabled:
@@ -100,9 +100,25 @@ def main(
         except Exception as e:
             logger.warning(f"Failed to initialize Weave: {e}")
 
+    # If loading checkpoint and run_id not provided, try to find the latest run
+    if run_id is None and load_checkpoint and local and games:
+        # Check the first game's directory for runs
+        first_game_dir = GAME_DATA_DIR / games[0]
+        if first_game_dir.exists():
+            # Get all subdirectories that look like potential runs (ignore non-dirs)
+            runs = [d.name for d in first_game_dir.iterdir() if d.is_dir()]
+            if runs:
+                # Sort to find the latest (assuming timestamp or lexicographical order)
+                runs.sort()
+                latest_run = runs[-1]
+                logger.info(f"Auto-detected latest run ID for checkpoint loading: {latest_run}")
+                run_id = latest_run
+
     # Create run ID (timestamp-based if not provided)
     if run_id is None:
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    settings.wandb.run_id = run_id
     
     logger.info(f"Run ID: {run_id}")
 

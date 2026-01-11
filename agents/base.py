@@ -52,10 +52,12 @@ class BaseOrakAgent(weave.Model):
             wandb.init(
                 project=self.wandb_config.project, 
                 entity=self.wandb_config.entity,
+                id=self.wandb_config.run_id,
+                resume="allow",
                 config=self.config.to_dict() if hasattr(self.config, "to_dict") else {},
                 tags=tags,
                 notes=self.wandb_config.notes,
-                name=None,  # Auto-generate run name
+                name=self.wandb_config.run_id
             )
 
     def set_log_dir(self, log_dir: str):
