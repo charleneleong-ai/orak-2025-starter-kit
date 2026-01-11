@@ -2,6 +2,7 @@ import asyncio
 from typing import Any, Annotated
 import typer
 from enum import StrEnum
+from datetime import datetime
 from evaluation_utils.runner import Runner
 from evaluation_utils.commons import setup_logging, GAME_DATA_DIR, GAME_SERVER_PORTS
 from evaluation_utils.renderer import get_renderer
@@ -56,7 +57,7 @@ def main(
     ),
     # Checkpoint options
     save_checkpoints: bool = typer.Option(
-        False,
+        True,
         "--save-checkpoints",
         help="Save agent checkpoints during training"
     ),
@@ -69,6 +70,11 @@ def main(
         10,
         "--checkpoint-freq",
         help="Save checkpoint every N episodes (default: 10)"
+    ),
+    run_id: str | None = typer.Option(
+        None,
+        "--run-id",
+        help="Custom run ID for organising outputs (default: timestamp)"
     ),
 ):
     """Run evaluation for Orak 2025 games."""
@@ -94,14 +100,11 @@ def main(
         except Exception as e:
             logger.warning(f"Failed to initialize Weave: {e}")
 
-    # Initialize CheckpointManager (saves to game_logs/checkpoints)
-    checkpoint_dir = os.path.join(GAME_DATA_DIR, "checkpoints")
-    checkpoint_manager = CheckpointManager(checkpoint_dir=checkpoint_dir)
+    # Create run ID (timestamp-based if not provided)
+    if run_id is None:
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    if save_checkpoints:
-        logger.info(f"Checkpointing enabled: saving every {checkpoint_frequency} episodes to {checkpoint_dir}")
-    if load_checkpoint:
-        logger.info(f"Will attempt to load from latest checkpoint if available")
+    logger.info(f"Run ID: {run_id}")
 
     # Initialize the centralized renderer
     renderer = get_renderer()
@@ -112,13 +115,14 @@ def main(
         selected_games = games if local else None
         renderer.event("Starting evaluation run ...")
         renderer.event(f"Settings: {settings.model_dump()}...")
+        
         runner = Runner(
             session_id=session_id,
             local=local,
             renderer=renderer,
             games=selected_games,
             settings=settings,
-            checkpoint_manager=checkpoint_manager,
+            run_id=run_id,
             save_checkpoints=save_checkpoints,
             load_checkpoint=load_checkpoint,
             checkpoint_frequency=checkpoint_frequency,

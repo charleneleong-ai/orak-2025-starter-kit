@@ -1,14 +1,16 @@
 import asyncio
 import os
-import time
+from datetime import datetime
 import json
 import backoff
 from typing import Any
 
 import base64
 from io import BytesIO
+from pathlib import Path
 
 # from evaluation_utils.sessions import Session
+from evaluation_utils.checkpoint_manager import CheckpointManager
 from evaluation_utils.game_env import GameEnv
 from evaluation_utils.commons import GAME_SERVER_PORTS, GAME_DATA_DIR
 from evaluation_utils.game_server_launcher import GameLauncher
@@ -51,7 +53,7 @@ class Runner:
         grpc_ports: dict[str, int] | None = None,
         manage_local_game_servers: bool = True,
         settings: Settings | None = None,
-        checkpoint_manager: "CheckpointManager | None" = None,
+        run_id: str | None = None,
         save_checkpoints: bool = False,
         load_checkpoint: bool = False,
         checkpoint_frequency: int = 10,
@@ -62,11 +64,14 @@ class Runner:
         self.settings = settings
         self.agent_map = load_agent_map(self.settings)
         
+        # Run organization
+        self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
+        
         # Checkpoint configuration
-        self.checkpoint_manager = checkpoint_manager
         self.save_checkpoints = save_checkpoints
         self.load_checkpoint = load_checkpoint
         self.checkpoint_frequency = checkpoint_frequency
+        self.game_checkpoint_managers = {}  # Per-game checkpoint managers
 
         # Determine which games to run
         if self.local:
@@ -219,13 +224,13 @@ class Runner:
         try:
             self.renderer.start_game_timer(game_name)
 
-            # Prepare per-iteration state logging
-            game_data_dir = os.path.join(GAME_DATA_DIR, game_name)
-            os.makedirs(game_data_dir, exist_ok=True)
+            # Prepare per-iteration state logging (use run-specific directory)
+            game_data_dir = str(self._get_game_run_dir(game_name))
 
             # Configure agent logging and save model declaration
             if hasattr(agent, "set_log_dir"):
-                agent.set_log_dir(game_data_dir)
+                game_log_dir = self._get_game_log_dir(game_name)
+                agent.set_log_dir(game_log_dir)
             
             if hasattr(agent, "get_model_declaration"):
                 try:
@@ -310,10 +315,11 @@ class Runner:
                         episode += 1
 
                         # Save checkpoint if enabled
-                        if self.save_checkpoints and self.checkpoint_manager and isinstance(agent, Checkpointable):
+                        if self.save_checkpoints and isinstance(agent, Checkpointable):
                             if episode % self.checkpoint_frequency == 0:
                                 try:
-                                    self.checkpoint_manager.save_agent_checkpoint(
+                                    checkpoint_manager = self._get_checkpoint_manager(game_name)
+                                    checkpoint_manager.save_agent_checkpoint(
                                         agent=agent,
                                         game_name=game_name,
                                         game_state={
@@ -380,3 +386,59 @@ class Runner:
         except OSError as exc:
             if self.renderer:
                 self.renderer.event(f"Warning: Failed to delete session file: {exc}")
+
+    def _get_game_run_dir(self, game_name: str) -> Path:
+        """
+        Get the run directory for a specific game.
+        Creates: game_logs/<game_name>/<run_id>/
+        
+        Args:
+            game_name: Name of the game
+            
+        Returns:
+            Path to game run directory
+        """
+        
+        game_run_dir = Path(GAME_DATA_DIR) / game_name / self.run_id
+        game_run_dir.mkdir(parents=True, exist_ok=True)
+        return game_run_dir
+    
+    def _get_checkpoint_manager(self, game_name: str) -> "CheckpointManager":
+        """
+        Get or create checkpoint manager for a specific game.
+        Creates: game_logs/<game_name>/<run_id>/checkpoints/
+        
+        Args:
+            game_name: Name of the game
+            
+        Returns:
+            CheckpointManager instance for the game
+        """
+        if game_name not in self.game_checkpoint_managers:
+            
+            game_run_dir = self._get_game_run_dir(game_name)
+            checkpoint_dir = game_run_dir / "checkpoints"
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            
+            self.game_checkpoint_managers[game_name] = CheckpointManager(
+                checkpoint_dir=str(checkpoint_dir)
+            )
+            logger.info(f"Checkpoint directory for {game_name}: {checkpoint_dir}")
+        
+        return self.game_checkpoint_managers[game_name]
+    
+    def _get_game_log_dir(self, game_name: str) -> str:
+        """
+        Get the log directory for a specific game.
+        Creates: game_logs/<game_name>/<run_id>/logs/
+        
+        Args:
+            game_name: Name of the game
+            
+        Returns:
+            Path to game log directory (as string for compatibility)
+        """
+        game_run_dir = self._get_game_run_dir(game_name)
+        log_dir = game_run_dir / "logs"
+        game_run_dir.mkdir(parents=True, exist_ok=True)
+        return str(log_dir)
