@@ -289,6 +289,3 @@ class BaseOrakAgent(weave.Model):
             "total_tokens": self._stats.get("total_tokens", 0),
         }
 
-
-# Alias for backward compatibility
-OrakAgent = BaseOrakAgent

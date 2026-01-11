@@ -8,7 +8,7 @@ from langchain_core.language_models import BaseChatModel
 from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
 
-from agents.base import OrakAgent
+from agents.base import BaseOrakAgent
 
 
 import weave
@@ -65,7 +65,7 @@ class GameAction(BaseModel):
     reasoning: str = Field(description="Detailed explanation of why this action was chosen")
     action: str = Field(description="The action to take: up, down, left, or right")
 
-class TwentyFourtyEightAgent(OrakAgent):
+class TwentyFourtyEightAgent(BaseOrakAgent):
     
     _llm: Optional[BaseChatModel] = PrivateAttr(default=None)
 
