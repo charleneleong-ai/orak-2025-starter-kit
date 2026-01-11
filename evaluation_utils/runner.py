@@ -258,8 +258,25 @@ class Runner:
             try:
                 # Game loop
                 iteration = game_config.get("current_step", 0)
-                total_steps = 0
                 episode = game_config.get("current_episode", 0)
+                # Load checkpoint if enabled
+                total_steps = 0
+                if self.load_checkpoint and hasattr(agent, 'load_state'):
+                    try:
+                        checkpoint_manager = self._get_checkpoint_manager(game_name)
+                        checkpoint_data = checkpoint_manager.load_latest_agent_checkpoint(agent)
+                        if checkpoint_data:
+                            game_state = checkpoint_data.get('game_state', {})
+                            episode = game_state.get('episode', episode)
+                            iteration = game_state.get('iteration', iteration)
+                            total_steps = game_state.get('total_steps', 0)
+                            self.renderer.event(f"{game_display_name}: Resuming from checkpoint at episode {episode}, step {total_steps}")
+                        else:
+                            self.renderer.event(f"{game_display_name}: No checkpoint found, starting fresh")
+                    except Exception as e:
+                        logger.error(f"Failed to load checkpoint: {e}")
+                        self.renderer.event(f"{game_display_name}: Warning: Failed to load checkpoint: {e}")
+                        
                 avg_score = 0
                 while episode < max_episodes:
                     iteration += 1
