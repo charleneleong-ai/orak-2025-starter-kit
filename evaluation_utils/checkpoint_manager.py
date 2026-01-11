@@ -152,7 +152,18 @@ class CheckpointManager:
         
         agent_name = agent.__class__.__name__
         agent_state = agent.get_state()
-        metadata = agent.get_checkpoint_metadata()
+        metadata = agent.get_checkpoint_metadata()        
+        # If no explicit checkpoint_id provided, generate one with step count
+        if checkpoint_id is None:
+            total_steps = 0
+            if game_state and 'total_steps' in game_state:
+                total_steps = game_state['total_steps']
+            elif metadata and 'total_steps' in metadata:
+                total_steps = metadata['total_steps']
+                
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            checkpoint_id = f"step_{total_steps}_{timestamp}"
+
         
         return self.save_checkpoint(
             game_name=game_name,

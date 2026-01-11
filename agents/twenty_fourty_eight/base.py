@@ -70,12 +70,15 @@ class TwentyFourtyEightAgent(BaseOrakAgent):
     _llm: Optional[BaseChatModel] = PrivateAttr(default=None)
 
     def calculate_metrics(self, game_info: dict[str, Any]) -> dict[str, Any]:
-        current_game_score = int(game_info.get("score", 0))
+        current_game_score = int(float(game_info.get("score", 0)))
+        try:
+            max_tile = int(game_info.get("max_tile", 0))
+        except (ValueError, TypeError):
+            max_tile = 0
         return {
             "evaluation_score": min((current_game_score / 20000) * 100, 100),
-            "max_tile": int(game_info.get("max_tile", 0))
+            "max_tile": max_tile
         }
-
     def get_action(self, obs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         game_info = obs.get("game_info", {})
         cur_state_str = obs.get("obs_str", "")

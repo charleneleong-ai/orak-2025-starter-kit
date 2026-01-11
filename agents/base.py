@@ -110,7 +110,7 @@ class BaseOrakAgent(weave.Model):
         cur_state_str = obs.get("obs_str", "")
         obs_image = obs.get("obs_image", None)
         
-        current_score = int(game_info.get("score", 0))
+        current_score = int(float(game_info.get("score", 0)))
         if step is not None:
             self._step_count = step
         else:
