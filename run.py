@@ -69,7 +69,7 @@ def main(
     checkpoint_frequency: int = typer.Option(
         10,
         "--checkpoint-freq",
-        help="Save checkpoint every N episodes (default: 10)"
+        help="Save checkpoint every N steps (default: 10)"
     ),
     run_id: str | None = typer.Option(
         None,

@@ -64,7 +64,7 @@ class Runner:
         self.settings = settings
         self.agent_map = load_agent_map(self.settings)
         
-        # Run organization
+        # Run organisation
         self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # Checkpoint configuration
@@ -102,7 +102,7 @@ class Runner:
                 raise ValueError(f"Missing port(s) for game(s): {', '.join(missing)}")
 
             self.grpc_addresses = {game: f"{grpc_host}:{ports[game]}" for game in self.games}
-            self.game_launcher = GameLauncher(renderer, settings=self.settings) if self.manage_local_game_servers else None
+            self.game_launcher = GameLauncher(renderer, settings=self.settings, run_id=self.run_id) if self.manage_local_game_servers else None
         else:
             self.renderer.event("Running in REMOTE mode")
             self.session = Session(session_id=session_id, renderer=self.renderer)
@@ -258,10 +258,31 @@ class Runner:
             try:
                 # Game loop
                 iteration = game_config.get("current_step", 0)
+                total_steps = 0
                 episode = game_config.get("current_episode", 0)
                 avg_score = 0
                 while episode < max_episodes:
                     iteration += 1
+                    total_steps += 1
+                    # Save checkpoint if enabled (step-based)
+                    if self.save_checkpoints and hasattr(agent, 'get_state'):
+                        if total_steps % self.checkpoint_frequency == 0:
+                            try:
+                                checkpoint_manager = self._get_checkpoint_manager(game_name)
+                                checkpoint_manager.save_agent_checkpoint(
+                                    agent=agent,
+                                    game_name=game_name,
+                                    game_state={
+                                        'episode': episode,
+                                        'score': current_score,
+                                        'iteration': iteration,
+                                        'steps_this_episode': iteration,
+                                        'total_steps': total_steps,
+                                    },
+                                )
+                                logger.info(f"Saved checkpoint for {game_name} at step {total_steps}")
+                            except Exception as e:
+                                logger.error(f"Failed to save checkpoint: {e}")
                     obs = await self._call_in_thread(env.load_obs)
                     action = await self._call_in_thread(agent.act, obs)
                     result = await self._call_in_thread(env.dispatch_final_action, action)
@@ -313,25 +334,6 @@ class Runner:
                             agent.record_episode_end(episode + 1, game_name, seed, current_score)
 
                         episode += 1
-
-                        # Save checkpoint if enabled
-                        if self.save_checkpoints and isinstance(agent, Checkpointable):
-                            if episode % self.checkpoint_frequency == 0:
-                                try:
-                                    checkpoint_manager = self._get_checkpoint_manager(game_name)
-                                    checkpoint_manager.save_agent_checkpoint(
-                                        agent=agent,
-                                        game_name=game_name,
-                                        game_state={
-                                            "episode": episode,
-                                            "score": current_score,
-                                            "iteration": iteration,
-                                            "steps_this_episode": steps_this_episode,
-                                        },
-                                    )
-                                    logger.info(f"Saved checkpoint for {game_name} at episode {episode}")
-                                except Exception as e:
-                                    logger.error(f"Failed to save checkpoint: {e}")
 
                         iteration = 0
                         self.renderer.event(
