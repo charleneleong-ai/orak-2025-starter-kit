@@ -9,7 +9,7 @@ from loguru import logger
 from config.agent_config import AgentConfig
 from config.base import WandbConfig
 
-class OrakAgent(weave.Model):
+class BaseOrakAgent(weave.Model):
     TRACK: ClassVar[str] = "TRACK1"
     
     config: AgentConfig
@@ -52,10 +52,12 @@ class OrakAgent(weave.Model):
             wandb.init(
                 project=self.wandb_config.project, 
                 entity=self.wandb_config.entity,
+                id=self.wandb_config.run_id,
+                resume="allow",
                 config=self.config.to_dict() if hasattr(self.config, "to_dict") else {},
                 tags=tags,
                 notes=self.wandb_config.notes,
-                name=None,  # Auto-generate run name
+                name=self.wandb_config.run_id
             )
 
     def set_log_dir(self, log_dir: str):
@@ -102,14 +104,17 @@ class OrakAgent(weave.Model):
         }
 
     @weave.op()
-    def act(self, obs: dict[str, Any]) -> str:
+    def act(self, obs: dict[str, Any], step: int = None) -> str:
         """Main action method tracked by Weave."""
         game_info = obs.get("game_info", {})
         cur_state_str = obs.get("obs_str", "")
         obs_image = obs.get("obs_image", None)
         
-        current_score = int(game_info.get("score", 0))
-        self._step_count += 1
+        current_score = int(float(game_info.get("score", 0)))
+        if step is not None:
+            self._step_count = step
+        else:
+            self._step_count += 1
 
         # Get action from subclass
         action, log_extras = self.get_action(obs)
@@ -196,7 +201,7 @@ class OrakAgent(weave.Model):
                     # If image logging fails, just continue
                     logger.warning(f"Warning: Could not log image: {traceback.format_exc()}")
             
-            wandb.log(log_data)
+            wandb.log(log_data, step=self._step_count)
 
         self._prev_state_str = cur_state_str
         self._last_action = action
@@ -225,3 +230,67 @@ class OrakAgent(weave.Model):
                 wandb.finish()
             except:
                 pass
+
+    # ===== Checkpoint Methods =====
+    
+    def get_state(self) -> dict[str, Any]:
+        """
+        Get agent state for checkpointing.
+        
+        Subclasses should override this to add their specific state,
+        calling super().get_state() first to include base state.
+        
+        Returns:
+            Dictionary containing agent state.
+        """
+        return {
+            "stats": self._stats,
+            "episode_stats": self._episode_stats,
+            "current_episode_stats": self._current_episode_stats,
+            "step_count": self._step_count,
+            "last_score": self._last_score,
+            "prev_state_str": self._prev_state_str,
+            "last_action": self._last_action,
+        }
+    
+    def load_state(self, state: dict[str, Any]) -> None:
+        """
+        Load agent state from checkpoint.
+        
+        Subclasses should override this to restore their specific state,
+        calling super().load_state(state) first to restore base state.
+        
+        Args:
+            state: State dictionary from get_state()
+        """
+        self._stats = state.get("stats", self._stats)
+        self._episode_stats = state.get("episode_stats", [])
+        self._current_episode_stats = state.get(
+            "current_episode_stats",
+            {"inference_calls": 0, "input_tokens": 0, "output_tokens": 0, "tokens": 0}
+        )
+        self._step_count = state.get("step_count", 0)
+        self._last_score = state.get("last_score", 0)
+        self._prev_state_str = state.get("prev_state_str", "N/A")
+        self._last_action = state.get("last_action", "No action yet")
+        
+        logger.info(f"Loaded agent state: {self._step_count} steps, {len(self._episode_stats)} episodes")
+    
+    def get_checkpoint_metadata(self) -> dict[str, Any]:
+        """
+        Get metadata for checkpoint summary.
+        
+        Subclasses can override to add their own metadata,
+        calling super().get_checkpoint_metadata() to include base metadata.
+        
+        Returns:
+            Metadata dictionary with summary information.
+        """
+        return {
+            "agent_class": self.__class__.__name__,
+            "total_steps": self._step_count,
+            "total_episodes": len(self._episode_stats),
+            "total_inference_calls": self._stats.get("total_inference_calls", 0),
+            "total_tokens": self._stats.get("total_tokens", 0),
+        }
+

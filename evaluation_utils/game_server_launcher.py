@@ -15,9 +15,10 @@ from config.utils import load_hydra_settings
 load_dotenv()
 
 class GameLauncher:
-    def __init__(self, renderer: Renderer, settings: Settings | None = None):
+    def __init__(self, renderer: Renderer, settings: Settings | None = None, run_id: str | None = None):
         self.renderer = renderer
         self.settings = settings
+        self.run_id = run_id
         # If no specific games are provided, default to all known games
         self.games = self.load_games() or list(GAME_SERVER_PORTS.keys())
         self.game_servers_procs = {}
@@ -49,7 +50,10 @@ class GameLauncher:
     def _update_scores_from_disk(self):
         """Update renderer with scores read from disk."""
         for game in self.games:
-            results_path = os.path.join(GAME_DATA_DIR, game, "game_results.json")
+            if self.run_id:
+                results_path = os.path.join(GAME_DATA_DIR, game, self.run_id, "game_results.json")
+            else:
+                results_path = os.path.join(GAME_DATA_DIR, game, "game_results.json")
             score_val = 0
             try:
                 if os.path.exists(results_path):
@@ -69,7 +73,11 @@ class GameLauncher:
         app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         game_server_dir = os.path.join(app_dir, "evaluation_utils", "mcp_game_servers", game_name)
         game_server_script = os.path.join(game_server_dir, "server.py")
-        game_data_dir = os.path.join(GAME_DATA_DIR, game_name)
+        if self.run_id:
+            game_data_dir = os.path.join(GAME_DATA_DIR, game_name, self.run_id)
+        else:
+            game_data_dir = os.path.join(GAME_DATA_DIR, game_name)
+
         if not os.path.exists(game_data_dir):
             os.makedirs(game_data_dir)
             

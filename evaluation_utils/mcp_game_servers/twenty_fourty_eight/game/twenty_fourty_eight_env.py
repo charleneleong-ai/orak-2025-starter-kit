@@ -1,3 +1,5 @@
+import ast
+import os
 import json
 import re
 import logging
@@ -7,7 +9,7 @@ from PIL import Image
 import numpy as np
 
 from dataclasses import dataclass, field
-from typing import Any, Iterator, List
+from typing import Any, Iterator, Optional
 from mcp_game_servers.twenty_fourty_eight.game.game import *
 
 from rich import print
@@ -41,7 +43,7 @@ class TwentyFourtyEightObs(Obs):
 
 @dataclass
 class TwentyFourtyEightAction(Action):
-    actions: List[int] = field(default_factory=list)
+    actions: list[int] = field(default_factory=list)
 
     def __iter__(self) -> Iterator[int]:
         return iter(self.actions)
@@ -65,9 +67,26 @@ class TwentyFourtyEightEnv(BaseEnv):
         target_tile: int
         task: str
         input_modality: str = "text_image"
+        initial_board: Any = None
+        initial_score: float = 0
+        initial_step: int = 0
         max_episodes: int = 10
         max_steps: int = 1000
 
+        def __post_init__(self):
+            if self.initial_board:
+                if isinstance(self.initial_board, str):
+                    try:
+                        self.initial_board = ast.literal_eval(self.initial_board)
+                        logger.info(f"Parsed initial_board from string")
+                    except Exception as e:
+                        logger.error(f"Failed to parse initial_board: {e}, value: {self.initial_board}")
+                        self.initial_board = None
+                elif isinstance(self.initial_board, list):
+                    if len(self.initial_board) != 4 or any(len(row) != 4 for row in self.initial_board):
+                        logger.error(f"Invalid initial_board dimensions: {self.initial_board}")
+                        self.initial_board = None
+        
     cfg: Config
 
     def configure(self):
@@ -77,14 +96,46 @@ class TwentyFourtyEightEnv(BaseEnv):
         init_game(self.show_graphic)
         self.target_tile = self.cfg.target_tile
         self.input_modality = self.cfg.input_modality
-        self.score = 0 
+        self.score = getattr(self.cfg, "initial_score", 0)
         self.max_tile = 0
 
         self.consecutive_nochange_step = 0
-        self._env = newGame(THEME, TEXT_COL, SIZE, self.show_graphic) 
+        
+        # Use initial board if provided, otherwise start new game
+        initial_board = self.cfg.initial_board
+
+        # Convert string to list if needed
+        if initial_board and isinstance(initial_board, str):
+            try:
+                initial_board = ast.literal_eval(initial_board)
+                logger.info(f"Converted initial_board from string to list")
+            except Exception as e:
+                logger.error(f"Failed to parse initial_board string: {e}, value: {initial_board}")
+                initial_board = None
+
+        if initial_board and isinstance(initial_board, list):
+            # Validate it's a 4x4 board
+            if len(initial_board) == 4 and all(isinstance(row, list) and len(row) == 4 for row in initial_board):
+                self._env = initial_board
+                try:
+                    self.max_tile = max(max(row) for row in self._env)
+                except Exception as e:
+                    logger.error(f"Failed to compute max_tile: {e}, board: {self._env}")
+                    self.max_tile = 0
+                logger.info(f"Restoring game state from configuration: score={self.score} max_tile={self.max_tile}")
+            else:
+                logger.error(f"Invalid initial_board dimensions: {initial_board}")
+                self._env = newGame(THEME, TEXT_COL, SIZE, self.show_graphic)
+        else:
+            if initial_board:
+                logger.error(f"initial_board is invalid type: {type(initial_board)}")
+            self._env = newGame(THEME, TEXT_COL, SIZE, self.show_graphic)
+            
         self.use_image = self.input_modality in ["image", "text_image"]
-        self.step_count = 0 
+        self.step_count = getattr(self.cfg, "initial_step", 0)
+        
         self.log_path = self.cfg.log_path
+        
 
     def pygame_surface_to_pil(self):
         # Get the pygame display surface
@@ -189,5 +240,6 @@ class TwentyFourtyEightEnv(BaseEnv):
             "prev_state_str": None,
             "task_description": "Merge tiles to make a tile with the value of 2048",
             "score": self.score,
-            "max_tile": self.max_tile
+            "max_tile": self.max_tile,
+            "board_state": self._env
         }

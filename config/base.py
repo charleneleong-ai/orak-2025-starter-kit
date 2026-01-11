@@ -15,6 +15,7 @@ class WandbConfig(BaseModel):
 
     project: str = ""
     entity: Optional[str] = None
+    run_id: Optional[str] = None
     mode: str = "online"  # "online", "offline", or "disabled"
     tags: list = []
     notes: Optional[str] = None
@@ -25,6 +26,7 @@ class WandbConfig(BaseModel):
     def model_post_init(self, __context):
         self.project = os.environ.get("WANDB_PROJECT", self.project)
         self.entity = os.environ.get("WANDB_ENTITY", self.entity)
+        self.run_id = os.environ.get("WANDB_RUN_ID", self.run_id)
         self.mode = os.environ.get("WANDB_MODE", self.mode)
         
         # Check if Weave is explicitly disabled

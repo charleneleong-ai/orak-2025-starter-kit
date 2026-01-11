@@ -2,13 +2,16 @@ import asyncio
 from typing import Any, Annotated
 import typer
 from enum import StrEnum
+from datetime import datetime
 from evaluation_utils.runner import Runner
 from evaluation_utils.commons import setup_logging, GAME_DATA_DIR, GAME_SERVER_PORTS
 from evaluation_utils.renderer import get_renderer
+from evaluation_utils.checkpoint_manager import CheckpointManager
 from dotenv import load_dotenv
 from config.utils import load_hydra_settings
 from loguru import logger
 import weave
+import os
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -52,6 +55,27 @@ def main(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Enable verbose logging"
     ),
+    # Checkpoint options
+    save_checkpoints: bool = typer.Option(
+        True,
+        "--save-checkpoints",
+        help="Save agent checkpoints during training"
+    ),
+    load_checkpoint: bool = typer.Option(
+        False,
+        "--load-checkpoint",
+        help="Load from latest checkpoint if available"
+    ),
+    checkpoint_frequency: int = typer.Option(
+        10,
+        "--checkpoint-freq",
+        help="Save checkpoint every N steps (default: 10)"
+    ),
+    run_id: str | None = typer.Option(
+        None,
+        "--run-id",
+        help="Custom run ID for organising outputs (default: timestamp)"
+    ),
 ):
     """Run evaluation for Orak 2025 games."""
 
@@ -59,14 +83,14 @@ def main(
     if games and not local:
         raise typer.BadParameter("--games can only be used together with --local")
     setup_logging(verbose=verbose)
-
+    
+    logger.info(f"Loading Hydra settings {config_name}...")
     settings = load_hydra_settings(config_name=config_name.value)
     
     # Override W&B notes if provided
     if experiment_description:
         settings.wandb.notes = experiment_description
         
-    logger.info(f"Loading Hydra settings {config_name}...")
 
     # Initialize Weave if enabled (uses same W&B credentials)
     if settings.wandb.weave_enabled:
@@ -75,6 +99,29 @@ def main(
             logger.info(f"Weave initialized for project: {settings.wandb.project_name}")
         except Exception as e:
             logger.warning(f"Failed to initialize Weave: {e}")
+
+    # If loading checkpoint and run_id not provided, try to find the latest run
+    if run_id is None and load_checkpoint and local and games:
+        # Check the first game's directory for runs
+        first_game_dir = GAME_DATA_DIR / games[0]
+        if first_game_dir.exists():
+            # Get all subdirectories that look like potential runs (ignore non-dirs)
+            runs = [d.name for d in first_game_dir.iterdir() if d.is_dir()]
+            if runs:
+                # Sort to find the latest (assuming timestamp or lexicographical order)
+                runs.sort()
+                latest_run = runs[-1]
+                run_id = latest_run
+                logger.info(f"Auto-detected latest run: {latest_run}")
+                logger.info(f"Resuming Run ID: {run_id}")
+                logger.info(f"Looking for checkpoints in: {first_game_dir / latest_run / 'checkpoints'}")
+
+    # Create run ID (timestamp-based if not provided)
+    if run_id is None:
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        logger.info(f"Starting new run with ID: {run_id}")
+    
+    settings.wandb.run_id = run_id
 
     # Initialize the centralized renderer
     renderer = get_renderer()
@@ -85,12 +132,17 @@ def main(
         selected_games = games if local else None
         renderer.event("Starting evaluation run ...")
         renderer.event(f"Settings: {settings.model_dump()}...")
+        
         runner = Runner(
             session_id=session_id,
             local=local,
             renderer=renderer,
             games=selected_games,
             settings=settings,
+            run_id=run_id,
+            save_checkpoints=save_checkpoints,
+            load_checkpoint=load_checkpoint,
+            checkpoint_frequency=checkpoint_frequency,
         )
         
         asyncio.run(runner.evaluate_all_games())
