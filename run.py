@@ -5,10 +5,12 @@ from enum import StrEnum
 from evaluation_utils.runner import Runner
 from evaluation_utils.commons import setup_logging, GAME_DATA_DIR, GAME_SERVER_PORTS
 from evaluation_utils.renderer import get_renderer
+from evaluation_utils.checkpoint_manager import CheckpointManager
 from dotenv import load_dotenv
 from config.utils import load_hydra_settings
 from loguru import logger
 import weave
+import os
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -52,6 +54,22 @@ def main(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Enable verbose logging"
     ),
+    # Checkpoint options
+    save_checkpoints: bool = typer.Option(
+        False,
+        "--save-checkpoints",
+        help="Save agent checkpoints during training"
+    ),
+    load_checkpoint: bool = typer.Option(
+        False,
+        "--load-checkpoint",
+        help="Load from latest checkpoint if available"
+    ),
+    checkpoint_frequency: int = typer.Option(
+        10,
+        "--checkpoint-freq",
+        help="Save checkpoint every N episodes (default: 10)"
+    ),
 ):
     """Run evaluation for Orak 2025 games."""
 
@@ -76,6 +94,15 @@ def main(
         except Exception as e:
             logger.warning(f"Failed to initialize Weave: {e}")
 
+    # Initialize CheckpointManager (saves to game_logs/checkpoints)
+    checkpoint_dir = os.path.join(GAME_DATA_DIR, "checkpoints")
+    checkpoint_manager = CheckpointManager(checkpoint_dir=checkpoint_dir)
+    
+    if save_checkpoints:
+        logger.info(f"Checkpointing enabled: saving every {checkpoint_frequency} episodes to {checkpoint_dir}")
+    if load_checkpoint:
+        logger.info(f"Will attempt to load from latest checkpoint if available")
+
     # Initialize the centralized renderer
     renderer = get_renderer()
     renderer.start(local=local, session_id=session_id, game_data_path=GAME_DATA_DIR)
@@ -91,6 +118,10 @@ def main(
             renderer=renderer,
             games=selected_games,
             settings=settings,
+            checkpoint_manager=checkpoint_manager,
+            save_checkpoints=save_checkpoints,
+            load_checkpoint=load_checkpoint,
+            checkpoint_frequency=checkpoint_frequency,
         )
         
         asyncio.run(runner.evaluate_all_games())

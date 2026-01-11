@@ -17,6 +17,7 @@ from evaluation_utils.sessions import Session
 from config.base import Settings
 from config.utils import load_agent_map
 from loguru import logger
+from evaluation_utils.checkpointable import Checkpointable
 
 def pil_image_to_base64(image_object):
     """
@@ -50,12 +51,22 @@ class Runner:
         grpc_ports: dict[str, int] | None = None,
         manage_local_game_servers: bool = True,
         settings: Settings | None = None,
+        checkpoint_manager: "CheckpointManager | None" = None,
+        save_checkpoints: bool = False,
+        load_checkpoint: bool = False,
+        checkpoint_frequency: int = 10,
     ):
         self.local = local
         self.renderer = renderer
         self.manage_local_game_servers = manage_local_game_servers
         self.settings = settings
         self.agent_map = load_agent_map(self.settings)
+        
+        # Checkpoint configuration
+        self.checkpoint_manager = checkpoint_manager
+        self.save_checkpoints = save_checkpoints
+        self.load_checkpoint = load_checkpoint
+        self.checkpoint_frequency = checkpoint_frequency
 
         # Determine which games to run
         if self.local:
@@ -297,6 +308,25 @@ class Runner:
                             agent.record_episode_end(episode + 1, game_name, seed, current_score)
 
                         episode += 1
+
+                        # Save checkpoint if enabled
+                        if self.save_checkpoints and self.checkpoint_manager and isinstance(agent, Checkpointable):
+                            if episode % self.checkpoint_frequency == 0:
+                                try:
+                                    self.checkpoint_manager.save_agent_checkpoint(
+                                        agent=agent,
+                                        game_name=game_name,
+                                        game_state={
+                                            "episode": episode,
+                                            "score": current_score,
+                                            "iteration": iteration,
+                                            "steps_this_episode": steps_this_episode,
+                                        },
+                                    )
+                                    logger.info(f"Saved checkpoint for {game_name} at episode {episode}")
+                                except Exception as e:
+                                    logger.error(f"Failed to save checkpoint: {e}")
+
                         iteration = 0
                         self.renderer.event(
                             f"{game_display_name}: Game finished after {steps_this_episode} steps with final score: {current_score}"
