@@ -104,14 +104,17 @@ class BaseOrakAgent(weave.Model):
         }
 
     @weave.op()
-    def act(self, obs: dict[str, Any]) -> str:
+    def act(self, obs: dict[str, Any], step: int = None) -> str:
         """Main action method tracked by Weave."""
         game_info = obs.get("game_info", {})
         cur_state_str = obs.get("obs_str", "")
         obs_image = obs.get("obs_image", None)
         
         current_score = int(game_info.get("score", 0))
-        self._step_count += 1
+        if step is not None:
+            self._step_count = step
+        else:
+            self._step_count += 1
 
         # Get action from subclass
         action, log_extras = self.get_action(obs)
@@ -198,7 +201,7 @@ class BaseOrakAgent(weave.Model):
                     # If image logging fails, just continue
                     logger.warning(f"Warning: Could not log image: {traceback.format_exc()}")
             
-            wandb.log(log_data)
+            wandb.log(log_data, step=self._step_count)
 
         self._prev_state_str = cur_state_str
         self._last_action = action

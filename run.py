@@ -111,16 +111,17 @@ def main(
                 # Sort to find the latest (assuming timestamp or lexicographical order)
                 runs.sort()
                 latest_run = runs[-1]
-                logger.info(f"Auto-detected latest run ID for checkpoint loading: {latest_run}")
                 run_id = latest_run
+                logger.info(f"Auto-detected latest run: {latest_run}")
+                logger.info(f"Resuming Run ID: {run_id}")
+                logger.info(f"Looking for checkpoints in: {first_game_dir / latest_run / 'checkpoints'}")
 
     # Create run ID (timestamp-based if not provided)
     if run_id is None:
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        logger.info(f"Starting new run with ID: {run_id}")
     
     settings.wandb.run_id = run_id
-    
-    logger.info(f"Run ID: {run_id}")
 
     # Initialize the centralized renderer
     renderer = get_renderer()

@@ -209,7 +209,7 @@ class CheckpointManager:
         checkpoint = self.load_checkpoint(checkpoint_path)
         agent.load_state(checkpoint["agent_state"])
         
-        logger.info(f"Agent state restored from checkpoint")
+        logger.info(f"Agent state restored from checkpoint: {checkpoint_path}")
         
         return checkpoint
     
