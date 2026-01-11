@@ -160,6 +160,32 @@ class Runner:
     
     async def evaluate_all_games(self):
         if self.local:
+            ## Load initial board states from checkpoint if set
+            if self.load_checkpoint and self.settings:
+                for game_name in self.games:
+                    try:
+                        agent = self.agent_map.get(game_name)
+                        if agent:
+                            cm = self._get_checkpoint_manager(game_name)
+                            latest_ckpt = cm.load_latest_agent_checkpoint(agent)
+                            if latest_ckpt and "game_state" in latest_ckpt:
+                                gs = latest_ckpt["game_state"]
+                                board = gs.get("board_state")
+                                score = gs.get("game_score")
+                                if score is None:
+                                    score = gs.get("score", 0)
+                                total_steps=gs.get("total_steps", 0)
+                                logger.info(f"Injecting initial board state for {game_name} from checkpoint")
+                                logger.debug(f"Board state: {board}; score: {score}, step: {total_steps}")
+                                if board:
+                                    g_settings = getattr(self.settings, game_name)
+                                    # Assuming env config is mutable
+                                    g_settings.env.initial_board = board
+                                    g_settings.env.initial_score = score
+                                    g_settings.env.initial_step = total_steps
+                    except Exception as e:
+                        logger.warning(f"Failed to inject checkpoint state for {game_name}: {e}")
+
             # Only start the subset of games selected for this run (unless attaching)
             if self.manage_local_game_servers and self.game_launcher is not None:
                 self.game_launcher.start_game_servers(self.games)
@@ -257,6 +283,9 @@ class Runner:
 
             try:
                 # Game loop
+                current_score = 0
+                evaluation_score = 0
+                game_score = 0
                 iteration = game_config.get("current_step", 0)
                 episode = game_config.get("current_episode", 0)
                 # Load checkpoint if enabled
@@ -270,7 +299,14 @@ class Runner:
                             episode = game_state.get('episode', episode)
                             iteration = game_state.get('iteration', iteration)
                             total_steps = game_state.get('total_steps', 0)
-                            self.renderer.event(f"{game_display_name}: Resuming from checkpoint at episode {episode}, step {total_steps}")
+                            current_score = game_state.get('score', 0)
+                            evaluation_score = game_state.get('evaluation_score', 0)
+                            game_score = game_state.get('game_score', 0)
+                            ## Sync agent step count with game state
+                            if hasattr(agent, '_step_count'):
+                                agent._step_count = total_steps
+                                logger.info(f'Synced agent step count to: {total_steps}')
+                            self.renderer.event(f"{game_display_name}: Resuming from checkpoint at episode {episode + 1}, step {total_steps}")
                         else:
                             self.renderer.event(f"{game_display_name}: No checkpoint found, starting fresh")
                     except Exception as e:
@@ -281,30 +317,18 @@ class Runner:
                 while episode < max_episodes:
                     iteration += 1
                     total_steps += 1
-                    # Save checkpoint if enabled (step-based)
-                    if self.save_checkpoints and hasattr(agent, 'get_state'):
-                        if total_steps % self.checkpoint_frequency == 0:
-                            try:
-                                checkpoint_manager = self._get_checkpoint_manager(game_name)
-                                checkpoint_manager.save_agent_checkpoint(
-                                    agent=agent,
-                                    game_name=game_name,
-                                    game_state={
-                                        'episode': episode,
-                                        'score': current_score,
-                                        'iteration': iteration,
-                                        'steps_this_episode': iteration,
-                                        'total_steps': total_steps,
-                                    },
-                                )
-                                logger.info(f"Saved checkpoint for {game_name} at step {total_steps}")
-                            except Exception as e:
-                                logger.error(f"Failed to save checkpoint: {e}")
                     obs = await self._call_in_thread(env.load_obs)
-                    action = await self._call_in_thread(agent.act, obs)
+                    action = await self._call_in_thread(agent.act, obs, step=total_steps)
                     result = await self._call_in_thread(env.dispatch_final_action, action)
                     finished = bool(result.get("is_finished"))
-                    current_score = result.get("score", 0)
+                    evaluation_score = result.get("score", 0)
+                    game_score = evaluation_score
+                    if "obs" in result and "game_info" in result["obs"]:
+                        try:
+                            game_score = float(result["obs"]["game_info"].get("score", evaluation_score))
+                        except (ValueError, TypeError):
+                            pass
+                    current_score = evaluation_score
                     avg_score = result.get("avg_score", 0)
 
                     # Append per-iteration JSONL record
@@ -316,9 +340,32 @@ class Runner:
                             "obs": obs,
                             "action": action,
                             "result": result,
-                            "current_score": current_score
+                            "current_score": current_score,
+                            "evaluation_score": evaluation_score,
+                            "game_score": game_score
                         }, ensure_ascii=False) + "\n")
-                        states_f.flush()
+                        states_f.flush()   
+                        # Save checkpoint if enabled (step-based)
+                        if self.save_checkpoints and hasattr(agent, 'get_state'):
+                            if total_steps % self.checkpoint_frequency == 0:
+                                try:
+                                    checkpoint_manager = self._get_checkpoint_manager(game_name)
+                                    checkpoint_manager.save_agent_checkpoint(
+                                        agent=agent,
+                                        game_state={
+                                            'current_episode': episode,
+                                            'score': game_score,
+                                            'game_score': game_score,
+                                            'evaluation_score': evaluation_score,
+                                            'iteration': iteration,
+                                            'steps_this_episode': iteration,
+                                            'total_steps': total_steps,
+                                            'board_state': obs['game_info'].get('board_state', []) if obs and 'game_info' in obs else [],
+                                        },
+                                    )
+                                    logger.info(f"Saved checkpoint for {game_name} at step {total_steps}")
+                                except Exception as e:
+                                    logger.error(f"Failed to save checkpoint: {e}")
                     except Exception as e:
                         # Do not fail the game loop on logging issues
                         import traceback
