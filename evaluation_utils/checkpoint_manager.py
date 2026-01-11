@@ -27,7 +27,7 @@ class CheckpointManager:
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
-    def get_checkpoint_path(self, game_name: str, agent_name: str, checkpoint_id: Optional[str] = None) -> Path:
+    def get_checkpoint_path(self, agent_name: str, game_name: str | None = None, checkpoint_id: Optional[str] = None) -> Path:
         """
         Get path for a checkpoint file.
         
@@ -42,12 +42,12 @@ class CheckpointManager:
         if checkpoint_id is None:
             checkpoint_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        game_dir = self.checkpoint_dir / game_name
+        game_dir = self.checkpoint_dir / game_name if game_name else self.checkpoint_dir
         game_dir.mkdir(parents=True, exist_ok=True)
         
         return game_dir / f"{agent_name}_{checkpoint_id}.pkl"
     
-    def get_latest_checkpoint(self, game_name: str, agent_name: str) -> Optional[Path]:
+    def get_latest_checkpoint(self, agent_name: str, game_name: str | None = None) -> Optional[Path]:
         """
         Find the most recent checkpoint for a game/agent pair.
         
@@ -58,7 +58,7 @@ class CheckpointManager:
         Returns:
             Path to latest checkpoint or None if no checkpoints exist
         """
-        game_dir = self.checkpoint_dir / game_name
+        game_dir = self.checkpoint_dir / game_name if game_name else self.checkpoint_dir
         if not game_dir.exists():
             return None
         
@@ -72,10 +72,10 @@ class CheckpointManager:
     
     def save_checkpoint(
         self,
-        game_name: str,
         agent_name: str,
         agent_state: Dict[str, Any],
         game_state: Dict[str, Any],
+        game_name: str | None = None,
         metadata: Optional[Dict[str, Any]] = None,
         checkpoint_id: Optional[str] = None,
     ) -> Path:
@@ -93,7 +93,7 @@ class CheckpointManager:
         Returns:
             Path where checkpoint was saved
         """
-        checkpoint_path = self.get_checkpoint_path(game_name, agent_name, checkpoint_id)
+        checkpoint_path = self.get_checkpoint_path(agent_name, game_name, checkpoint_id)
         
         checkpoint = {
             "game_name": game_name,
@@ -130,8 +130,8 @@ class CheckpointManager:
     def save_agent_checkpoint(
         self,
         agent: Checkpointable,
-        game_name: str,
         game_state: Dict[str, Any],
+        game_name: str | None = None,
         checkpoint_id: Optional[str] = None,
     ) -> Path:
         """
@@ -216,7 +216,7 @@ class CheckpointManager:
     def load_latest_agent_checkpoint(
         self,
         agent: Checkpointable,
-        game_name: str,
+        game_name: str | None = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Load the latest checkpoint for an agent/game into the agent.
@@ -229,7 +229,7 @@ class CheckpointManager:
             Full checkpoint data if found, None otherwise
         """
         agent_name = agent.__class__.__name__
-        latest = self.get_latest_checkpoint(game_name, agent_name)
+        latest = self.get_latest_checkpoint(agent_name, game_name)
         
         if latest is None:
             logger.info(f"No checkpoint found for {game_name}/{agent_name}")
@@ -281,7 +281,7 @@ class CheckpointManager:
             logger.error(f"Failed to delete checkpoint: {e}")
             raise
     
-    def cleanup_old_checkpoints(self, game_name: str, agent_name: str, keep_last_n: int = 5):
+    def cleanup_old_checkpoints(self, agent_name: str, game_name: str | None = None, keep_last_n: int = 5):
         """
         Keep only the N most recent checkpoints for a game/agent pair.
         
@@ -290,7 +290,7 @@ class CheckpointManager:
             agent_name: Name of the agent
             keep_last_n: Number of recent checkpoints to keep
         """
-        game_dir = self.checkpoint_dir / game_name
+        game_dir = self.checkpoint_dir / game_name if game_name else self.checkpoint_dir
         if not game_dir.exists():
             return
         
