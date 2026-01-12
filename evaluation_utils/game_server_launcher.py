@@ -15,16 +15,19 @@ from config.utils import load_hydra_settings
 load_dotenv()
 
 class GameLauncher:
-    def __init__(self, renderer: Renderer, settings: Settings | None = None, run_id: str | None = None):
+    def __init__(self, renderer: Renderer, settings: Settings | None = None, run_id: str | None = None, games: list[str] | None = None):
         self.renderer = renderer
         self.settings = settings
         self.run_id = run_id
-        # If no specific games are provided, default to all known games
-        self.games = self.load_games() or list(GAME_SERVER_PORTS.keys())
+        # Use provided games list, otherwise load from settings, otherwise default to all
+        if games is not None:
+            self.games = games
+        else:
+            self.games = self.load_games() or list(GAME_SERVER_PORTS.keys())
         self.game_servers_procs = {}
         self.output_files = {}
 
-        # Initialize all game servers as queued in the renderer
+        # Initialize only selected game servers as queued in the renderer
         for game in self.games:
             self.renderer.set_server_status(game, "queued")
             self.renderer.set_score(game, 0)
