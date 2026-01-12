@@ -56,27 +56,32 @@ def load_agent_map(settings: Settings) -> dict[str, Any]:
     if settings.twenty_fourty_eight is not None:
         # Access agent config from the nested structure
         agent_config = settings.twenty_fourty_eight.agent
+        # Use game-specific wandb config if available, otherwise use global
+        wandb_config = settings.twenty_fourty_eight.wandb or settings.wandb
         agent_map["twenty_fourty_eight"] = get_module_by_class_path(
             agent_config.class_name
-        )(config=agent_config, wandb_config=settings.wandb)
+        )(config=agent_config, wandb_config=wandb_config)
 
     if settings.pokemon_red is not None:
         agent_config = settings.pokemon_red.agent
+        wandb_config = settings.pokemon_red.wandb or settings.wandb
         agent_map["pokemon_red"] = get_module_by_class_path(
             agent_config.class_name
-        )(config=agent_config, wandb_config=settings.wandb)
+        )(config=agent_config, wandb_config=wandb_config)
         
     if settings.super_mario is not None:
         agent_config = settings.super_mario.agent
+        wandb_config = settings.super_mario.wandb or settings.wandb
         agent_map["super_mario"] = get_module_by_class_path(
             agent_config.class_name
-        )(config=agent_config, wandb_config=settings.wandb)
+        )(config=agent_config, wandb_config=wandb_config)
         
     if settings.star_craft is not None:
         agent_config = settings.star_craft.agent
+        wandb_config = settings.star_craft.wandb or settings.wandb
         agent_map["star_craft"] = get_module_by_class_path(
             agent_config.class_name
-        )(config=agent_config, wandb_config=settings.wandb)
+        )(config=agent_config, wandb_config=wandb_config)
     
     logger.info(f"Loaded agent map: {agent_map}")
     return agent_map
