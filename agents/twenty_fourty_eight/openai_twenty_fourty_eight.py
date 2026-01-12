@@ -33,10 +33,11 @@ class OpenAITwentyFourtyEightAgent(TwentyFourtyEightAgent):
         is_reasoning_model = any(keyword in model_lower for keyword in ['o1', 'o3', 'gpt-5'])
         
         model_kwargs = {}
+        reasoning_effort = None
         if is_reasoning_model:
             # Pass reasoning_effort if configured
             if hasattr(self.config, "reasoning_effort") and self.config.reasoning_effort:
-                model_kwargs["reasoning_effort"] = self.config.reasoning_effort
+                reasoning_effort = self.config.reasoning_effort
         
         # Initialize OpenAI client via LangChain
         # For o1 models, temperature is often not supported or restricted
@@ -50,6 +51,7 @@ class OpenAITwentyFourtyEightAgent(TwentyFourtyEightAgent):
             model=self.config.model,
             api_key=self.config.api_key,
             temperature=temperature,
+            reasoning_effort=reasoning_effort,
             model_kwargs=model_kwargs
         )
         
