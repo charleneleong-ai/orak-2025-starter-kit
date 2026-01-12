@@ -1,8 +1,8 @@
 defaults:
-  - agent: random
+  - agent: openai
   - env: default
 
 wandb:
   project: "orak-super-mario"
   mode: "online"
-  tags: ["random", "super_mario"]
+  tags: ["openai", "super_mario"]

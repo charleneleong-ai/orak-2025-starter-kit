@@ -203,6 +203,8 @@ class SuperMarioEnv(BaseEnv):
         logging: bool
         log_path: str
         input_modality: str = "text"
+        max_episodes: int = 3
+        max_steps: int = 100
 
     cfg: Config
 
