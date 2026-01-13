@@ -105,37 +105,6 @@ class SuperMarioAgent(BaseOrakAgent):
             
         return metrics
 
-    def get_action(self, obs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-        game_info = obs.get("game_info", {})
-        cur_state_str = obs.get("obs_str", "")
-        obs_image = obs.get("obs_image", None)
-        
-        # We pass task_description if available, though Mario usually has a static goal
-        task_description = game_info.get("task_description", "") 
-        
-        action, reasoning, output_text, usage, prompt = self._get_action(
-            task_description=task_description,
-            cur_state_str=cur_state_str,
-            obs_image=obs_image
-        )
-        
-        log_extras = {}
-        if prompt:
-            log_extras["prompt"] = prompt
-        if output_text:
-            log_extras["output_text"] = output_text
-        if reasoning:
-            log_extras["reasoning_length"] = len(reasoning)
-        if usage:
-             if hasattr(usage, 'prompt_tokens'):
-                log_extras["tokens_prompt"] = usage.prompt_tokens
-                log_extras["tokens_completion"] = usage.completion_tokens
-                log_extras["tokens_total"] = usage.total_tokens
-             elif isinstance(usage, dict):
-                log_extras.update(usage)
-                
-        return action, log_extras
-
     @weave.op()
     def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, Any, str]:
         """Get action from LLM. This method is tracked by Weave for observability."""

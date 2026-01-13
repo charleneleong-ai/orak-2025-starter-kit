@@ -67,6 +67,10 @@ def load_agent_map(settings: Settings, games: list[str] | None = None) -> dict[s
         agent_config = settings.twenty_fourty_eight.agent
         # Use game-specific wandb config if available, otherwise use global
         wandb_config = settings.twenty_fourty_eight.wandb or settings.wandb
+        
+        if wandb_config and settings.wandb.run_id:
+            wandb_config.run_id = settings.wandb.run_id
+
         agent_map["twenty_fourty_eight"] = get_module_by_class_path(
             agent_config.class_name
         )(config=agent_config, wandb_config=wandb_config)
@@ -74,6 +78,10 @@ def load_agent_map(settings: Settings, games: list[str] | None = None) -> dict[s
     if settings.pokemon_red is not None and should_load("pokemon_red"):
         agent_config = settings.pokemon_red.agent
         wandb_config = settings.pokemon_red.wandb or settings.wandb
+        
+        if wandb_config and settings.wandb.run_id:
+            wandb_config.run_id = settings.wandb.run_id
+            
         agent_map["pokemon_red"] = get_module_by_class_path(
             agent_config.class_name
         )(config=agent_config, wandb_config=wandb_config)
@@ -81,6 +89,10 @@ def load_agent_map(settings: Settings, games: list[str] | None = None) -> dict[s
     if settings.super_mario is not None and should_load("super_mario"):
         agent_config = settings.super_mario.agent
         wandb_config = settings.super_mario.wandb or settings.wandb
+        
+        if wandb_config and settings.wandb.run_id:
+            wandb_config.run_id = settings.wandb.run_id
+
         agent_map["super_mario"] = get_module_by_class_path(
             agent_config.class_name
         )(config=agent_config, wandb_config=wandb_config)
@@ -88,6 +100,10 @@ def load_agent_map(settings: Settings, games: list[str] | None = None) -> dict[s
     if settings.star_craft is not None and should_load("star_craft"):
         agent_config = settings.star_craft.agent
         wandb_config = settings.star_craft.wandb or settings.wandb
+        
+        if wandb_config and settings.wandb.run_id:
+            wandb_config.run_id = settings.wandb.run_id
+
         agent_map["star_craft"] = get_module_by_class_path(
             agent_config.class_name
         )(config=agent_config, wandb_config=wandb_config)
