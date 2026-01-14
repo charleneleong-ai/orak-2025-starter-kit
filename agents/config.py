@@ -1,10 +1,11 @@
 from agents.random_mario import RandomMarioAgent
-from agents.openai_mario import OpenAIMarioAgent
+from agents.super_mario.base import SuperMarioAgent as BaseSuperMarioAgent
 
 from agents.random_pokemon import RandomPokemonAgent
 
 from agents.random_twenty_fourty_eight import RandomTwentyFourtyEightAgent
-from agents.openai_twenty_fourty_eight import OpenAITwentyFourtyEightAgent
+from agents.twenty_fourty_eight.base import TwentyFourtyEightAgent as BaseTwentyFourtyEightAgent
+
 
 from agents.random_starcraft import RandomStarCraftAgent
 # from agents.openai_starcraft import OpenAIStarCraftAgent
@@ -19,3 +20,7 @@ SuperMarioAgent = RandomMarioAgent
 
 # StarCraftAgent = OpenAIStarCraftAgent
 StarCraftAgent = RandomStarCraftAgent
+
+# Default Generic Agents
+GenericSuperMarioAgent = BaseSuperMarioAgent
+GenericTwentyFourtyEightAgent = BaseTwentyFourtyEightAgent

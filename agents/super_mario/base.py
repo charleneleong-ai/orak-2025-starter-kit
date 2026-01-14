@@ -83,6 +83,7 @@ class SuperMarioAgent(BaseOrakAgent):
     _llm: Optional[BaseChatModel] = PrivateAttr(default=None)
     _jump_level_counts: dict[int, int] = PrivateAttr(default_factory=lambda: {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0})
 
+
     def calculate_metrics(self, game_info: dict[str, Any]) -> dict[str, Any]:
         """
         Calculate custom metrics based on game info.
@@ -112,7 +113,6 @@ class SuperMarioAgent(BaseOrakAgent):
             metrics[f"jump_level_{level}_count"] = self._jump_level_counts[level]
             
         return metrics
-
     @weave.op()
     def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, Any, str]:
         """Get action from LLM. This method is tracked by Weave for observability."""
