@@ -49,34 +49,64 @@ def get_module_by_class_path(class_path: str) -> Optional[Type]:  # type: ignore
 
 
 
-def load_agent_map(settings: Settings) -> dict[str, Any]:
-    """Load agent map based on settings."""
+def load_agent_map(settings: Settings, games: list[str] | None = None) -> dict[str, Any]:
+    """Load agent map based on settings.
+    
+    Args:
+        settings: Settings object containing game configurations
+        games: Optional list of game names to load agents for. If None, loads all available agents.
+    """
 
     agent_map = {}
-    if settings.twenty_fourty_eight is not None:
+    
+    # If games list is provided, only load those agents
+    should_load = lambda game: games is None or game in games
+    
+    if settings.twenty_fourty_eight is not None and should_load("twenty_fourty_eight"):
         # Access agent config from the nested structure
         agent_config = settings.twenty_fourty_eight.agent
+        # Use game-specific wandb config if available, otherwise use global
+        wandb_config = settings.twenty_fourty_eight.wandb or settings.wandb
+        
+        if wandb_config and settings.wandb.run_id:
+            wandb_config.run_id = settings.wandb.run_id
+
         agent_map["twenty_fourty_eight"] = get_module_by_class_path(
             agent_config.class_name
-        )(config=agent_config, wandb_config=settings.wandb)
+        )(config=agent_config, wandb_config=wandb_config)
 
-    if settings.pokemon_red is not None:
+    if settings.pokemon_red is not None and should_load("pokemon_red"):
         agent_config = settings.pokemon_red.agent
+        wandb_config = settings.pokemon_red.wandb or settings.wandb
+        
+        if wandb_config and settings.wandb.run_id:
+            wandb_config.run_id = settings.wandb.run_id
+            
         agent_map["pokemon_red"] = get_module_by_class_path(
             agent_config.class_name
-        )(config=agent_config, wandb_config=settings.wandb)
+        )(config=agent_config, wandb_config=wandb_config)
         
-    if settings.super_mario is not None:
+    if settings.super_mario is not None and should_load("super_mario"):
         agent_config = settings.super_mario.agent
+        wandb_config = settings.super_mario.wandb or settings.wandb
+        
+        if wandb_config and settings.wandb.run_id:
+            wandb_config.run_id = settings.wandb.run_id
+
         agent_map["super_mario"] = get_module_by_class_path(
             agent_config.class_name
-        )(config=agent_config, wandb_config=settings.wandb)
+        )(config=agent_config, wandb_config=wandb_config)
         
-    if settings.star_craft is not None:
+    if settings.star_craft is not None and should_load("star_craft"):
         agent_config = settings.star_craft.agent
+        wandb_config = settings.star_craft.wandb or settings.wandb
+        
+        if wandb_config and settings.wandb.run_id:
+            wandb_config.run_id = settings.wandb.run_id
+
         agent_map["star_craft"] = get_module_by_class_path(
             agent_config.class_name
-        )(config=agent_config, wandb_config=settings.wandb)
+        )(config=agent_config, wandb_config=wandb_config)
     
-    logger.info(f"Loaded agent map: {agent_map}")
+    logger.info(f"Loaded agent map for games {games or 'all'}: {list(agent_map.keys())}")
     return agent_map

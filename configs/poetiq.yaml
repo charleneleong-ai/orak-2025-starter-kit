@@ -4,16 +4,13 @@ ENV: ${oc.env:ENV, "dev"}
 CWD: ${hydra:runtime.cwd}
 LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
 
-wandb:
-  project: "orak-2048"
-  entity: "chaleong" 
-  mode: "online"
-  tags: ["2048", "poetiq"]
 
 defaults:
   - _self_
   - twenty_fourty_eight: base
+  - super_mario: base
   - override twenty_fourty_eight/agent: poetiq
+  - override super_mario/agent: poetiq
 
 twenty_fourty_eight:
   env:

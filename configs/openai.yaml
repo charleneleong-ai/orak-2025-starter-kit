@@ -7,14 +7,9 @@ CWD: ${hydra:runtime.cwd}
 LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
 
 
-wandb:
-  project: "orak-2048"
-  entity: "chaleong"
-  mode: "online"
-  tags: ["2048", "openai"]
-
-
 defaults:
   - _self_
   - twenty_fourty_eight: base
+  - super_mario: base
   - override twenty_fourty_eight/agent: openai
+  - override super_mario/agent: openai

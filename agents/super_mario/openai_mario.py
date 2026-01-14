@@ -1,19 +1,17 @@
 from typing import Any, Optional
 from langchain_openai import ChatOpenAI
 from loguru import logger
+from pydantic import Field
 
 from config.agent_config import OpenAIConfig
 from config.base import WandbConfig
-from langchain_openai import ChatOpenAI
-from agents.twenty_fourty_eight.base import TwentyFourtyEightAgent
-from pydantic import Field
+from agents.super_mario.base import SuperMarioAgent
 
-class OpenAITwentyFourtyEightAgent(TwentyFourtyEightAgent):
-    model_name: str = Field(default="gpt-4o-mini")
+class OpenAIMarioAgent(SuperMarioAgent):
+    model_name: str = Field(default="gpt-5-nano")
     temperature: float = Field(default=0.0)
     api_key: Optional[str] = Field(default=None)
 
-    
     def __init__(
         self, 
         config: OpenAIConfig = None, 
@@ -23,7 +21,6 @@ class OpenAITwentyFourtyEightAgent(TwentyFourtyEightAgent):
         config = config or OpenAIConfig()
         wandb_config = wandb_config or WandbConfig()
         
-        # Initialize with Weave Model
         super().__init__(
             config=config,
             wandb_config=wandb_config
@@ -39,7 +36,7 @@ class OpenAITwentyFourtyEightAgent(TwentyFourtyEightAgent):
             if hasattr(self.config, "reasoning_effort") and self.config.reasoning_effort:
                 reasoning_effort = self.config.reasoning_effort
         
-        # Initialize OpenAI client via LangChain
+        # Initialise OpenAI client via LangChain
         # For o1 models, temperature is often not supported or restricted
         temperature = self.config.temperature
         if is_reasoning_model:
@@ -55,7 +52,7 @@ class OpenAITwentyFourtyEightAgent(TwentyFourtyEightAgent):
             model_kwargs=model_kwargs
         )
         
-        logger.info(f"Initialized OpenAI agent with model: {self.config.model}, reasoning: {is_reasoning_model}")
+        logger.info(f"Initialised OpenAI Mario agent with model: {self.config.model}, reasoning: {is_reasoning_model}")
 
     @property
     def AGENT_TAGS(self):

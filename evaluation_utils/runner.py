@@ -62,7 +62,6 @@ class Runner:
         self.renderer = renderer
         self.manage_local_game_servers = manage_local_game_servers
         self.settings = settings
-        self.agent_map = load_agent_map(self.settings)
         
         # Run organisation
         self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -86,6 +85,9 @@ class Runner:
         else:
             # Remote mode: always run all games; per-game selection is only supported locally
             self.games = list(GAME_SERVER_PORTS.keys())
+        
+        # Load agents only for selected games
+        self.agent_map = load_agent_map(self.settings, self.games)
 
         self.scores = {game: 0 for game in self.games}
         self.session_file = None
@@ -102,7 +104,7 @@ class Runner:
                 raise ValueError(f"Missing port(s) for game(s): {', '.join(missing)}")
 
             self.grpc_addresses = {game: f"{grpc_host}:{ports[game]}" for game in self.games}
-            self.game_launcher = GameLauncher(renderer, settings=self.settings, run_id=self.run_id) if self.manage_local_game_servers else None
+            self.game_launcher = GameLauncher(renderer, settings=self.settings, run_id=self.run_id, games=self.games) if self.manage_local_game_servers else None
         else:
             self.renderer.event("Running in REMOTE mode")
             self.session = Session(session_id=session_id, renderer=self.renderer)

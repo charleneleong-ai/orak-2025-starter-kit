@@ -132,6 +132,25 @@ class SuperMarioObs(Obs):
         #self.save_state_image(self.state['image'])
         found_objects = self.find_objects_in_state(self.state['image'], self.object_patterns)
 
+        # Add game status information
+        game_score = self.info.get('score', 0)
+        coins = self.info.get('coins', 0)
+        lives = self.info.get('life', 0)
+        time_left = self.info.get('time', 0)
+        actual_x_pos = self.info.get('x_pos', 0)
+        
+        # Calculate evaluation score (normalized progress)
+        X_START = 40
+        X_FLAG = 3161
+        evaluation_score = (actual_x_pos - X_START) / (X_FLAG - X_START) * 100.0
+        
+        observation += f"Game Status:\n"
+        observation += f"- Score: {game_score}\n"
+        observation += f"- Coins: {coins}\n"
+        observation += f"- Lives: {lives}\n"
+        observation += f"- Time: {time_left}\n"
+        observation += f"- Progress: {evaluation_score:.1f}% (x_pos: {actual_x_pos}/3161)\n\n"
+
         # Mario loc
         x_pos = min(128, self.info['x_pos'])-6 # 6: adjusting value 
         y_pos = self.info['y_pos']-34 # 34: adjusting value 
@@ -190,7 +209,14 @@ class SuperMarioObs(Obs):
         return observation
 
     def evaluate(self):
-        return int(self.reward['distance']) / 3161.0, self.reward['done']
+        # Calculate evaluation score (Normalized Progress) to align with server
+        # x_start = 40 (Mario's starting position)
+        # x_flag = 3161 (Flag position)
+        x_pos = int(self.reward['distance'])
+        X_START = 40
+        X_FLAG = 3161
+        normalized_score = (x_pos - X_START) / (X_FLAG - X_START) * 100.0
+        return normalized_score, self.reward['done']
 
 @dataclass
 class SuperMarioAction(Action):
@@ -203,6 +229,8 @@ class SuperMarioEnv(BaseEnv):
         logging: bool
         log_path: str
         input_modality: str = "text"
+        max_episodes: int = 3
+        max_steps: int = 100
 
     cfg: Config
 
@@ -223,7 +251,7 @@ class SuperMarioEnv(BaseEnv):
         )
 
         self.env = SkipFrame(self.env, skip=4)
-        #self.env = GrayScaleObservation(self.env, keep_dim=False) # for RL agent
+        #self.env = GrayscaleObservation(self.env, keep_dim=False) # for RL agent
         #self.env = ResizeObservation(self.env, shape=84) # for RL agent
         self.env = TransformObservation(self.env, f=lambda x: x / 255.)
         self.env = FrameStack(self.env, num_stack=1) #4
@@ -235,6 +263,7 @@ class SuperMarioEnv(BaseEnv):
 
         self.jump_level = 0
         self.mario_loc_history = []
+        self.last_info = {}  # Track the latest game info
 
     def to_pil_image(self, image):
         # unwrap LazyFrames
@@ -290,6 +319,7 @@ class SuperMarioEnv(BaseEnv):
         self.env.render()
         self.jump_level = 0
         self.mario_loc_history = []
+        self.last_info = last_info 
 
         return SuperMarioObs(
             state={"image": state},
@@ -306,11 +336,32 @@ class SuperMarioEnv(BaseEnv):
         return self._start_new_episode()
 
     def get_game_info(self) -> dict:
-        
-        return {
+        game_info = {
             "past_mario_action": f"Jump Level {self.jump_level}",
             "mario_loc_history": f"{self.mario_loc_history[-3:]}"
         }
+        
+        if self.last_info:
+            # Calculate evaluation score (Normalized Progress)
+            x_pos = self.last_info.get("x_pos", 0)
+            X_START = 40
+            X_FLAG = 3161
+            evaluation_score = (float(x_pos) - X_START) / (X_FLAG - X_START) * 100.0
+
+            game_info.update({
+                "evaluation_score": evaluation_score,
+                "score": self.last_info.get("score", 0),
+                "coins": self.last_info.get("coins", 0),
+                "lives": self.last_info.get("life", 0),
+                "time": self.last_info.get("time", 0),
+                "world": self.last_info.get("world", 1),
+                "stage": self.last_info.get("stage", 1),
+                "x_pos": self.last_info.get("x_pos", 0),
+                "y_pos": self.last_info.get("y_pos", 0),
+                "status": self.last_info.get("status", "small"),
+            })
+        
+        return game_info
 
     def obs2text(self, obs: Obs) -> str:
         text = obs.to_text()
@@ -399,6 +450,7 @@ class SuperMarioEnv(BaseEnv):
             reward={"distance": info['x_pos'], "done": done}
         )
         self.mario_loc_history.append((info['x_pos'], info['y_pos']-34))
+        self.last_info = info
 
         return obs, info['x_pos'], done, trunc, info
 

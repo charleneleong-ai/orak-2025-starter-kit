@@ -47,18 +47,22 @@ class WandbConfig(BaseModel):
 class TwentyFourtyEightConfig(BaseModel):
     agent: AgentConfig
     env: TwentyFourtyEightEnvConfig
+    wandb: Optional[WandbConfig] = None
 
 class PokemonRedConfig(BaseModel):
     agent: AgentConfig
     env: PokemonRedEnvConfig
+    wandb: Optional[WandbConfig] = None
 
 class SuperMarioConfig(BaseModel):
     agent: AgentConfig
     env: SuperMarioEnvConfig
+    wandb: Optional[WandbConfig] = None
 
 class StarCraftConfig(BaseModel):
     agent: AgentConfig
     env: StarCraftEnvConfig
+    wandb: Optional[WandbConfig] = None
 
 class Settings(BaseModel):
     wandb: WandbConfig = WandbConfig()
