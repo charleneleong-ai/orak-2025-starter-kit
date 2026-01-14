@@ -81,27 +81,35 @@ class GameAction(BaseModel):
 class SuperMarioAgent(BaseOrakAgent):
     
     _llm: Optional[BaseChatModel] = PrivateAttr(default=None)
+    _jump_level_counts: dict[int, int] = PrivateAttr(default_factory=lambda: {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0})
 
     def calculate_metrics(self, game_info: dict[str, Any]) -> dict[str, Any]:
         """
         Calculate custom metrics based on game info.
         """
-        # Extract relevant metrics if available in game_info
         metrics = {}
-        if "coins" in game_info:
-            metrics["coins"] = game_info["coins"]
-        if "lives" in game_info:
-            metrics["lives"] = game_info["lives"]
-        if "time" in game_info:
-            metrics["time"] = game_info["time"]
-        if "world" in game_info:
-            metrics["world"] = game_info["world"]
-        if "stage" in game_info:
-            metrics["stage"] = game_info["stage"]
+        
+        # Extract relevant metrics
+        for key in ["coins", "lives", "time", "world", "stage", "x_pos"]:
+            if key in game_info:
+                metrics[key] = game_info[key]
+
+        ## Calculate evaluation score (Normalsed Progress) to align with server
+        # use server provided evaluation score if available to ensure alignment
+        if "evaluation_score" in game_info:
+            metrics["evaluation_score"] = float(game_info["evaluation_score"])
+        else:
+            x_pos = float(game_info.get("x_pos", 40))
+            x_start = 40
+            x_flag = 3161
             
-        # Example evaluation score logic (can be adjusted)
-        current_game_score = float(game_info.get("score", 0))
-        metrics["evaluation_score"] = current_game_score # Use raw score for now
+            metrics["evaluation_score"] = (x_pos - x_start) / (x_flag - x_start) * 100.0
+        
+        metrics["score"] = float(game_info.get("score", 0))
+        
+        # Add jump level distribution counts
+        for level in range(7):
+            metrics[f"jump_level_{level}_count"] = self._jump_level_counts[level]
             
         return metrics
 
@@ -117,7 +125,6 @@ class SuperMarioAgent(BaseOrakAgent):
             cur_state_str=cur_state_str
         )
         
-        # Add task description if useful, usually implied by system prompt
         if task_description:
             prompt_text = f"### Task\n{task_description}\n\n" + prompt_text
 
@@ -138,7 +145,6 @@ class SuperMarioAgent(BaseOrakAgent):
 
         messages.append(HumanMessage(content=user_content))
         
-        # Invoke LLM
         structured_llm = self._llm.with_structured_output(GameAction)
         
         usage = None
@@ -151,7 +157,9 @@ class SuperMarioAgent(BaseOrakAgent):
             jump_level = response.jump_level
             reasoning = response.reasoning
             
-            # Convert integer jump level to string format expected by environment
+            # Track jump level usage
+            self._jump_level_counts[jump_level] += 1
+            
             action = f"Jump Level: {jump_level}"
             
             output_text = f"Action: {action}\nReasoning: {reasoning}"
