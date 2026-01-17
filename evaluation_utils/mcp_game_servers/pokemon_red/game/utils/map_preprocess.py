@@ -284,7 +284,7 @@ def parse_map_objects_asm(root_dir, map_name):
 def main():
     root_dir = os.path.join(game_code_dir, "pokered")
 
-    with open(os.path.join(root_dir, "data", "events", "hidden_objects.asm"), encoding="utf-8") as f:
+    with open(os.path.join(root_dir, "data", "events", "hidden_events.asm"), encoding="utf-8") as f:
         asm_text = f.read()
 
     hidden_objects_dict = parse_hidden_objects(asm_text)

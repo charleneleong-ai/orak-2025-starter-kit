@@ -62,6 +62,8 @@ class PokemonRedEnv(BaseEnv):
         rom_path: str
         success_condition: str
         input_modality: str = "text"
+        max_episodes: int = 3
+        max_steps: int = 100
 
     cfg: Config
 
