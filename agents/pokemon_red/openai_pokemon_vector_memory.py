@@ -137,7 +137,7 @@ def build_memory_query(goal: str, environment_perception: str) -> str:
     return f"Information related to 'Goal: {goal}' based on 'Context: {environment_perception}'"
 
 
-class OpenAIPokemonAgent:
+class OpenAIPokemonVectorMemoryAgent:
     TRACK = "TRACK1"
 
     def __init__(self, env=None):

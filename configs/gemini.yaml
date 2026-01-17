@@ -10,5 +10,7 @@ defaults:
   - _self_
   - twenty_fourty_eight: base
   - super_mario: base
+  - pokemon_red: base
   - override twenty_fourty_eight/agent: gemini
   - override super_mario/agent: gemini
+  - override pokemon_red/agent: gemini

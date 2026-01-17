@@ -45,10 +45,21 @@ def parse_object_sprites(asm_path):
     return sprite_names
 
 class PyBoyRunner:
-    def __init__(self, rom_path):
+    def __init__(self, rom_path, state_path=None):
         self.pyboy = PyBoy(rom_path, window="null")  # Run without GUI
         self.running = True
         self.lock = threading.Lock()
+        
+        # Load state file if provided or if it exists with same name as ROM
+        if state_path is None:
+            state_path = rom_path + ".state"
+        
+        if os.path.exists(state_path):
+            print(f"[PyBoy] Loading saved state from: {state_path}")
+            with open(state_path, "rb") as f:
+                self.pyboy.load_state(f)
+        else:
+            print(f"[PyBoy] No saved state found at: {state_path}")
 
         self.json_dir = os.path.join(game_code_dir, "game", "mapping_json")
         self.asm_dir = os.path.join(game_code_dir, "game", "pokered", "data", "maps", "objects")
