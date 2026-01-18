@@ -90,6 +90,16 @@ def main(
     # Override W&B notes if provided
     if experiment_description:
         settings.wandb.notes = experiment_description
+        # Also update game-specific wandb configs
+        if settings.pokemon_red and settings.pokemon_red.wandb:
+            settings.pokemon_red.wandb.notes = experiment_description
+        if settings.super_mario and settings.super_mario.wandb:
+            settings.super_mario.wandb.notes = experiment_description
+        if settings.twenty_fourty_eight and settings.twenty_fourty_eight.wandb:
+            settings.twenty_fourty_eight.wandb.notes = experiment_description
+        if settings.star_craft and settings.star_craft.wandb:
+            settings.star_craft.wandb.notes = experiment_description
+        logger.info(f"Experiment description set: {experiment_description}")
         
 
     # Initialize Weave if enabled (uses same W&B credentials)
