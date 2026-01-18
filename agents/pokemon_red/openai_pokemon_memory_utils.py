@@ -300,14 +300,23 @@ def replace_map_on_screen_with_full_map(state_text: str, map_current: list, warp
                 map_row_content_str = "".join(line_content_chars)
                 map_grid_lines.append(f"{current_y_label_str}{map_row_content_str}")
 
-            # --- Add Warp Annotations manually if not already in notable_objects ---
+            # --- Add Annotations manually if not already in notable_objects ---
             if warp_annotations:
-                for coord, dest_map in warp_annotations.items():
+                for coord, note_text in warp_annotations.items():
                    if coord not in notable_objects:
-                        notable_objects[coord] = f"WarpPoint -> {dest_map}"
+                        # If unknown, assume it's a WarpPoint or just use the text
+                        notable_objects[coord] = f"WarpPoint -> {note_text}" if "->" not in note_text and ("Map" not in note_text and "SPRITE" not in note_text) else note_text
                    else:
-                        # Append to existing notable object description
-                         notable_objects[coord] += f" -> {dest_map}"
+                        # Avoid redundancy if the annotation repeats the object name
+                        # e.g. Object: "SPRITE_1", Annotation: "SPRITE_1 (Said: ...)" mechanism
+                        current_val = notable_objects[coord]
+                        # Clean current value of tags like (Unexplored) for comparison
+                        base_val = current_val.split(" (")[0]
+                        
+                        if note_text.startswith(base_val):
+                            notable_objects[coord] = note_text
+                        else:
+                            notable_objects[coord] += f" -> {note_text}"
 
             # --- Assemble the [Full Map] and [Notable Objects] blocks ---
             full_map_text_block = "[Full Map]\n" + "\n".join(map_grid_lines)
@@ -366,33 +375,53 @@ def get_warp_annotations(warp_memory: dict, map_memory: dict, current_map_name: 
     for pos, dest_map in raw_warps.items():
         # Heuristic: Snap landing position to visible WarpPoint if adjacent (usually Up)
         display_pos = pos
+        is_valid_warp = True
+            
         if map_current:
             x, y = pos
             curr_cell = ""
             if 0 <= y < len(map_current) and 0 <= x < len(map_current[0]):
                 curr_cell = str(map_current[y][x])
             
+            # Check if current cell is a known warp type
             is_current_warp = "WARP" in curr_cell.upper() or "DOOR" in curr_cell.upper() or curr_cell == "WarpPoint"
             
             if not is_current_warp:
+                # If current cell is definitively NOT a warp (e.g. generic walkable), check neighbor
+                snapped = False
                 # Check Up (y-1)
                 if 0 <= y-1 < len(map_current) and 0 <= x < len(map_current[0]):
                     up_cell = str(map_current[y-1][x])
                     if "WARP" in up_cell.upper() or "DOOR" in up_cell.upper() or up_cell == "WarpPoint":
                         display_pos = (x, y-1)
+                        snapped = True
+                
+                # If we didn't snap and the current cell is a generic tile, this is likely a false positive backward link.
+                if not snapped:
+                     # Check if on map edge (often valid bidirectional warps)
+                     width = len(map_current[0]) if len(map_current) > 0 else 0
+                     height = len(map_current)
+                     is_edge = (x == 0) or (y == 0) or (x == width - 1) or (y == height - 1)
 
-        status = " (Unexplored)"
-        if dest_map in map_memory:
-            grid = map_memory[dest_map].get("explored_map", [])
-            if grid:
-                # Check if there's any '?' row by row
-                is_partial = False
-                for row in grid:
-                    if '?' in row:
-                        is_partial = True
-                        break
-                status = " (Partially Explored)" if is_partial else " (Fully Explored)"
-        annotations[display_pos] = f"{dest_map}{status}"
+                     # List of characters that are definitely NOT warps (e.g., standard floor, wall, etc.)
+                     # If it's a '?' we give benefit of doubt.
+                     # However, if it is on the edge, we assume it's a valid map transition warp.
+                     if curr_cell in ['O', 'G', 'X', '-', '|', ' '] and not is_edge:
+                         is_valid_warp = False
+
+        if is_valid_warp:
+            status = " (Unexplored)"
+            if dest_map in map_memory:
+                grid = map_memory[dest_map].get("explored_map", [])
+                if grid:
+                    # Check if there's any '?' row by row
+                    is_partial = False
+                    for row in grid:
+                        if '?' in row:
+                            is_partial = True
+                            break
+                    status = " (Partially Explored)" if is_partial else " (Fully Explored)"
+            annotations[display_pos] = f"{dest_map}{status}"
         
     return annotations
 
