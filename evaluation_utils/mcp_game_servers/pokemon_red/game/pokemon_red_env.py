@@ -306,7 +306,9 @@ class PokemonRedEnv(BaseEnv):
 
     def get_game_info(self) -> dict:
         return {
-
+            "score": self.score,
+            "evaluation_score": (self.score / 7.0) * 100.0,
+            "map_name": self.state_dict.get('map_info', {}).get('map_name', 'Unknown')
         }
 
     def close(self):

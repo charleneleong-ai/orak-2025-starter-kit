@@ -291,10 +291,17 @@ class PokemonRedAgent(BaseOrakAgent):
         """
         metrics = {}
         
-        # Pass through common metrics if available
-        for key in ["score", "evaluation_score"]:
-            if key in game_info:
-                metrics[key] = float(game_info[key])
+        # Note: Progress is measured by the number of predefined storyline flags triggered (7 total).
+        # Score = (Flags triggered / 7) * 100
+        
+        if "evaluation_score" in game_info:
+            metrics["evaluation_score"] = float(game_info["evaluation_score"])
+        else:
+            # Assume 'score' key holds the count of flags triggered (0-7)
+            raw_flags = float(game_info.get("score", 0))
+            metrics["evaluation_score"] = (raw_flags / 7.0) * 100.0
+
+        metrics["score"] = float(game_info.get("score", 0))
                 
         if "map_name" in game_info:
             metrics["map_name"] = game_info["map_name"]
