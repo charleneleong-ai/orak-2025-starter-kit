@@ -191,8 +191,24 @@ class BaseOrakAgent(weave.Model):
                     elif k not in ["output_text"]:
                         log_data[k] = v
 
-            # Log action distribution
-            log_data[f"action/{action}"] = 1
+            # Log action distribution with simplified action name
+            # Extract tool name from actions like "use_tool(move_to, (x_dest=14, y_dest=2))"
+            simplified_action = action
+            if "use_tool(" in action and "," in action:
+                # Extract just "use_tool/move_to" from "use_tool(move_to, ...)"
+                try:
+                    tool_name = action.split("(")[1].split(",")[0].strip()
+                    simplified_action = f"use_tool/{tool_name}"
+                except (IndexError, AttributeError):
+                    simplified_action = action
+            elif "(" in action:
+                # For other parameterized actions, extract just the function name
+                try:
+                    simplified_action = action.split("(")[0]
+                except (IndexError, AttributeError):
+                    simplified_action = action
+            
+            log_data[f"action/{simplified_action}"] = 1
             
             # Log obs_str as text
             if cur_state_str:
