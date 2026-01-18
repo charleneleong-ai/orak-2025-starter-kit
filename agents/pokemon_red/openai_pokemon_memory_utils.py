@@ -181,6 +181,49 @@ def get_map_memory_dict(state_dict: dict, map_memory_dict: dict) -> dict:
 # Observation Processing
 # =============================================================================
 
+def merge_notable_objects(notable_objects: dict) -> list:
+    """Merges adjacent WarpPoints in the notable objects list."""
+    merged_notables = []
+    sorted_notables_coords = sorted(notable_objects.keys(), key=lambda k: (k[1], k[0]))
+    skip_next = False
+    
+    for i in range(len(sorted_notables_coords)):
+        if skip_next:
+            skip_next = False
+            continue
+            
+        coord1 = sorted_notables_coords[i]
+        val1 = notable_objects[coord1]
+        
+        merged = False
+        # Check if next item exists
+        if i + 1 < len(sorted_notables_coords):
+            coord2 = sorted_notables_coords[i+1]
+            # Check horizontal adjacency: same y, x2 = x1 + 1
+            if coord1[1] == coord2[1] and coord2[0] == coord1[0] + 1:
+                val2 = notable_objects[coord2]
+                # Check if both are WarpPoints (or generally mergeable if desired)
+                if "WarpPoint" in val1 and "WarpPoint" in val2:
+                    # Merge strategy: Prefer the one with destination info ("->")
+                    # If both or neither, prefer the second one or any with better exploration status
+                    final_text = val1
+                    if "->" in val2 and "->" not in val1:
+                        final_text = val2
+                    elif "->" in val1 and "->" not in val2:
+                        final_text = val1
+                    elif "(Unexplored)" in val1 and "(Unexplored)" not in val2:
+                        final_text = val2
+                    
+                    merged_notables.append(f"({coord1[0]:2}-{coord2[0]:2}, {coord1[1]:2}) {final_text}")
+                    skip_next = True
+                    merged = True
+        
+        if not merged:
+            merged_notables.append(f"({coord1[0]:2}, {coord1[1]:2}) {val1}")
+            
+    return merged_notables
+
+
 def replace_map_on_screen_with_full_map(state_text: str, map_current: list, warp_annotations: dict = None) -> str:
     """
     Replace the partial map view in observation with the agent's full explored map.
@@ -322,11 +365,8 @@ def replace_map_on_screen_with_full_map(state_text: str, map_current: list, warp
             full_map_text_block = "[Full Map]\n" + "\n".join(map_grid_lines)
             if notable_objects:
                 notable_list_str = "\n\n[Notable Objects]"
-                sorted_notables_coords = sorted(notable_objects.keys(), key=lambda k: (k[1], k[0]))
-                for coord_key in sorted_notables_coords:
-                    x_obj, y_obj = coord_key
-                    notable_list_str += f"\n({x_obj:2}, {y_obj:2}) {notable_objects[coord_key]}"
-                full_map_text_block += notable_list_str
+                merged_notables = merge_notable_objects(notable_objects)
+                full_map_text_block += notable_list_str + "\n" + "\n".join(merged_notables)
     
     # --- 3. Append the full map text block to the end ---
     if processed_state_text:
@@ -450,8 +490,8 @@ def get_npc_annotations(map_memory: dict, current_map_name: str, map_current: li
 
 def detect_npc_interaction(parsed_state: dict, map_current: list) -> str:
     """
-    Determines if the player is currently confirming dialog from a sprite.
-    Returns the sprite ID if found, else None.
+    Determines if the player is currently confirming dialog from a sprite OR SIGN.
+    Returns the object identifier if found, else None.
     """
     screen_text = parsed_state.get("screen_text")
     pos = parsed_state.get("pos")
@@ -468,7 +508,7 @@ def detect_npc_interaction(parsed_state: dict, map_current: list) -> str:
         # Check bounds and retrieve object
         if 0 <= ty < len(map_current) and 0 <= tx < len(map_current[0]):
             target_obj = map_current[ty][tx]
-            # If it looks like a sprite, return it
-            if isinstance(target_obj, str) and target_obj.startswith("SPRITE_"):
+            # Capture SPRITEs and SIGNs
+            if isinstance(target_obj, str) and (target_obj.startswith("SPRITE_") or target_obj.startswith("SIGN")):
                 return target_obj
     return None

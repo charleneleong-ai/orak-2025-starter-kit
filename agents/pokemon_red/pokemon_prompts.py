@@ -21,6 +21,7 @@ Core Rules Reminder:
   - *Battle:* Use battle tools (moves, items, switch, run). Trainer battles: no running.
     - **HP Management:** Maintain sufficient HP. If HP is low, use Potions or visit a Pokémon Center.
     - **Resource Management:** Conserve PP for strong moves. Avoid unnecessary wild encounters to save resources unless leveling up is needed.
+    - **Menu Navigation:** If stuck in a move description or sub-menu (e.g., seeing 'TYPE/', 'PP', or stats), press 'B' to return to the main battle selection menu.
 - Map Understanding:
   - Map: `[Full Map]` grid (X right, Y down; (0,0)=top-left), `[Notable Objects]` list w/ coords.
   - Walkability (CRITICAL): 'O', 'G', 'WarpPoint', '~'(w/ Surf) = Walkable. 'X', 'Cut', '-', '|', 'TalkTo', 'SPRITE', 'SIGN', '?', Ledges ('D','L','R') = Unwalkable.

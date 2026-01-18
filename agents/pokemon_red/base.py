@@ -450,6 +450,9 @@ class PokemonRedAgent(BaseOrakAgent):
         
         structured_llm = self._llm.with_structured_output(GameAction)
         
+        action = "pass"
+        reasoning = "None"
+        current_goal = self._current_goal or "Unknown"
         usage = None
         output_text = ""
         
