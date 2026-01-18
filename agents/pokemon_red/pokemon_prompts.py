@@ -115,7 +115,7 @@ quit
 
 
 ### Exploration Strategy ###
-- **Explore First**: If the 'Full Map' shows unexplored areas ('?'), prioritize actions that explore these areas (eg. plan and reason to move to a ideal location to reveal unexplored areas in the map) before leaving the full rendered map via warp points.
+- **Explore First**: If the 'Full Map' shows unexplored areas ('?'), prioritize actions that explore these areas (eg. plan and reason to jump to the ideal location to maximise the unexplored areas in the map) before leaving the rendered map via warp points.
 - **Avoid Loops**: Do not repeatedly enter and exit the same warp point/door without exploring the new room.
 """
 

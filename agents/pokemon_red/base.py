@@ -12,7 +12,10 @@ from agents.pokemon_red.openai_pokemon_memory_utils import (
     parse_game_state,
     get_map_memory_dict,
     replace_map_on_screen_with_full_map,
-    replace_filtered_screen_text
+    replace_filtered_screen_text,
+    get_warp_annotations,
+    get_npc_annotations,
+    detect_npc_interaction
 )
 
 from agents.base import BaseOrakAgent
@@ -90,92 +93,46 @@ class PokemonRedAgent(BaseOrakAgent):
             # 4. Inject full map into observation
             current_map_name = parsed_state.get('map_info', {}).get('map_name')
             
-            # --- NPC Interaction Tracking ---
-            # If there is screen text, try to attribute it to an NPC in front of the player
-            screen_text = parsed_state.get("screen_text")
-            pos = parsed_state.get("pos")
-            facing = parsed_state.get("facing")
-            
-            if current_map_name and screen_text and pos and facing and map_current:
-                # Calculate target position
-                tx, ty = pos
-                if facing == "up": ty -= 1
-                elif facing == "down": ty += 1
-                elif facing == "left": tx -= 1
-                elif facing == "right": tx += 1
+            # --- NPC Interaction Update (Stateful) ---
+            target_obj = detect_npc_interaction(parsed_state, map_current)
+            if target_obj and current_map_name:
+                screen_text = parsed_state.get("screen_text")
+                if "npcs" not in self._map_memory[current_map_name]:
+                    self._map_memory[current_map_name]["npcs"] = {}
                 
-                # Check bounds and retrieve object
-                if 0 <= ty < len(map_current) and 0 <= tx < len(map_current[0]):
-                    target_obj = map_current[ty][tx]
-                    # If it looks like a sprite, record the dialogue
-                    if isinstance(target_obj, str) and target_obj.startswith("SPRITE_"):
-                        if "npcs" not in self._map_memory[current_map_name]:
-                            self._map_memory[current_map_name]["npcs"] = {}
+                # Get existing memory (handle legacy string format)
+                npc_mem = self._map_memory[current_map_name]["npcs"].get(target_obj, {"lines": [], "summary": ""})
+                if isinstance(npc_mem, str): 
+                    npc_mem = {"lines": [npc_mem], "summary": npc_mem}
+                    
+                # Avoid duplicate contiguous lines (basic dedup for page turns)
+                if not npc_mem["lines"] or npc_mem["lines"][-1] != screen_text:
+                    npc_mem["lines"].append(screen_text)
+                    
+                    # Summarize using LLM
+                    full_text = " ".join(npc_mem["lines"])
+                    if len(full_text) < 1000 and self._llm:
+                        try:
+                            summary_prompt = f"Summarize this game dialogue from {target_obj} in 1 short sentence: '{full_text}'"
+                            # We use direct invoke which might block slightly but ensures summary is ready
+                            res = self._llm.invoke([HumanMessage(content=summary_prompt)])
+                            npc_mem["summary"] = res.content.strip()
+                        except Exception as summary_err:
+                            logger.warning(f"Summary failed: {summary_err}")
+                            npc_mem["summary"] = full_text[:50] + "..."
+                    else:
+                        npc_mem["summary"] = full_text[:50] + "..."
                         
-                        # Get existing memory (handle legacy string format)
-                        npc_mem = self._map_memory[current_map_name]["npcs"].get(target_obj, {"lines": [], "summary": ""})
-                        if isinstance(npc_mem, str):
-                            npc_mem = {"lines": [npc_mem], "summary": npc_mem}
-                            
-                        # Avoid duplicate contiguous lines (basic dedup for page turns)
-                        if not npc_mem["lines"] or npc_mem["lines"][-1] != screen_text:
-                            npc_mem["lines"].append(screen_text)
-                            
-                            # Summarize using LLM
-                            full_text = " ".join(npc_mem["lines"])
-                            # Simple limit to avoid growing prompts too large before summary catches up
-                            if len(full_text) < 1000 and self._llm:
-                                try:
-                                    summary_prompt = f"Summarize this game dialogue from {target_obj} in 1 short sentence: '{full_text}'"
-                                    # We use direct invoke which might block slightly but ensures summary is ready
-                                    res = self._llm.invoke([HumanMessage(content=summary_prompt)])
-                                    npc_mem["summary"] = res.content.strip()
-                                except Exception as summary_err:
-                                    logger.warning(f"Summary failed: {summary_err}")
-                                    npc_mem["summary"] = full_text[:50] + "..."
-                            else:
-                                npc_mem["summary"] = full_text[:50] + "..."
-                                
-                            self._map_memory[current_map_name]["npcs"][target_obj] = npc_mem
+                    self._map_memory[current_map_name]["npcs"][target_obj] = npc_mem
 
             # --- Annotation Generation (Warps + NPCs) ---
-            annotations = {}
+            warp_ann = get_warp_annotations(self._warp_memory, self._map_memory, current_map_name, map_current)
+            npc_ann = get_npc_annotations(self._map_memory, current_map_name, map_current)
             
-            # 1. Warp Annotations
-            raw_warps = self._warp_memory.get(current_map_name, {}) if current_map_name else {}
-            for pos, dest_map in raw_warps.items():
-                status = " (Unexplored)"
-                if dest_map in self._map_memory:
-                    grid = self._map_memory[dest_map].get("explored_map", [])
-                    if grid:
-                        # Check if there's any '?' row by row
-                        is_partial = False
-                        for row in grid:
-                            if '?' in row:
-                                is_partial = True
-                                break
-                        status = " (Partially Explored)" if is_partial else " (Fully Explored)"
-                annotations[pos] = f"{dest_map}{status}"
+            # Merge annotations
+            final_annotations = {**warp_ann, **npc_ann}
 
-            # 2. NPC Annotations
-            if current_map_name and "npcs" in self._map_memory.get(current_map_name, {}):
-                npc_memory = self._map_memory[current_map_name]["npcs"]
-                # Scan grid to find current positions of these NPCs
-                if map_current:
-                    for y, row in enumerate(map_current):
-                        for x, cell in enumerate(row):
-                            if isinstance(cell, str) and cell in npc_memory:
-                                # Found a sprite with memory
-                                mem_item = npc_memory[cell]
-                                text_show = "..."
-                                if isinstance(mem_item, dict):
-                                    text_show = mem_item.get("summary", "...")
-                                elif isinstance(mem_item, str):
-                                    text_show = mem_item[:50] + "..." if len(mem_item) > 50 else mem_item
-                                    
-                                annotations[(x, y)] = f"{cell} (Said: '{text_show}')"
-
-            obs_str = replace_map_on_screen_with_full_map(obs_str, map_current, annotations)
+            obs_str = replace_map_on_screen_with_full_map(obs_str, map_current, final_annotations)
         except Exception as e:
             logger.warning(f"Failed to preprocess observation with map memory: {e}")
             

@@ -277,7 +277,18 @@ def replace_map_on_screen_with_full_map(state_text: str, map_current: list, warp
                             original_char_code = val_at_cell
                         else:
                             original_char_code = val_at_cell[0].upper()
-                            notable_objects[(x_coord, y_coord)] = f"{val_at_cell}"
+                            # Handle WarpPoint defaults
+                            if val_at_cell == "WarpPoint" or "WARP" in val_at_cell.upper():
+                                is_known_warp = False
+                                if warp_annotations and (x_coord, y_coord) in warp_annotations:
+                                    is_known_warp = True
+                                
+                                if not is_known_warp:
+                                     notable_objects[(x_coord, y_coord)] = f"{val_at_cell} (Unexplored)"
+                                else:
+                                     notable_objects[(x_coord, y_coord)] = f"{val_at_cell}"
+                            else:
+                                notable_objects[(x_coord, y_coord)] = f"{val_at_cell}"
                     elif val_at_cell is None or val_at_cell == "":
                         original_char_code = '?'
                     else:
@@ -341,3 +352,94 @@ def replace_filtered_screen_text(state_text: str, dialog_buffer: list) -> str:
         return new_state_text
     else:
         return new_section + "\n" + state_text
+
+
+# =============================================================================
+# Helper Utilities (Annotation & Interaction)
+# =============================================================================
+
+def get_warp_annotations(warp_memory: dict, map_memory: dict, current_map_name: str, map_current: list) -> dict:
+    """Generates annotations for warp points based on memory and grid layout."""
+    annotations = {}
+    raw_warps = warp_memory.get(current_map_name, {}) if current_map_name else {}
+    
+    for pos, dest_map in raw_warps.items():
+        # Heuristic: Snap landing position to visible WarpPoint if adjacent (usually Up)
+        display_pos = pos
+        if map_current:
+            x, y = pos
+            curr_cell = ""
+            if 0 <= y < len(map_current) and 0 <= x < len(map_current[0]):
+                curr_cell = str(map_current[y][x])
+            
+            is_current_warp = "WARP" in curr_cell.upper() or "DOOR" in curr_cell.upper() or curr_cell == "WarpPoint"
+            
+            if not is_current_warp:
+                # Check Up (y-1)
+                if 0 <= y-1 < len(map_current) and 0 <= x < len(map_current[0]):
+                    up_cell = str(map_current[y-1][x])
+                    if "WARP" in up_cell.upper() or "DOOR" in up_cell.upper() or up_cell == "WarpPoint":
+                        display_pos = (x, y-1)
+
+        status = " (Unexplored)"
+        if dest_map in map_memory:
+            grid = map_memory[dest_map].get("explored_map", [])
+            if grid:
+                # Check if there's any '?' row by row
+                is_partial = False
+                for row in grid:
+                    if '?' in row:
+                        is_partial = True
+                        break
+                status = " (Partially Explored)" if is_partial else " (Fully Explored)"
+        annotations[display_pos] = f"{dest_map}{status}"
+        
+    return annotations
+
+
+def get_npc_annotations(map_memory: dict, current_map_name: str, map_current: list) -> dict:
+    """Scan the map for known NPCs and create annotations with their summary."""
+    annotations = {}
+    if current_map_name and "npcs" in map_memory.get(current_map_name, {}):
+        npc_memory = map_memory[current_map_name]["npcs"]
+        # Scan grid to find current positions of these NPCs
+        if map_current:
+            for y, row in enumerate(map_current):
+                for x, cell in enumerate(row):
+                    if isinstance(cell, str) and cell in npc_memory:
+                        # Found a sprite with memory
+                        mem_item = npc_memory[cell]
+                        text_show = "..."
+                        if isinstance(mem_item, dict):
+                            text_show = mem_item.get("summary", "...")
+                        elif isinstance(mem_item, str):
+                            text_show = mem_item[:50] + "..." if len(mem_item) > 50 else mem_item
+                            
+                        annotations[(x, y)] = f"{cell} (Said: '{text_show}')"
+    return annotations
+
+
+def detect_npc_interaction(parsed_state: dict, map_current: list) -> str:
+    """
+    Determines if the player is currently confirming dialog from a sprite.
+    Returns the sprite ID if found, else None.
+    """
+    screen_text = parsed_state.get("screen_text")
+    pos = parsed_state.get("pos")
+    facing = parsed_state.get("facing")
+    
+    if screen_text and pos and facing and map_current:
+        # Calculate target position
+        tx, ty = pos
+        if facing == "up": ty -= 1
+        elif facing == "down": ty += 1
+        elif facing == "left": tx -= 1
+        elif facing == "right": tx += 1
+        
+        # Check bounds and retrieve object
+        if 0 <= ty < len(map_current) and 0 <= tx < len(map_current[0]):
+            target_obj = map_current[ty][tx]
+            # If it looks like a sprite, return it
+            if isinstance(target_obj, str) and target_obj.startswith("SPRITE_"):
+                return target_obj
+    return None
