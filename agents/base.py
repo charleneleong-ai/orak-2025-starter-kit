@@ -183,7 +183,10 @@ class BaseOrakAgent(weave.Model):
                 # Filter out prompt/output_text from wandb log to avoid clutter if they are huge
                 # But keep tokens and reasoning length
                 for k, v in log_extras.items():
-                    if k not in ["prompt", "output_text"]:
+                    if k == "reasoning":
+                         # Wrap reasoning in pre-wrap for better readability in wandb
+                         log_data[k] = wandb.Html(f"<div style='white-space: pre-wrap;'>{v}</div>")
+                    elif k not in ["prompt", "output_text"]:
                         log_data[k] = v
 
             # Log action distribution
@@ -232,6 +235,7 @@ class BaseOrakAgent(weave.Model):
         if output_text:
             log_extras["output_text"] = output_text
         if reasoning:
+            log_extras["reasoning"] = reasoning
             log_extras["reasoning_length"] = len(reasoning)
         if usage:
              if hasattr(usage, 'prompt_tokens'):
