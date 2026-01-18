@@ -112,6 +112,11 @@ quit
 - Cursor move & confirm: separate turns ALWAYS (e.g., 'up', then next turn 'a'; NOT 'up | a' in this response).
 - Adhere to state-based tool/action validity.
 - Be concise. Adhere strictly to format.
+
+
+### Exploration Strategy ###
+- **Explore First**: If the 'Full Map' shows unexplored areas ('?'), prioritize actions that explore these areas (eg. plan and reason to move to a ideal location to reveal unexplored areas in the map) before leaving the full rendered map via warp points.
+- **Avoid Loops**: Do not repeatedly enter and exit the same warp point/door without exploring the new room.
 """
 
 USER_PROMPT = """

@@ -181,12 +181,14 @@ def get_map_memory_dict(state_dict: dict, map_memory_dict: dict) -> dict:
 # Observation Processing
 # =============================================================================
 
-def replace_map_on_screen_with_full_map(state_text: str, map_current: list) -> str:
+def replace_map_on_screen_with_full_map(state_text: str, map_current: list, warp_annotations: dict = None) -> str:
     """
     Replace the partial map view in observation with the agent's full explored map.
     
-    This is the agent's observation enhancement strategy. Participants can modify
-    this to present map information differently to their agent.
+    Args:
+        state_text: Original observation string.
+        map_current: 2D list representing the current map grid.
+        warp_annotations: Dictionary mapping (x, y) coordinates to destination map strings.
     """
     # Return original text if map_current is empty or invalid
     if not map_current or not isinstance(map_current, list) or \
@@ -246,18 +248,8 @@ def replace_map_on_screen_with_full_map(state_text: str, map_current: list) -> s
             max_y_label_str = f"{actual_y_max:<{y_label_num_width}} | "
             header_left_padding = " " * len(max_y_label_str)
 
-            x_axis_markers_prefix = "(x=0) "
-            x_axis_markers_suffix = f" (x={actual_x_max})"
-            
-            column_line_content_width = len(x_axis_markers_prefix) + num_cols + len(x_axis_markers_suffix)
-
             # --- Map Header Construction ---
-            y0_label_text = "(y=0)"
-            y0_padding_count = (column_line_content_width - len(y0_label_text)) // 2
-            y0_padding = " " * max(0, y0_padding_count)
-            map_grid_lines.append(f"{header_left_padding}{y0_padding}{y0_label_text}")
-
-            # Column number headers
+            # Column numbers (tens digits if needed, then units)
             col_headers_digits_only_list = []
             if num_cols > 0:
                 if num_cols >= 100:
@@ -266,16 +258,11 @@ def replace_map_on_screen_with_full_map(state_text: str, map_current: list) -> s
                     col_headers_digits_only_list.append("".join([str(i // 10 % 10) if i >= 10 else ' ' for i in range(num_cols)]))
                 col_headers_digits_only_list.append("".join([str(i % 10) for i in range(num_cols)]))
 
-            for i, digits_str in enumerate(col_headers_digits_only_list):
-                if i == len(col_headers_digits_only_list) - 1:
-                    line_content = f"{x_axis_markers_prefix}{digits_str}{x_axis_markers_suffix}"
-                else:
-                    line_content = f"{' ' * len(x_axis_markers_prefix)}{digits_str}{' ' * len(x_axis_markers_suffix)}"
-                map_grid_lines.append(f"{header_left_padding}{line_content}")
+            for digits_str in col_headers_digits_only_list:
+                map_grid_lines.append(f"{header_left_padding}{digits_str}")
             
             # Separator line
-            separator_padding = " " * (len(header_left_padding) + len(x_axis_markers_prefix))
-            map_grid_lines.append(f"{separator_padding}+{'-' * num_cols}+")
+            map_grid_lines.append(f"{header_left_padding}+{'-' * num_cols}+")
 
             # --- Map Rows Construction ---
             for y_coord in range(num_rows):
@@ -302,11 +289,14 @@ def replace_map_on_screen_with_full_map(state_text: str, map_current: list) -> s
                 map_row_content_str = "".join(line_content_chars)
                 map_grid_lines.append(f"{current_y_label_str}{map_row_content_str}")
 
-            # --- Map Footer Construction ---
-            y_max_label_text = f"(y={actual_y_max})"
-            y_max_padding_count = (column_line_content_width - len(y_max_label_text)) // 2
-            y_max_padding = " " * max(0, y_max_padding_count)
-            map_grid_lines.append(f"{header_left_padding}{y_max_padding}{y_max_label_text}")
+            # --- Add Warp Annotations manually if not already in notable_objects ---
+            if warp_annotations:
+                for coord, dest_map in warp_annotations.items():
+                   if coord not in notable_objects:
+                        notable_objects[coord] = f"Potential Warp (to {dest_map})"
+                   else:
+                        # Append to existing notable object description
+                         notable_objects[coord] += f" (Warp to {dest_map})"
 
             # --- Assemble the [Full Map] and [Notable Objects] blocks ---
             full_map_text_block = "[Full Map]\n" + "\n".join(map_grid_lines)

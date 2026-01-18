@@ -38,7 +38,7 @@ SYSTEM_PROMPT = f"""
 ### Decision Output Format ###
 You must respond with a structure containing:
 - "reasoning": A detailed explanation of why this action was chosen (referencing the strategy, rules, and recent game state history below). Your reasoning MUST take into consideration the summary of recent game states (e.g., map names, party sizes, and any key transitions) as context for your decision, using the provided history.
-- "current_goal": An inferred next milestone or sub-goal based on historical observations and current game state (e.g., "Deliver Oak's Parcel to Professor Oak", "Obtain the Boulder Badge from Pewter City Gym", "Catch a Pokemon to build my party", etc.). This should reflect logical progression in the game.
+- "current_goal": An inferred next milestone or sub-goal based on historical observations and current game state. This should reflect logical progression in the game.
 - "action": The action to take. ALWAYS prefer high-level tool actions (e.g., use_tool(move_to, ...), use_tool(interact_with_object, ...), etc.) over low-level button presses ('up', 'down', 'left', 'right', 'a', 'b', 'start', 'select'), unless no tool is valid for the current state. Only use low-level actions if no tool applies or for precise menu/dialog choices/facing.
 """
 
@@ -54,12 +54,6 @@ USER_PROMPT_TEMPLATE = """
 
 ### Current state
 {cur_state_str}
-
-### Current Map
-{full_map_str}
-
-## Current Goal
-{current_goal}
 """
 
 class GameAction(BaseModel):
@@ -177,8 +171,6 @@ class PokemonRedAgent(BaseOrakAgent):
             progress_indicators.append(f"GOAL: Current goal is '{game_state['current_goal']}'.")
         
         # Fact-based observations
-        if game_state["has_parcel"]:
-            progress_indicators.append("OBSERVATION: You possess 'Oak's Parcel'. Key items usually need to be delivered.")
         
         if game_state["party_size"] == 0:
             progress_indicators.append("OBSERVATION: You have no Pokemon.You need to find protection before traveling far.")
@@ -188,6 +180,11 @@ class PokemonRedAgent(BaseOrakAgent):
         map_name = game_state["map_name"]
         progress_indicators.append(f"LOCATION: Currently in {map_name}.")
         
+        # Exploration Check
+        if "?" in game_state.get("full_map_str", ""):
+             progress_indicators.append("OBSERVATION: The current map contains unexplored areas ('?'). You have not seen the whole room yet. Please prioritise exploring the map fully.")
+        else:
+            progress_indicators.append("OBSERVATION: The current map has now been fully explored. Please proceed to the next objective.")
         # History-based context (Short-term memory)
         if self._text_history:
             history_str = " | ".join(self._text_history[-3:]) # Last 3 unique texts
@@ -294,6 +291,8 @@ class PokemonRedAgent(BaseOrakAgent):
                     if res.get('facing'): res_str += f"({res.get('facing')})"
 
                 history_lines.append(f"Step {h.get('step')}: {start_str} -> Action '{h.get('action')}' -> {res_str}")
+                if h.get('reasoning'):
+                    history_lines.append(f"   Reasoning: {h.get('reasoning')}")
         
         step_history = "\n".join(history_lines) if history_lines else "No history yet."
 
@@ -303,8 +302,6 @@ class PokemonRedAgent(BaseOrakAgent):
             last_action=self._last_action, 
             step_history=step_history,
             cur_state_str=cur_state_str,
-            full_map_str=parsed_state.get("full_map_str", "(No map found)"),
-            current_goal=self._current_goal
         )
         
         messages = [
@@ -349,6 +346,7 @@ class PokemonRedAgent(BaseOrakAgent):
                 self._history.append({
                     "step": self._step_count,
                     "action": action,
+                    "reasoning": reasoning,
                     "start_state": current_state_info,
                     "result_state": {} # Will be updated next step
                 })
