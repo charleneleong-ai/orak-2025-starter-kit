@@ -1,3 +1,4 @@
+import re
 import traceback
 import base64
 import io
@@ -9,6 +10,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
 
 from agents.base import BaseOrakAgent
+from .pokemon_prompts import SYSTEM_PROMPT as ADVANCED_PROMPT
 import weave
 
 GAME_RULES = """
@@ -23,15 +25,14 @@ GAME_RULES = """
 - buttons: 'up', 'down', 'left', 'right', 'a', 'b', 'start', 'select'
 """
 
-SYSTEM_PROMPT = f"""
-You are an AI assistant playing Pokemon Red. Your goal is to progress through the game, completing tasks as requested.
-You should analyze the provided game state (text description and/or image) and determine the **single most optimal action** to take next.
+_PROMPT_CONTENT = ADVANCED_PROMPT.split("# RESPONSE FORMAT")[0]
 
-{GAME_RULES}
+SYSTEM_PROMPT = f"""
+{_PROMPT_CONTENT}
 
 ### Decision Output Format ###
 You must respond with a structure containing:
-- "reasoning": A detailed explanation of why this action was chosen.
+- "reasoning": A detailed explanation of why this action was chosen (referencing the strategy and rules above).
 - "action": The action button to press. Valid actions: 'up', 'down', 'left', 'right', 'a', 'b', 'start', 'select'.
 """
 
@@ -54,6 +55,80 @@ class GameAction(BaseModel):
 class PokemonRedAgent(BaseOrakAgent):
     
     _llm: Optional[BaseChatModel] = PrivateAttr(default=None)
+
+    def _parse_game_state(self, state_str: str) -> dict:
+        """Parses the text game state to extract key info for milestone tracking."""
+        state = {
+            "map_name": "",
+            "party_size": 0,
+            "has_parcel": False
+        }
+        
+        # Extract Map Name
+        map_match = re.search(r"Map Name:\s*([^\s,]+)", state_str, re.IGNORECASE)
+        if map_match:
+            state["map_name"] = map_match.group(1)
+
+        # Check Party
+        if "[Current Party]" in state_str:
+            party_section = state_str.split("[Current Party]")[1].split("[")[0]
+            # If it's not "No more Pokemons", assume we have one
+            # Typical text: "1. BULBASAUR L5" or just "No more Pokemons"
+            if "No more Pokemons" not in party_section and "No more" not in party_section:
+                state["party_size"] = 1
+                
+        # Check Bag for Parcel
+        if "[Bag]" in state_str:
+            bag_section = state_str.split("[Bag]")[1].split("[")[0]
+            if "Oak's Parcel" in bag_section or "OAKS PARCEL" in bag_section.upper():
+                state["has_parcel"] = True
+                
+        return state
+
+    def _determine_current_milestone(self, game_state: dict) -> str:
+        """Determines the current prologue milestone based on state."""
+        map_name = game_state["map_name"].lower()
+        has_pokemon = game_state["party_size"] > 0
+        has_parcel = game_state["has_parcel"]
+        
+        # 1. Exit Red's House
+        if "redshouse" in map_name:
+            return "1. Exit Red's House (Find stairs in bedroom -> exit mat downstairs)."
+            
+        # 2. Encounter Professor Oak / 3. Choose Starter / 4. Rival Battle
+        if "pallet" in map_name or "oakslab" in map_name:
+            if has_parcel:
+                return "7. Deliver Parcel to Oak in his Lab (Victory Condition)."
+            
+            if not has_pokemon:
+                if "oakslab" in map_name:
+                    return "3. Choose a Starter Pokémon (Interact with balls on table)."
+                else:
+                    return "2. Encounter Professor Oak (Try to walk North out of Pallet Town to trigger cutscene)."
+            
+            if "oakslab" in map_name:
+                return "4. Defeat Rival (if in battle) OR Exit Lab to start journey."
+
+            return "5. Travel North to Viridian City (via Route 1)."
+            
+        # 5. Route 1 Travel
+        if "route1" in map_name:
+            if has_parcel:
+                return "7. Return to Pallet Town (Go South)."
+            return "5. Travel North to Viridian City."
+            
+        # 6. Viridian City / Mart
+        if "viridian" in map_name:
+            if has_parcel:
+                return "7. Return to Pallet Town (Go South via Route 1)."
+            if "mart" in map_name:
+                return "6. Receive 'Oak's Parcel' (Talk to clerk)."
+            return "6. Find and Enter Viridian Mart (Look for 'SHOP' sign)."
+            
+        # Default fallback
+        if has_parcel: return "7. Deliver Parcel to Oak."
+        if has_pokemon: return "Explore and progress towards Viridian City."
+        return "Explore and progress."
 
     def calculate_metrics(self, game_info: dict[str, Any]) -> dict[str, Any]:
         """
@@ -80,8 +155,15 @@ class PokemonRedAgent(BaseOrakAgent):
         if not self._llm:
             raise ValueError("LLM not initialized")
 
+        # Dynamic Goal Injection
+        parsed_state = self._parse_game_state(cur_state_str)
+        current_milestone = self._determine_current_milestone(parsed_state)
+        
+        # Override task description with the specific milestone context
+        augmented_task = f"{task_description}\nCURRENT MILESTONE: {current_milestone}"
+
         prompt_text = USER_PROMPT_TEMPLATE.format(
-            task_description=task_description,
+            task_description=augmented_task,
             last_action=self._last_action, 
             cur_state_str=cur_state_str
         )
