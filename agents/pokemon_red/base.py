@@ -43,6 +43,9 @@ USER_PROMPT_TEMPLATE = """
 ### Last executed action
 {last_action}
 
+### Recent Step History (Last 3 Steps)
+{step_history}
+
 ### Current state
 {cur_state_str}
 """
@@ -55,19 +58,38 @@ class GameAction(BaseModel):
 class PokemonRedAgent(BaseOrakAgent):
     
     _llm: Optional[BaseChatModel] = PrivateAttr(default=None)
+    _history: list[dict] = PrivateAttr(default_factory=list)
 
     def _parse_game_state(self, state_str: str) -> dict:
         """Parses the text game state to extract key info for milestone tracking."""
         state = {
-            "map_name": "",
+            "map_name": "Unknown",
             "party_size": 0,
-            "has_parcel": False
+            "has_parcel": False,
+            "pos": None,
+            "facing": None,
+            "screen_type": "Unknown"
         }
         
         # Extract Map Name
         map_match = re.search(r"Map Name:\s*([^\s,]+)", state_str, re.IGNORECASE)
         if map_match:
             state["map_name"] = map_match.group(1)
+
+        # Extract Position
+        pos_match = re.search(r"Your position \(x, y\): \((\d+), (\d+)\)", state_str)
+        if pos_match:
+            state["pos"] = (int(pos_match.group(1)), int(pos_match.group(2)))
+
+        # Extract Facing
+        face_match = re.search(r"Your facing direction:\s*(\w+)", state_str)
+        if face_match:
+            state["facing"] = face_match.group(1)
+
+        # Extract Screen Type
+        type_match = re.search(r"State:\s*(\w+)", state_str)
+        if type_match:
+            state["screen_type"] = type_match.group(1)
 
         # Check Party
         if "[Current Party]" in state_str:
@@ -148,6 +170,20 @@ class PokemonRedAgent(BaseOrakAgent):
             
         return metrics
 
+    def get_state(self) -> dict[str, Any]:
+        """Override to include PokemonRed-specific history."""
+        state = super().get_state()
+        state["pokemon_red_history"] = self._history
+        return state
+
+    def load_state(self, state: dict[str, Any]) -> None:
+        """Override to load PokemonRed-specific history."""
+        super().load_state(state)
+        # Restore history, defaulting to empty list if missing
+        self._history = state.get("pokemon_red_history", [])
+        if not isinstance(self._history, list):
+            self._history = []
+
     @weave.op()
     def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, Any, str]:
         """Get action from LLM. This method is tracked by Weave for observability."""
@@ -157,14 +193,51 @@ class PokemonRedAgent(BaseOrakAgent):
 
         # Dynamic Goal Injection
         parsed_state = self._parse_game_state(cur_state_str)
+        
+        # Capture Detailed State
+        current_state_info = {
+            "map": parsed_state.get("map_name", "Unknown"),
+            "pos": parsed_state.get("pos"), # Tuple or None
+            "facing": parsed_state.get("facing"),
+            "type": parsed_state.get("screen_type")
+        }
+        
+        # Update previous history entry with the resulting state
+        if self._history and self._history[-1].get("step") == self._step_count - 1:
+            self._history[-1]["result_state"] = current_state_info
+
         current_milestone = self._determine_current_milestone(parsed_state)
         
+        # Build history string for prompt
+        history_lines = []
+        if isinstance(self._history, list):
+            for h in self._history[-3:]: # Get last 3
+                start = h.get('start_state', {})
+                res = h.get('result_state', {})
+                
+                # Format start
+                start_str = f"{start.get('map', '?')}"
+                if start.get('pos'): start_str += f"{start.get('pos')}"
+                if start.get('facing'): start_str += f"({start.get('facing')})"
+                
+                # Format result
+                res_str = "???"
+                if res:
+                    res_str = f"{res.get('map', '?')}"
+                    if res.get('pos'): res_str += f"{res.get('pos')}"
+                    if res.get('facing'): res_str += f"({res.get('facing')})"
+
+                history_lines.append(f"Step {h.get('step')}: {start_str} -> Action '{h.get('action')}' -> {res_str}")
+        
+        step_history = "\n".join(history_lines) if history_lines else "No history yet."
+
         # Override task description with the specific milestone context
         augmented_task = f"{task_description}\nCURRENT MILESTONE: {current_milestone}"
 
         prompt_text = USER_PROMPT_TEMPLATE.format(
             task_description=augmented_task,
             last_action=self._last_action, 
+            step_history=step_history,
             cur_state_str=cur_state_str
         )
         
@@ -199,6 +272,18 @@ class PokemonRedAgent(BaseOrakAgent):
             
             output_text = f"Action: {action}\nReasoning: {reasoning}"
             
+            # Update history
+            if isinstance(self._history, list):
+                self._history.append({
+                    "step": self._step_count,
+                    "action": action,
+                    "start_state": current_state_info,
+                    "result_state": {} # Will be updated next step
+                })
+                # Keep only last 10-20 to avoid memory leak, though we only use 3
+                if len(self._history) > 20:
+                    self._history.pop(0)
+
         except Exception as e:
             logger.error(f"Error invoking LLM: {traceback.format_exc()}")
             # Default fallback action
