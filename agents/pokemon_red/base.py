@@ -69,6 +69,7 @@ class PokemonRedAgent(BaseOrakAgent):
     _text_history: list[str] = PrivateAttr(default_factory=list)
     _current_goal: str = PrivateAttr(default="")
     _map_memory: dict = PrivateAttr(default_factory=dict)
+    _warp_memory: dict = PrivateAttr(default_factory=dict)
 
     def _preprocess_observation(self, obs_str: str) -> str:
         """Preprocess observation string to ensure '[Full Map]' is present using normalization utility."""
@@ -87,7 +88,29 @@ class PokemonRedAgent(BaseOrakAgent):
                     map_current = self._map_memory[map_name].get("explored_map", [])
             
             # 4. Inject full map into observation
-            obs_str = replace_map_on_screen_with_full_map(obs_str, map_current)
+            current_map_name = parsed_state.get('map_info', {}).get('map_name')
+            
+            # Compute exploration status for warp destinations
+            raw_warps = self._warp_memory.get(current_map_name, {}) if current_map_name else {}
+            warp_annotations = {}
+            
+            for pos, dest_map in raw_warps.items():
+                status = " (Unexplored)"
+                if dest_map in self._map_memory:
+                    grid = self._map_memory[dest_map].get("explored_map", [])
+                    if grid:
+                        # Check if there's any '?' row by row
+                        is_partial = False
+                        for row in grid:
+                            if '?' in row:
+                                is_partial = True
+                                break
+                        
+                        status = " (Partially Explored)" if is_partial else " (Fully Explored)"
+                
+                warp_annotations[pos] = f"{dest_map}{status}"
+
+            obs_str = replace_map_on_screen_with_full_map(obs_str, map_current, warp_annotations)
         except Exception as e:
             logger.warning(f"Failed to preprocess observation with map memory: {e}")
             
@@ -110,6 +133,15 @@ class PokemonRedAgent(BaseOrakAgent):
         map_match = re.search(r"Map Name:\s*([^\s,]+)", state_str, re.IGNORECASE)
         if map_match:
             state["map_name"] = map_match.group(1)
+
+        # Extract Position & Facing (For warp tracking)
+        pos_match = re.search(r"Your position \(x, y\): \((\d+), (\d+)\)", state_str)
+        if pos_match:
+            state["pos"] = (int(pos_match.group(1)), int(pos_match.group(2)))
+        
+        facing_match = re.search(r"Your facing direction:\s*(\w+)", state_str)
+        if facing_match:
+            state["facing"] = facing_match.group(1)
             
         # Extract Current Goal
         goal_match = re.search(r"Current Goal:\s*(.+)", state_str, re.IGNORECASE)
@@ -173,7 +205,7 @@ class PokemonRedAgent(BaseOrakAgent):
         # Fact-based observations
         
         if game_state["party_size"] == 0:
-            progress_indicators.append("OBSERVATION: You have no Pokemon.You need to find protection before traveling far.")
+            progress_indicators.append("OBSERVATION: You have no Pokemon.")
         else:
             progress_indicators.append(f"OBSERVATION: Party size is {game_state['party_size']}. You are ready for battle.")
 
@@ -184,7 +216,7 @@ class PokemonRedAgent(BaseOrakAgent):
         if "?" in game_state.get("full_map_str", ""):
              progress_indicators.append("OBSERVATION: The current map contains unexplored areas ('?'). You have not seen the whole room yet. Please prioritise exploring the map fully.")
         else:
-            progress_indicators.append("OBSERVATION: The current map has now been fully explored. Please proceed to the next objective.")
+            progress_indicators.append("OBSERVATION: The current map has now been fully explored.")
         # History-based context (Short-term memory)
         if self._text_history:
             history_str = " | ".join(self._text_history[-3:]) # Last 3 unique texts
@@ -213,6 +245,7 @@ class PokemonRedAgent(BaseOrakAgent):
         state["pokemon_red_history"] = self._history
         state["pokemon_red_map_memory"] = self._map_memory
         state["pokemon_red_current_goal"] = self._current_goal
+        state["pokemon_red_warp_memory"] = self._warp_memory
         return state
 
     def load_state(self, state: dict[str, Any]) -> None:
@@ -230,8 +263,42 @@ class PokemonRedAgent(BaseOrakAgent):
             
         # Restore current goal
         self._current_goal = state.get("pokemon_red_current_goal", "")
+        
+        # Restore warp memory
+        self._warp_memory = state.get("pokemon_red_warp_memory", {})
+        if not isinstance(self._warp_memory, dict):
+            self._warp_memory = {}
 
             
+    def _record_warp(self, start_state, action, end_state):
+        start_pos = start_state.get("pos")
+        start_map = start_state.get("map")
+        end_pos = end_state.get("pos")
+        end_map = end_state.get("map")
+        
+        if not start_pos or not start_map or not end_pos or not end_map:
+            return
+            
+        x, y = start_pos
+        
+        # 1. Forward link: Step INTO the warp
+        # If action was 'up', we moved 'up' to hit the warp tile.
+        if action == "up": y -= 1
+        elif action == "down": y += 1
+        elif action == "left": x -= 1
+        elif action == "right": x += 1
+        
+        if start_map not in self._warp_memory:
+            self._warp_memory[start_map] = {}
+        # Record destination map
+        self._warp_memory[start_map][(x, y)] = end_map
+        
+        # 2. Backward link: Where we landed implies a return path
+        if end_map not in self._warp_memory:
+             self._warp_memory[end_map] = {}
+        # Record return map at landing position
+        self._warp_memory[end_map][end_pos] = start_map
+
     @weave.op()
     def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, str,  Any, str]:
         """Get action from LLM. This method is tracked by Weave for observability."""
@@ -239,6 +306,28 @@ class PokemonRedAgent(BaseOrakAgent):
         if not self._llm:
             raise ValueError("LLM not initialized")
             
+        # Early Warp Detection (to update memory before rendering)
+        # Parse minimal state to check for warps so the new map render includes the return link immediately.
+        try:
+            raw_parsed = self._parse_game_state(cur_state_str)
+            raw_map_name = raw_parsed.get("map_name")
+            
+            if self._history and self._history[-1].get("step") == self._step_count - 1:
+                prev_step = self._history[-1]
+                start_map = prev_step.get("start_state", {}).get("map")
+                
+                if start_map and raw_map_name and start_map != raw_map_name:
+                    # Construct valid current info for recording
+                    raw_current_info = {
+                        "map": raw_map_name,
+                        "pos": raw_parsed.get("pos"),
+                        "facing": raw_parsed.get("facing"),
+                        "screen_type": raw_parsed.get("screen_type")
+                    }
+                    self._record_warp(prev_step["start_state"], prev_step["action"], raw_current_info)
+        except Exception as e:
+            logger.warning(f"Early warp detection failed: {e}")
+
         # Preprocess observation
         cur_state_str = self._preprocess_observation(cur_state_str)
 
@@ -261,7 +350,7 @@ class PokemonRedAgent(BaseOrakAgent):
         # Update previous history entry with the resulting state
         if self._history and self._history[-1].get("step") == self._step_count - 1:
             self._history[-1]["result_state"] = current_state_info
-
+            
         self._update_history(parsed_state)
         
         # Infer context instead of forcing a milestone

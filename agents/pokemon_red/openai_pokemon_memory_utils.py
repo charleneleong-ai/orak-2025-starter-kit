@@ -293,10 +293,10 @@ def replace_map_on_screen_with_full_map(state_text: str, map_current: list, warp
             if warp_annotations:
                 for coord, dest_map in warp_annotations.items():
                    if coord not in notable_objects:
-                        notable_objects[coord] = f"Potential Warp (to {dest_map})"
+                        notable_objects[coord] = f"WarpPoint -> {dest_map}"
                    else:
                         # Append to existing notable object description
-                         notable_objects[coord] += f" (Warp to {dest_map})"
+                         notable_objects[coord] += f" -> {dest_map}"
 
             # --- Assemble the [Full Map] and [Notable Objects] blocks ---
             full_map_text_block = "[Full Map]\n" + "\n".join(map_grid_lines)

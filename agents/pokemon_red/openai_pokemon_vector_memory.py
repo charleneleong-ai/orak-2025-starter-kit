@@ -10,7 +10,7 @@ import numpy as np
 from typing import List, Dict, Optional
 import time
 
-from agents.openai_pokemon_memory_utils import (
+from agents.pokemon_red.openai_pokemon_memory_utils import (
     parse_game_state,
     get_map_memory_dict,
     replace_map_on_screen_with_full_map,

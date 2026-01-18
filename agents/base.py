@@ -237,7 +237,7 @@ class BaseOrakAgent(weave.Model):
         if output_text:
             log_extras["output_text"] = output_text
         if reasoning:
-            log_extras["reasoning"] = f"Goal: {current_goal}\n\n{reasoning}"
+            log_extras["reasoning"] = f"Action: {action}\n\nGoal: {current_goal}\n\n{reasoning}"
             log_extras["reasoning_length"] = len(reasoning)
         if usage:
              if hasattr(usage, 'prompt_tokens'):
