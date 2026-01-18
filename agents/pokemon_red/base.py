@@ -8,6 +8,12 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.language_models import BaseChatModel
 from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
+from agents.pokemon_red.openai_pokemon_memory_utils import (
+    parse_game_state,
+    get_map_memory_dict,
+    replace_map_on_screen_with_full_map,
+    replace_filtered_screen_text
+)
 
 from agents.base import BaseOrakAgent
 from .pokemon_prompts import SYSTEM_PROMPT as ADVANCED_PROMPT
@@ -25,14 +31,14 @@ GAME_RULES = """
 - buttons: 'up', 'down', 'left', 'right', 'a', 'b', 'start', 'select'
 """
 
-_PROMPT_CONTENT = ADVANCED_PROMPT
- 
+
 SYSTEM_PROMPT = f"""
-{_PROMPT_CONTENT}
+{ADVANCED_PROMPT}
 
 ### Decision Output Format ###
 You must respond with a structure containing:
-- "reasoning": A detailed explanation of why this action was chosen (referencing the strategy and rules above).
+- "reasoning": A detailed explanation of why this action was chosen (referencing the strategy, rules, and recent game state history below). Your reasoning MUST take into consideration the summary of recent game states (e.g., map names, party sizes, and any key transitions) as context for your decision, using the provided history.
+- "current_goal": An inferred next milestone or sub-goal based on historical observations and current game state (e.g., "Deliver Oak's Parcel to Professor Oak", "Obtain the Boulder Badge from Pewter City Gym", "Catch a Pokemon to build my party", etc.). This should reflect logical progression in the game.
 - "action": The action to take. ALWAYS prefer high-level tool actions (e.g., use_tool(move_to, ...), use_tool(interact_with_object, ...), etc.) over low-level button presses ('up', 'down', 'left', 'right', 'a', 'b', 'start', 'select'), unless no tool is valid for the current state. Only use low-level actions if no tool applies or for precise menu/dialog choices/facing.
 """
 
@@ -48,35 +54,88 @@ USER_PROMPT_TEMPLATE = """
 
 ### Current state
 {cur_state_str}
+
+### Current Map
+{full_map_str}
+
+## Current Goal
+{current_goal}
 """
 
 class GameAction(BaseModel):
     """Structured output for Pokemon Red game actions"""
     reasoning: str = Field(description="Detailed explanation of why this action was chosen")
     action: str = Field(description="The action to take: up, down, left, right, a, b, start, select")
+    current_goal: Optional[str] = Field(default=None, description="Inferred next milestone or sub-goal based on historical observations and current game state")
 
 class PokemonRedAgent(BaseOrakAgent):
     
     _llm: Optional[BaseChatModel] = PrivateAttr(default=None)
     _history: list[dict] = PrivateAttr(default_factory=list)
     _text_history: list[str] = PrivateAttr(default_factory=list)
+    _current_goal: str = PrivateAttr(default="")
+    _map_memory: dict = PrivateAttr(default_factory=dict)
+
+    def _preprocess_observation(self, obs_str: str) -> str:
+        """Preprocess observation string to ensure '[Full Map]' is present using normalization utility."""
+        try:
+            # 1. Parse current state using utils to get map info
+            parsed_state = parse_game_state(obs_str)
+            
+            # 2. Update map memory
+            self._map_memory = get_map_memory_dict(parsed_state, self._map_memory)
+            
+            # 3. Retrieve current map grid
+            map_current = []
+            if parsed_state.get('map_info') and parsed_state['map_info'].get('map_name'):
+                map_name = parsed_state['map_info']['map_name']
+                if map_name in self._map_memory:
+                    map_current = self._map_memory[map_name].get("explored_map", [])
+            
+            # 4. Inject full map into observation
+            obs_str = replace_map_on_screen_with_full_map(obs_str, map_current)
+        except Exception as e:
+            logger.warning(f"Failed to preprocess observation with map memory: {e}")
+            
+        return obs_str
 
     def _parse_game_state(self, state_str: str) -> dict:
         """Parses the text game state to extract key info for milestone tracking."""
         state = {
             "map_name": "",
+            "current_goal": "",
             "party_size": 0,
             "has_parcel": False,
             "pos": None,
             "facing": None,
-            "screen_type": "Unknown"
+            "screen_type": "Unknown",
+            "full_map_str": ""
         }
         
         # Extract Map Name
         map_match = re.search(r"Map Name:\s*([^\s,]+)", state_str, re.IGNORECASE)
         if map_match:
             state["map_name"] = map_match.group(1)
+            
+        # Extract Current Goal
+        goal_match = re.search(r"Current Goal:\s*(.+)", state_str, re.IGNORECASE)
+        if goal_match:
+            state["current_goal"] = goal_match.group(1).strip()
 
+        # Extract [Full Map] section (including '?' tiles)
+        map_section = ""
+        if "[Full Map]" in state_str:
+            try:
+                map_section = state_str.split("[Full Map]")[1]
+                # Grab until next section or end
+                next_header = re.search(r"\n\[", map_section)
+                if next_header:
+                    map_section = map_section[:next_header.start()]
+                # Use strip('\n') to preserve horizontal indentation of the first line
+                state["full_map_str"] = map_section.strip('\n')
+            except Exception:
+                state["full_map_str"] = ""
+    
         # Check Party
         if "[Current Party]" in state_str:
             party_section = state_str.split("[Current Party]")[1].split("[")[0]
@@ -114,6 +173,9 @@ class PokemonRedAgent(BaseOrakAgent):
         """Infers the game state based on observations rather than hardcoded spoilers."""
         progress_indicators = []
         
+        if game_state.get("current_goal"):
+            progress_indicators.append(f"GOAL: Current goal is '{game_state['current_goal']}'.")
+        
         # Fact-based observations
         if game_state["has_parcel"]:
             progress_indicators.append("OBSERVATION: You possess 'Oak's Parcel'. Key items usually need to be delivered.")
@@ -132,7 +194,6 @@ class PokemonRedAgent(BaseOrakAgent):
             progress_indicators.append(f"RECENT DIALOG/TEXT: {history_str}")
 
         return "\n".join(progress_indicators)
-
     def calculate_metrics(self, game_info: dict[str, Any]) -> dict[str, Any]:
         """
         Calculate custom metrics based on game info.
@@ -153,6 +214,8 @@ class PokemonRedAgent(BaseOrakAgent):
         """Override to include PokemonRed-specific history."""
         state = super().get_state()
         state["pokemon_red_history"] = self._history
+        state["pokemon_red_map_memory"] = self._map_memory
+        state["pokemon_red_current_goal"] = self._current_goal
         return state
 
     def load_state(self, state: dict[str, Any]) -> None:
@@ -162,19 +225,37 @@ class PokemonRedAgent(BaseOrakAgent):
         self._history = state.get("pokemon_red_history", [])
         if not isinstance(self._history, list):
             self._history = []
+        
+        # Restore map memory
+        self._map_memory = state.get("pokemon_red_map_memory", {})
+        if not isinstance(self._map_memory, dict):
+            self._map_memory = {}
+            
+        # Restore current goal
+        self._current_goal = state.get("pokemon_red_current_goal", "")
+
+            
     @weave.op()
-    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, Any, str]:
+    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, str,  Any, str]:
         """Get action from LLM. This method is tracked by Weave for observability."""
         
         if not self._llm:
             raise ValueError("LLM not initialized")
+            
+        # Preprocess observation
+        cur_state_str = self._preprocess_observation(cur_state_str)
 
         # Dynamic Goal Injection
         parsed_state = self._parse_game_state(cur_state_str)
+        
+        # Inject persistent goal into parsed state so it appears in internal knowledge
+        if self._current_goal:
+            parsed_state["current_goal"] = self._current_goal
                 
         # Capture Detailed State
         current_state_info = {
             "map": parsed_state.get("map_name", "Unknown"),
+            "current_goal": self._current_goal, 
             "pos": parsed_state.get("pos"), # Tuple or None
             "facing": parsed_state.get("facing"),
             "type": parsed_state.get("screen_type")
@@ -188,6 +269,7 @@ class PokemonRedAgent(BaseOrakAgent):
         
         # Infer context instead of forcing a milestone
         progress_context = self._infer_game_progress(parsed_state)
+
         
         # Augment task with internal reasoning context
         augmented_task = f"{task_description}\n\n[INTERNAL STATE KNOWLEDGE]\n{progress_context}\n\n[INSTRUCTION]\nBased on the above observations and your internal state, determine the next logical step."
@@ -220,7 +302,9 @@ class PokemonRedAgent(BaseOrakAgent):
             task_description=augmented_task,
             last_action=self._last_action, 
             step_history=step_history,
-            cur_state_str=cur_state_str
+            cur_state_str=cur_state_str,
+            full_map_str=parsed_state.get("full_map_str", "(No map found)"),
+            current_goal=self._current_goal
         )
         
         messages = [
@@ -251,8 +335,13 @@ class PokemonRedAgent(BaseOrakAgent):
             
             action = response.action.lower()
             reasoning = response.reasoning
+            current_goal = response.current_goal or "Unknown"
             
-            output_text = f"Action: {action}\nReasoning: {reasoning}"
+            # Update internal state with new goal
+            if current_goal != "Unknown":
+                self._current_goal = current_goal
+
+            output_text = f"Action: {action}\nReasoning: {reasoning}\n Goal: {current_goal}"
             
                         
             # Update history
@@ -274,4 +363,4 @@ class PokemonRedAgent(BaseOrakAgent):
             reasoning = f"Error: {e}"
             output_text = str(e)
             
-        return action, reasoning, output_text, usage, prompt_text
+        return action, reasoning, current_goal, output_text, usage, prompt_text

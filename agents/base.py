@@ -225,7 +225,7 @@ class BaseOrakAgent(weave.Model):
         
         task_description = game_info.get("task_description", "")
         
-        action, reasoning, output_text, usage, prompt = self._get_action(
+        action, reasoning, current_goal, output_text, usage, prompt = self._get_action(
             task_description=task_description,
             cur_state_str=cur_state_str,
             obs_image=obs_image
@@ -237,7 +237,7 @@ class BaseOrakAgent(weave.Model):
         if output_text:
             log_extras["output_text"] = output_text
         if reasoning:
-            log_extras["reasoning"] = reasoning
+            log_extras["reasoning"] = f"Goal: {current_goal}\n\n{reasoning}"
             log_extras["reasoning_length"] = len(reasoning)
         if usage:
              if hasattr(usage, 'prompt_tokens'):
@@ -249,11 +249,11 @@ class BaseOrakAgent(weave.Model):
                 
         return action, log_extras
 
-    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, Any, str]:
+    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, str, Any, str]:
         """
         Get action from LLM.
         This method should be overridden by subclasses and often decorated with @weave.op().
-        Returns: (action, reasoning, output_text, usage, prompt)
+        Returns: (action, reasoning, current_goal, output_text, usage, prompt)
         """
         raise NotImplementedError
 
