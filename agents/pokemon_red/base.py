@@ -25,7 +25,7 @@ GAME_RULES = """
 - buttons: 'up', 'down', 'left', 'right', 'a', 'b', 'start', 'select'
 """
 
-_PROMPT_CONTENT = ADVANCED_PROMPT.split("# RESPONSE FORMAT")[0]
+_PROMPT_CONTENT = ADVANCED_PROMPT
  
 SYSTEM_PROMPT = f"""
 {_PROMPT_CONTENT}
@@ -33,7 +33,7 @@ SYSTEM_PROMPT = f"""
 ### Decision Output Format ###
 You must respond with a structure containing:
 - "reasoning": A detailed explanation of why this action was chosen (referencing the strategy and rules above).
-- "action": The action button to press. Valid actions: 'up', 'down', 'left', 'right', 'a', 'b', 'start', 'select'.
+- "action": The action to take. ALWAYS prefer high-level tool actions (e.g., use_tool(move_to, ...), use_tool(interact_with_object, ...), etc.) over low-level button presses ('up', 'down', 'left', 'right', 'a', 'b', 'start', 'select'), unless no tool is valid for the current state. Only use low-level actions if no tool applies or for precise menu/dialog choices/facing.
 """
 
 USER_PROMPT_TEMPLATE = """
