@@ -59,11 +59,12 @@ class PokemonRedAgent(BaseOrakAgent):
     
     _llm: Optional[BaseChatModel] = PrivateAttr(default=None)
     _history: list[dict] = PrivateAttr(default_factory=list)
+    _text_history: list[str] = PrivateAttr(default_factory=list)
 
     def _parse_game_state(self, state_str: str) -> dict:
         """Parses the text game state to extract key info for milestone tracking."""
         state = {
-            "map_name": "Unknown",
+            "map_name": "",
             "party_size": 0,
             "has_parcel": False,
             "pos": None,
@@ -76,81 +77,61 @@ class PokemonRedAgent(BaseOrakAgent):
         if map_match:
             state["map_name"] = map_match.group(1)
 
-        # Extract Position
-        pos_match = re.search(r"Your position \(x, y\): \((\d+), (\d+)\)", state_str)
-        if pos_match:
-            state["pos"] = (int(pos_match.group(1)), int(pos_match.group(2)))
-
-        # Extract Facing
-        face_match = re.search(r"Your facing direction:\s*(\w+)", state_str)
-        if face_match:
-            state["facing"] = face_match.group(1)
-
-        # Extract Screen Type
-        type_match = re.search(r"State:\s*(\w+)", state_str)
-        if type_match:
-            state["screen_type"] = type_match.group(1)
-
         # Check Party
         if "[Current Party]" in state_str:
             party_section = state_str.split("[Current Party]")[1].split("[")[0]
-            # If it's not "No more Pokemons", assume we have one
-            # Typical text: "1. BULBASAUR L5" or just "No more Pokemons"
             if "No more Pokemons" not in party_section and "No more" not in party_section:
-                state["party_size"] = 1
+                # Count lines that look like pokemon entries to get size
+                lines = [l for l in party_section.split('\n') if l.strip()]
+                state["party_size"] = len(lines) if party_section.strip() else 0
                 
         # Check Bag for Parcel
         if "[Bag]" in state_str:
             bag_section = state_str.split("[Bag]")[1].split("[")[0]
             if "Oak's Parcel" in bag_section or "OAKS PARCEL" in bag_section.upper():
                 state["has_parcel"] = True
-                
+
+        # Extract Screen Text (Heuristic: Look for text not in brackets)
+        # This is messy but we try to grab the last few lines of raw text that might be dialog
+        # Assuming the state string puts raw text at the end or in a specific section.
+        # For now, we will look for a "Screen Text" section if it exists, or just parse generic lines.
+        if "Screen Text:" in state_str:
+            text_section = state_str.split("Screen Text:")[1].split("[")[0].strip()
+            state["screen_text"] = text_section
+        
         return state
 
-    def _determine_current_milestone(self, game_state: dict) -> str:
-        """Determines the current prologue milestone based on state."""
-        map_name = game_state["map_name"].lower()
-        has_pokemon = game_state["party_size"] > 0
-        has_parcel = game_state["has_parcel"]
-        
-        # 1. Exit Red's House
-        if "redshouse" in map_name:
-            return "1. Exit Red's House (Find stairs in bedroom -> exit mat downstairs)."
-            
-        # 2. Encounter Professor Oak / 3. Choose Starter / 4. Rival Battle
-        if "pallet" in map_name or "oakslab" in map_name:
-            if has_parcel:
-                return "7. Deliver Parcel to Oak in his Lab (Victory Condition)."
-            
-            if not has_pokemon:
-                if "oakslab" in map_name:
-                    return "3. Choose a Starter Pokémon (Interact with balls on table)."
-                else:
-                    return "2. Encounter Professor Oak (Try to walk North out of Pallet Town to trigger cutscene)."
-            
-            if "oakslab" in map_name:
-                return "4. Defeat Rival (if in battle) OR Exit Lab to start journey."
+    def _update_history(self, state: dict):
+        """Updates internal history with significant events."""
+        text = state.get("screen_text", "").strip()
+        if text and (not self._text_history or self._text_history[-1] != text):
+            # Only add if it's different information
+            if len(self._text_history) > 10:
+                self._text_history.pop(0)
+            self._text_history.append(text)
 
-            return "5. Travel North to Viridian City (via Route 1)."
-            
-        # 5. Route 1 Travel
-        if "route1" in map_name:
-            if has_parcel:
-                return "7. Return to Pallet Town (Go South)."
-            return "5. Travel North to Viridian City."
-            
-        # 6. Viridian City / Mart
-        if "viridian" in map_name:
-            if has_parcel:
-                return "7. Return to Pallet Town (Go South via Route 1)."
-            if "mart" in map_name:
-                return "6. Receive 'Oak's Parcel' (Talk to clerk)."
-            return "6. Find and Enter Viridian Mart (Look for 'SHOP' sign)."
-            
-        # Default fallback
-        if has_parcel: return "7. Deliver Parcel to Oak."
-        if has_pokemon: return "Explore and progress towards Viridian City."
-        return "Explore and progress."
+    def _infer_game_progress(self, game_state: dict) -> str:
+        """Infers the game state based on observations rather than hardcoded spoilers."""
+        progress_indicators = []
+        
+        # Fact-based observations
+        if game_state["has_parcel"]:
+            progress_indicators.append("OBSERVATION: You possess 'Oak's Parcel'. Key items usually need to be delivered.")
+        
+        if game_state["party_size"] == 0:
+            progress_indicators.append("OBSERVATION: You have no Pokemon.You need to find protection before traveling far.")
+        else:
+            progress_indicators.append(f"OBSERVATION: Party size is {game_state['party_size']}. You are ready for battle.")
+
+        map_name = game_state["map_name"]
+        progress_indicators.append(f"LOCATION: Currently in {map_name}.")
+        
+        # History-based context (Short-term memory)
+        if self._text_history:
+            history_str = " | ".join(self._text_history[-3:]) # Last 3 unique texts
+            progress_indicators.append(f"RECENT DIALOG/TEXT: {history_str}")
+
+        return "\n".join(progress_indicators)
 
     def calculate_metrics(self, game_info: dict[str, Any]) -> dict[str, Any]:
         """
@@ -163,8 +144,6 @@ class PokemonRedAgent(BaseOrakAgent):
             if key in game_info:
                 metrics[key] = float(game_info[key])
                 
-        # If specific pokemon red metrics are available in game_info (e.g. from wrapper)
-        # We can add them here. For now, just a placeholder or extracting what we can.
         if "map_name" in game_info:
             metrics["map_name"] = game_info["map_name"]
             
@@ -183,7 +162,6 @@ class PokemonRedAgent(BaseOrakAgent):
         self._history = state.get("pokemon_red_history", [])
         if not isinstance(self._history, list):
             self._history = []
-
     @weave.op()
     def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, Any, str]:
         """Get action from LLM. This method is tracked by Weave for observability."""
@@ -193,7 +171,7 @@ class PokemonRedAgent(BaseOrakAgent):
 
         # Dynamic Goal Injection
         parsed_state = self._parse_game_state(cur_state_str)
-        
+                
         # Capture Detailed State
         current_state_info = {
             "map": parsed_state.get("map_name", "Unknown"),
@@ -206,7 +184,13 @@ class PokemonRedAgent(BaseOrakAgent):
         if self._history and self._history[-1].get("step") == self._step_count - 1:
             self._history[-1]["result_state"] = current_state_info
 
-        current_milestone = self._determine_current_milestone(parsed_state)
+        self._update_history(parsed_state)
+        
+        # Infer context instead of forcing a milestone
+        progress_context = self._infer_game_progress(parsed_state)
+        
+        # Augment task with internal reasoning context
+        augmented_task = f"{task_description}\n\n[INTERNAL STATE KNOWLEDGE]\n{progress_context}\n\n[INSTRUCTION]\nBased on the above observations and your internal state, determine the next logical step."
         
         # Build history string for prompt
         history_lines = []
@@ -232,8 +216,6 @@ class PokemonRedAgent(BaseOrakAgent):
         step_history = "\n".join(history_lines) if history_lines else "No history yet."
 
         # Override task description with the specific milestone context
-        augmented_task = f"{task_description}\nCURRENT MILESTONE: {current_milestone}"
-
         prompt_text = USER_PROMPT_TEMPLATE.format(
             task_description=augmented_task,
             last_action=self._last_action, 
@@ -272,6 +254,7 @@ class PokemonRedAgent(BaseOrakAgent):
             
             output_text = f"Action: {action}\nReasoning: {reasoning}"
             
+                        
             # Update history
             if isinstance(self._history, list):
                 self._history.append({

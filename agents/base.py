@@ -140,13 +140,12 @@ class BaseOrakAgent(weave.Model):
             self._current_episode_stats["output_tokens"] += tokens_completion
             self._current_episode_stats["tokens"] += tokens_total
 
-        # Log raw request if prompt is available
-        if self._requests_log_path and log_extras and "prompt" in log_extras:
+        if self._requests_log_path and log_extras and "user_prompt" in log_extras:
             try:
                 with open(self._requests_log_path, "a", encoding="utf-8") as f:
                     record = {
                         "step": self._step_count,
-                        "prompt": log_extras["prompt"],
+                        "prompt": log_extras["user_prompt"],
                         "response": log_extras.get("output_text", ""),
                         "action": action,
                         "tokens": {
@@ -180,13 +179,16 @@ class BaseOrakAgent(weave.Model):
             
             # Add extras from get_action
             if log_extras:
-                # Filter out prompt/output_text from wandb log to avoid clutter if they are huge
+                # Filter out output_text from wandb log to avoid clutter if they are huge
                 # But keep tokens and reasoning length
                 for k, v in log_extras.items():
                     if k == "reasoning":
                          # Wrap reasoning in pre-wrap for better readability in wandb
                          log_data[k] = wandb.Html(f"<div style='white-space: pre-wrap;'>{v}</div>")
-                    elif k not in ["prompt", "output_text"]:
+                    elif k == "user_prompt":
+                         # Log prompt as HTML for readability
+                         log_data[k] = wandb.Html(f"<pre style='white-space: pre-wrap;'>{v}</pre>")
+                    elif k not in ["output_text"]:
                         log_data[k] = v
 
             # Log action distribution
@@ -231,7 +233,7 @@ class BaseOrakAgent(weave.Model):
         
         log_extras = {}
         if prompt:
-            log_extras["prompt"] = prompt
+            log_extras["user_prompt"] = prompt
         if output_text:
             log_extras["output_text"] = output_text
         if reasoning:
