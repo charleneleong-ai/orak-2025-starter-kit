@@ -90,10 +90,59 @@ class PokemonRedAgent(BaseOrakAgent):
             # 4. Inject full map into observation
             current_map_name = parsed_state.get('map_info', {}).get('map_name')
             
-            # Compute exploration status for warp destinations
-            raw_warps = self._warp_memory.get(current_map_name, {}) if current_map_name else {}
-            warp_annotations = {}
+            # --- NPC Interaction Tracking ---
+            # If there is screen text, try to attribute it to an NPC in front of the player
+            screen_text = parsed_state.get("screen_text")
+            pos = parsed_state.get("pos")
+            facing = parsed_state.get("facing")
             
+            if current_map_name and screen_text and pos and facing and map_current:
+                # Calculate target position
+                tx, ty = pos
+                if facing == "up": ty -= 1
+                elif facing == "down": ty += 1
+                elif facing == "left": tx -= 1
+                elif facing == "right": tx += 1
+                
+                # Check bounds and retrieve object
+                if 0 <= ty < len(map_current) and 0 <= tx < len(map_current[0]):
+                    target_obj = map_current[ty][tx]
+                    # If it looks like a sprite, record the dialogue
+                    if isinstance(target_obj, str) and target_obj.startswith("SPRITE_"):
+                        if "npcs" not in self._map_memory[current_map_name]:
+                            self._map_memory[current_map_name]["npcs"] = {}
+                        
+                        # Get existing memory (handle legacy string format)
+                        npc_mem = self._map_memory[current_map_name]["npcs"].get(target_obj, {"lines": [], "summary": ""})
+                        if isinstance(npc_mem, str):
+                            npc_mem = {"lines": [npc_mem], "summary": npc_mem}
+                            
+                        # Avoid duplicate contiguous lines (basic dedup for page turns)
+                        if not npc_mem["lines"] or npc_mem["lines"][-1] != screen_text:
+                            npc_mem["lines"].append(screen_text)
+                            
+                            # Summarize using LLM
+                            full_text = " ".join(npc_mem["lines"])
+                            # Simple limit to avoid growing prompts too large before summary catches up
+                            if len(full_text) < 1000 and self._llm:
+                                try:
+                                    summary_prompt = f"Summarize this game dialogue from {target_obj} in 1 short sentence: '{full_text}'"
+                                    # We use direct invoke which might block slightly but ensures summary is ready
+                                    res = self._llm.invoke([HumanMessage(content=summary_prompt)])
+                                    npc_mem["summary"] = res.content.strip()
+                                except Exception as summary_err:
+                                    logger.warning(f"Summary failed: {summary_err}")
+                                    npc_mem["summary"] = full_text[:50] + "..."
+                            else:
+                                npc_mem["summary"] = full_text[:50] + "..."
+                                
+                            self._map_memory[current_map_name]["npcs"][target_obj] = npc_mem
+
+            # --- Annotation Generation (Warps + NPCs) ---
+            annotations = {}
+            
+            # 1. Warp Annotations
+            raw_warps = self._warp_memory.get(current_map_name, {}) if current_map_name else {}
             for pos, dest_map in raw_warps.items():
                 status = " (Unexplored)"
                 if dest_map in self._map_memory:
@@ -105,12 +154,28 @@ class PokemonRedAgent(BaseOrakAgent):
                             if '?' in row:
                                 is_partial = True
                                 break
-                        
                         status = " (Partially Explored)" if is_partial else " (Fully Explored)"
-                
-                warp_annotations[pos] = f"{dest_map}{status}"
+                annotations[pos] = f"{dest_map}{status}"
 
-            obs_str = replace_map_on_screen_with_full_map(obs_str, map_current, warp_annotations)
+            # 2. NPC Annotations
+            if current_map_name and "npcs" in self._map_memory.get(current_map_name, {}):
+                npc_memory = self._map_memory[current_map_name]["npcs"]
+                # Scan grid to find current positions of these NPCs
+                if map_current:
+                    for y, row in enumerate(map_current):
+                        for x, cell in enumerate(row):
+                            if isinstance(cell, str) and cell in npc_memory:
+                                # Found a sprite with memory
+                                mem_item = npc_memory[cell]
+                                text_show = "..."
+                                if isinstance(mem_item, dict):
+                                    text_show = mem_item.get("summary", "...")
+                                elif isinstance(mem_item, str):
+                                    text_show = mem_item[:50] + "..." if len(mem_item) > 50 else mem_item
+                                    
+                                annotations[(x, y)] = f"{cell} (Said: '{text_show}')"
+
+            obs_str = replace_map_on_screen_with_full_map(obs_str, map_current, annotations)
         except Exception as e:
             logger.warning(f"Failed to preprocess observation with map memory: {e}")
             
@@ -194,7 +259,34 @@ class PokemonRedAgent(BaseOrakAgent):
             if len(self._text_history) > 10:
                 self._text_history.pop(0)
             self._text_history.append(text)
+        
+    def _build_step_history(self, last_n_steps: int = 3) -> str:
+        """Builds a string summary of recent steps for prompt inclusion."""
+        # Build history string for prompt
+        history_lines = []
+        if isinstance(self._history, list):
+            for h in self._history[-last_n_steps:]:
+                start = h.get('start_state', {})
+                res = h.get('result_state', {})
+                
+                # Format start
+                start_str = f"{start.get('map', '?')}"
+                if start.get('pos'): start_str += f"{start.get('pos')}"
+                if start.get('facing'): start_str += f"({start.get('facing')})"
+                
+                # Format result
+                res_str = "???"
+                if res:
+                    res_str = f"{res.get('map', '?')}"
+                    if res.get('pos'): res_str += f"{res.get('pos')}"
+                    if res.get('facing'): res_str += f"({res.get('facing')})"
 
+                history_lines.append(f"Step {h.get('step')}: {start_str} -> Action '{h.get('action')}' -> {res_str}")
+                if h.get('reasoning'):
+                    history_lines.append(f"   Reasoning: {h.get('reasoning')}")
+        
+        return"\n".join(history_lines) if history_lines else "No history yet."
+        
     def _infer_game_progress(self, game_state: dict) -> str:
         """Infers the game state based on observations rather than hardcoded spoilers."""
         progress_indicators = []
@@ -217,6 +309,19 @@ class PokemonRedAgent(BaseOrakAgent):
              progress_indicators.append("OBSERVATION: The current map contains unexplored areas ('?'). You have not seen the whole room yet. Please prioritise exploring the map fully.")
         else:
             progress_indicators.append("OBSERVATION: The current map has now been fully explored.")
+
+        # NPC Summaries (Long-term Memory of this Map)
+        if map_name and map_name in self._map_memory and "npcs" in self._map_memory[map_name]:
+            npc_dict = self._map_memory[map_name]["npcs"]
+            if npc_dict:
+                progress_indicators.append("NPC KNOWLEDGE (What they said):")
+                for sprite_id, data in npc_dict.items():
+                    # Handle legacy string format vs new dict format
+                    summary = data.get("summary", data) if isinstance(data, dict) else data
+                    # Only show if not empty
+                    if summary and summary != "...":
+                        progress_indicators.append(f"- {sprite_id}: {summary}")
+
         # History-based context (Short-term memory)
         if self._text_history:
             history_str = " | ".join(self._text_history[-3:]) # Last 3 unique texts
@@ -356,35 +461,11 @@ class PokemonRedAgent(BaseOrakAgent):
         # Infer context instead of forcing a milestone
         progress_context = self._infer_game_progress(parsed_state)
 
+        step_history = self._build_step_history(last_n_steps=3)
         
         # Augment task with internal reasoning context
-        augmented_task = f"{task_description}\n\n[INTERNAL STATE KNOWLEDGE]\n{progress_context}\n\n[INSTRUCTION]\nBased on the above observations and your internal state, determine the next logical step."
-        
-        # Build history string for prompt
-        history_lines = []
-        if isinstance(self._history, list):
-            for h in self._history[-3:]: # Get last 3
-                start = h.get('start_state', {})
-                res = h.get('result_state', {})
-                
-                # Format start
-                start_str = f"{start.get('map', '?')}"
-                if start.get('pos'): start_str += f"{start.get('pos')}"
-                if start.get('facing'): start_str += f"({start.get('facing')})"
-                
-                # Format result
-                res_str = "???"
-                if res:
-                    res_str = f"{res.get('map', '?')}"
-                    if res.get('pos'): res_str += f"{res.get('pos')}"
-                    if res.get('facing'): res_str += f"({res.get('facing')})"
-
-                history_lines.append(f"Step {h.get('step')}: {start_str} -> Action '{h.get('action')}' -> {res_str}")
-                if h.get('reasoning'):
-                    history_lines.append(f"   Reasoning: {h.get('reasoning')}")
-        
-        step_history = "\n".join(history_lines) if history_lines else "No history yet."
-
+        augmented_task = f"{task_description}\n\n[INTERNAL STATE KNOWLEDGE]\n{progress_context}\n\n[INSTRUCTIONS]\nBased on the observations and your internal state, determine the next logical step."
+    
         # Override task description with the specific milestone context
         prompt_text = USER_PROMPT_TEMPLATE.format(
             task_description=augmented_task,
