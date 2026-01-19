@@ -140,13 +140,12 @@ class BaseOrakAgent(weave.Model):
             self._current_episode_stats["output_tokens"] += tokens_completion
             self._current_episode_stats["tokens"] += tokens_total
 
-        # Log raw request if prompt is available
-        if self._requests_log_path and log_extras and "prompt" in log_extras:
+        if self._requests_log_path and log_extras and "user_prompt" in log_extras:
             try:
                 with open(self._requests_log_path, "a", encoding="utf-8") as f:
                     record = {
                         "step": self._step_count,
-                        "prompt": log_extras["prompt"],
+                        "prompt": log_extras["user_prompt"],
                         "response": log_extras.get("output_text", ""),
                         "action": action,
                         "tokens": {
@@ -180,14 +179,30 @@ class BaseOrakAgent(weave.Model):
             
             # Add extras from get_action
             if log_extras:
-                # Filter out prompt/output_text from wandb log to avoid clutter if they are huge
+                # Filter out output_text from wandb log to avoid clutter if they are huge
                 # But keep tokens and reasoning length
                 for k, v in log_extras.items():
-                    if k not in ["prompt", "output_text"]:
+                    if k == "reasoning":
+                         # Wrap reasoning in pre-wrap for better readability in wandb
+                         log_data[k] = wandb.Html(f"<div style='white-space: pre-wrap;'>{v}</div>")
+                    elif k == "user_prompt":
+                         # Log prompt as HTML for readability
+                         log_data[k] = wandb.Html(f"<pre style='white-space: pre-wrap;'>{v}</pre>")
+                    elif k not in ["output_text"]:
                         log_data[k] = v
 
-            # Log action distribution
-            log_data[f"action/{action}"] = 1
+            # Log action distribution with simplified action name
+            # Subclasses can provide "simplified_action" in log_extras to override default behavior
+            simplified_action = log_extras.get("simplified_action", action)
+            
+            # Simple fallback for generic function calls if not provided
+            if simplified_action == action and "(" in action:
+                 try:
+                    simplified_action = action.split("(")[0]
+                 except (IndexError, AttributeError):
+                    pass
+
+            log_data[f"action/{simplified_action}"] = 1
             
             # Log obs_str as text
             if cur_state_str:
@@ -220,7 +235,7 @@ class BaseOrakAgent(weave.Model):
         
         task_description = game_info.get("task_description", "")
         
-        action, reasoning, output_text, usage, prompt = self._get_action(
+        action, reasoning, current_goal, output_text, usage, prompt = self._get_action(
             task_description=task_description,
             cur_state_str=cur_state_str,
             obs_image=obs_image
@@ -228,10 +243,11 @@ class BaseOrakAgent(weave.Model):
         
         log_extras = {}
         if prompt:
-            log_extras["prompt"] = prompt
+            log_extras["user_prompt"] = prompt
         if output_text:
             log_extras["output_text"] = output_text
         if reasoning:
+            log_extras["reasoning"] = f"Action: {action}\n\nGoal: {current_goal}\n\n{reasoning}"
             log_extras["reasoning_length"] = len(reasoning)
         if usage:
              if hasattr(usage, 'prompt_tokens'):
@@ -243,11 +259,11 @@ class BaseOrakAgent(weave.Model):
                 
         return action, log_extras
 
-    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, Any, str]:
+    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, str, Any, str]:
         """
         Get action from LLM.
         This method should be overridden by subclasses and often decorated with @weave.op().
-        Returns: (action, reasoning, output_text, usage, prompt)
+        Returns: (action, reasoning, current_goal, output_text, usage, prompt)
         """
         raise NotImplementedError
 
