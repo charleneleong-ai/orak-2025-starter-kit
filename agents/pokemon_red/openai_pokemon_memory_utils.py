@@ -242,7 +242,7 @@ def replace_map_on_screen_with_full_map(state_text: str, map_current: list, warp
 
     # --- 0. Remove "Map on Screen" section first ---
     processed_state_text = re.sub(
-        r"Map on Screen:(?:\n(?:\(\s*\d+,\s*\d+\): [^\n]+\n*)+)?",
+        r"Map on Screen:.*",
         "", state_text, flags=re.DOTALL
     )
 

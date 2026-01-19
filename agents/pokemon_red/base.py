@@ -73,6 +73,7 @@ class PokemonRedAgent(BaseOrakAgent):
     _current_goal: str = PrivateAttr(default="")
     _map_memory: dict = PrivateAttr(default_factory=dict)
     _warp_memory: dict = PrivateAttr(default_factory=dict)
+    _action_counts: dict = PrivateAttr(default_factory=dict)
 
     def _preprocess_observation(self, obs_str: str) -> str:
         """Preprocess observation string to ensure '[Full Map]' is present using normalization utility."""
@@ -186,11 +187,16 @@ class PokemonRedAgent(BaseOrakAgent):
     
         # Check Party
         if "[Current Party]" in state_str:
-            party_section = state_str.split("[Current Party]")[1].split("[")[0]
-            if "No more Pokemons" not in party_section and "No more" not in party_section:
-                # Count lines that look like pokemon entries to get size
-                lines = [l for l in party_section.split('\n') if l.strip()]
-                state["party_size"] = len(lines) if party_section.strip() else 0
+            # Extract content strictly between [Current Party] and No more Pokemons
+            rest = state_str.split("[Current Party]")[1]
+            if "No more Pokemons" in rest:
+                party_section = rest.split("No more Pokemons")[0]
+            else:
+                party_section = rest.split("[")[0]
+                
+            # Filter lines that look like pokemon entries (contain "Name:")
+            lines = [l for l in party_section.split('\n') if l.strip() and "Name:" in l]
+            state["party_size"] = len(lines)
                 
         # Check Bag for Parcel
         if "[Bag]" in state_str:
@@ -263,7 +269,7 @@ class PokemonRedAgent(BaseOrakAgent):
         
         # Exploration Check
         if "?" in game_state.get("full_map_str", ""):
-             progress_indicators.append("OBSERVATION: The current map contains unexplored areas ('?'). You have not seen the whole room yet. Please prioritise exploring the map fully.")
+             progress_indicators.append("OBSERVATION: The current map contains unexplored areas ('?'). You have not seen the whole map yet. Please prioritise exploring the map fully.")
         else:
             progress_indicators.append("OBSERVATION: The current map has now been fully explored.")
 
@@ -306,6 +312,10 @@ class PokemonRedAgent(BaseOrakAgent):
         if "map_name" in game_info:
             metrics["map_name"] = game_info["map_name"]
             
+        # Add cumulative action counts
+        for action_name, count in self._action_counts.items():
+            metrics[f"action_counts/{action_name}"] = count
+
         return metrics
 
     def get_state(self) -> dict[str, Any]:
@@ -315,6 +325,7 @@ class PokemonRedAgent(BaseOrakAgent):
         state["pokemon_red_map_memory"] = self._map_memory
         state["pokemon_red_current_goal"] = self._current_goal
         state["pokemon_red_warp_memory"] = self._warp_memory
+        state["pokemon_red_action_counts"] = self._action_counts
         return state
 
     def load_state(self, state: dict[str, Any]) -> None:
@@ -337,8 +348,12 @@ class PokemonRedAgent(BaseOrakAgent):
         self._warp_memory = state.get("pokemon_red_warp_memory", {})
         if not isinstance(self._warp_memory, dict):
             self._warp_memory = {}
-
             
+        # Restore action counts
+        self._action_counts = state.get("pokemon_red_action_counts", {})
+        if not isinstance(self._action_counts, dict):
+            self._action_counts = {}
+
     def _record_warp(self, start_state, action, end_state):
         start_pos = start_state.get("pos")
         start_map = start_state.get("map")
@@ -367,6 +382,25 @@ class PokemonRedAgent(BaseOrakAgent):
              self._warp_memory[end_map] = {}
         # Record return map at landing position
         self._warp_memory[end_map][end_pos] = start_map
+
+    def get_action(self, obs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        action, log_extras = super().get_action(obs)
+        
+        # Parse simplified action for logging
+        simplified_action = action
+        if "use_tool(" in action and "," in action:
+            # Extract just "use_tool/move_to" from "use_tool(move_to, ...)"
+            try:
+                tool_name = action.split("(")[1].split(",")[0].strip()
+                simplified_action = f"use_tool/{tool_name}"
+            except (IndexError, AttributeError):
+                simplified_action = action
+        
+        # Track cumulative action counts
+        self._action_counts[simplified_action] = self._action_counts.get(simplified_action, 0) + 1
+
+        log_extras["simplified_action"] = simplified_action
+        return action, log_extras
 
     @weave.op()
     def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, str,  Any, str]:
