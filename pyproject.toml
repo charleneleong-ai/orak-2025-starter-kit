@@ -67,8 +67,8 @@ dependencies = [
     "ultralytics>=8.3.225",
     "burnysc2==7.1.1",
     "screeninfo>=0.8.1",
-    "wandb>=0.23.1",
-    "weave>=0.52.23",
+    "wandb>=0.24.0",
+    "weave>=0.52.25",
 ]
 [tool.setuptools.packages.find]
 include = ["agents", "config", "evaluation_utils"]
