@@ -13,14 +13,22 @@ class Session:
         if self.renderer:
             self.renderer.event("Creating session...")
 
+        # Debug: validate token exists
+        if not API_TOKEN:
+            raise Exception("AICROWD_API_TOKEN is not set")
+        
+        token_preview = f"{API_TOKEN[:10]}...{API_TOKEN[-5:]}" if len(API_TOKEN) > 20 else "***"
+        
         response = requests.post(
             f"{BASE_URL}/sessions",
             headers={"Authorization": f"Token {API_TOKEN}"},
             params={"track": "TRACK1"}
         )
         if not response.ok:
-            self.renderer.event(f"Failed to create session: {response.text}")
-            raise Exception(f"Failed to create session: {response.text}")
+            error_msg = f"Failed to create session: {response.status_code} - {response.text}. Token: {token_preview}"
+            if self.renderer:
+                self.renderer.event(error_msg)
+            raise Exception(error_msg)
         self.session_id = response.json()["task_id"]
         submission_id = str(response.json()["submission_id"])
 
