@@ -3,6 +3,7 @@ from typing import Any, Annotated
 import typer
 from enum import StrEnum
 from datetime import datetime
+from pathlib import Path
 from evaluation_utils.runner import Runner
 from evaluation_utils.commons import setup_logging, GAME_DATA_DIR, GAME_SERVER_PORTS
 from evaluation_utils.renderer import get_renderer
@@ -42,10 +43,10 @@ def main(
         help="Use existing session id instead of creating a new session",
     ),
     local: bool = typer.Option(False, "--local", help="Run in local mode"),
-    games: Annotated[list[str], typer.Option(
+    games: Annotated[list[str] | None, typer.Option(
         "--games",
         help="Only run these games (space-separated list). Only supported in LOCAL mode.",
-    )] =list(GAME_SERVER_PORTS.keys()),   
+    )] = None,   
     experiment_description: str | None = typer.Option(
         None,
         "--experiment-description",
@@ -80,8 +81,13 @@ def main(
     """Run evaluation for Orak 2025 games."""
 
     # Enforce that game selection is only supported in local mode
-    if games and not local:
+    if games is not None and not local:
         raise typer.BadParameter("--games can only be used together with --local")
+    
+    # If no games specified in local mode, default to all games
+    if local and games is None:
+        games = list(GAME_SERVER_PORTS.keys())
+    
     setup_logging(verbose=verbose)
     
     logger.info(f"Loading Hydra settings {config_name}...")
@@ -106,14 +112,14 @@ def main(
     if settings.wandb.weave_enabled:
         try:
             weave.init(settings.wandb.project_name)
-            logger.info(f"Weave initialized for project: {settings.wandb.project_name}")
+            logger.info(f"Weave initialized for project: {set is not None and len(games) > settings.wandb.project_name}")
         except Exception as e:
             logger.warning(f"Failed to initialize Weave: {e}")
 
     # If loading checkpoint and run_id not provided, try to find the latest run
     if run_id is None and load_checkpoint and local and games:
         # Check the first game's directory for runs
-        first_game_dir = GAME_DATA_DIR / games[0]
+        first_game_dir = Path(GAME_DATA_DIR) / games[0]
         if first_game_dir.exists():
             # Get all subdirectories that look like potential runs (ignore non-dirs)
             runs = [d.name for d in first_game_dir.iterdir() if d.is_dir()]

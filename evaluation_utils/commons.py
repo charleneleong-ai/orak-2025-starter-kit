@@ -34,6 +34,13 @@ def setup_logging(verbose: bool = False):
 
 API_TOKEN = os.getenv("AICROWD_API_TOKEN")
 
+# Validate API_TOKEN is available
+if not API_TOKEN:
+    raise ValueError(
+        "AICROWD_API_TOKEN environment variable is not set. "
+        "Please set it in your .env file or export it: export AICROWD_API_TOKEN='your_token_here'"
+    )
+
 BASE_URL = os.getenv("AICROWD_API_BASE_URL", "https://orak-game-api.aicrowd.com")
 
 BASE_PORT = int(os.getenv("BASE_PORT", random.randint(10000, 50000)))
