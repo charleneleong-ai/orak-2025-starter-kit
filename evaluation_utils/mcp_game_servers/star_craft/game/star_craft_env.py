@@ -145,7 +145,10 @@ class StarCraftEnv(BaseEnv):
         
         log_path: str
 
-        input_modality: str = "text"
+        input_modality: str = "text_image"
+        max_episodes: int = 3
+        max_steps: int = 1000
+
 
     cfg: Config
     
