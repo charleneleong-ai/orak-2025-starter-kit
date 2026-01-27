@@ -411,9 +411,9 @@ class Protoss_Bot(BotAI):
                                                                                  max_distance=expanded_search_range,
                                                                                  building_type=building_type)
 
-        # if not best_position:
-        #     print(f"Still no suitable position found for {building_type}. Aborting.")
-        #     return
+        if not best_position:
+            print(f"Still no suitable position found for {building_type}. Aborting.")
+            return
 
         await self.build(building_type, near=best_position)
         # print(f"Building {building_type}")

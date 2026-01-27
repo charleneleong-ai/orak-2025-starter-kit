@@ -233,7 +233,7 @@ class TwentyFourtyEightEnv(BaseEnv):
 
     def evaluate(self, obs: Obs):
         done = obs.terminated
-        return obs.score/20_000, done
+        return min(1.0, obs.score/20_000), done
 
     def get_game_info(self) -> dict:
         return {

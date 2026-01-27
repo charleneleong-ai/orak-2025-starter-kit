@@ -44,10 +44,19 @@ import threading
 import time
 import uuid
 import logging
+import os
 from concurrent import futures
 
 from evaluation_utils.protos import game_service_pb2 as pb2
 from evaluation_utils.protos import game_service_pb2_grpc as pb2_grpc
+from evaluation_utils.commons import GAME_DATA_DIR
+from evaluation_utils.live_export import live_export_enabled
+
+LIVE_EXPORT_ENABLED = live_export_enabled()
+if LIVE_EXPORT_ENABLED:
+    from evaluation_utils.live_export import PerGameLiveExporter
+else:
+    PerGameLiveExporter = None
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +126,22 @@ class GameEnvServiceServicer(pb2_grpc.GameEnvServiceServicer):
         # This is used to populate GameConfig.current_step for reconnect/resume flows.
         # Note: The underlying GameLogic tracks episodes, but does not track per-episode steps.
         self._current_step_in_episode = 0
+
+        self._game_id = os.getenv("GAME_ID", "")
+        try:
+            self._port = int(os.getenv("PORT", "0"))
+        except ValueError:
+            self._port = 0
+
+        self._live_exporter = None
+        if PerGameLiveExporter:
+            base_dir = os.getenv("GAME_DATA_DIR", GAME_DATA_DIR)
+            self._live_exporter = PerGameLiveExporter(
+                base_dir=base_dir,
+                game_id=self._game_id,
+                port=self._port,
+                get_game_config=self._game.get_game_config,
+            )
 
         logger.info("GameEnvServiceServicer initialized")
 
@@ -210,6 +235,8 @@ class GameEnvServiceServicer(pb2_grpc.GameEnvServiceServicer):
         self._session_token = str(uuid.uuid4())
         self._last_activity = time.time()
         self._last_request_id = None  # Reset idempotency tracking
+        if self._live_exporter:
+            self._live_exporter.on_session_start()
 
         logger.info(f"New session registered: {self._session_token}")
         return pb2.SessionResponse(session_token=self._session_token)
@@ -286,6 +313,14 @@ class GameEnvServiceServicer(pb2_grpc.GameEnvServiceServicer):
             logger.debug(f"GetObservation: obs_str length={len(obs_str)}, "
                         f"image size={len(obs_image_bytes) if obs_image_bytes else 0} bytes")
 
+            if self._live_exporter:
+                self._live_exporter.record_observation(
+                    obs_str,
+                    obs_image_bytes,
+                    game_info,
+                    self._current_step_in_episode,
+                )
+
             return pb2.Observation(
                 obs_text=obs_str,
                 obs_image=obs_image_bytes,  # Raw JPEG bytes, not base64
@@ -350,7 +385,7 @@ class GameEnvServiceServicer(pb2_grpc.GameEnvServiceServicer):
             logger.info(f"Executing action: {request.action}")
 
             # Execute action
-            score, is_finished, _ = self._game.dispatch_action_and_get_score(
+            score, is_finished, max_episodes_reached = self._game.dispatch_action_and_get_score(
                 request.action
             )
 
@@ -372,7 +407,7 @@ class GameEnvServiceServicer(pb2_grpc.GameEnvServiceServicer):
             # Division by max(1, episodes) prevents division by zero
             avg_score = self._game._total_score / max(self._game._episodes, 1)
 
-            return pb2.StepResult(
+            response = pb2.StepResult(
                 score=score,
                 is_finished=is_finished,
                 avg_score=avg_score,
@@ -382,8 +417,27 @@ class GameEnvServiceServicer(pb2_grpc.GameEnvServiceServicer):
                     info={k: str(v) for k, v in game_info.items()},
                 ),
             )
+
+            if self._live_exporter:
+                self._live_exporter.record_observation(
+                    obs_str,
+                    obs_image_bytes,
+                    game_info,
+                    self._current_step_in_episode,
+                )
+                self._live_exporter.record_step(
+                    score=score,
+                    avg_score=avg_score,
+                    is_finished=is_finished,
+                    max_episodes_reached=max_episodes_reached,
+                    current_step_in_episode=self._current_step_in_episode,
+                )
+
+            return response
         except Exception as e:
             logger.error(f"Step failed: {e}", exc_info=True)
+            if self._live_exporter:
+                self._live_exporter.record_failure()
             context.set_details(f"Step failed: {str(e)}")
             context.set_code(grpc.StatusCode.INTERNAL)
             raise
@@ -428,7 +482,8 @@ def serve(game_server, port: int):
             ('grpc.keepalive_time_ms', 30000),  # Ping every 30 seconds
             ('grpc.keepalive_timeout_ms', 10000),  # Wait 10s for pong
             ('grpc.keepalive_permit_without_calls', True),  # Ping even without RPCs
-        ]
+        ],
+        compression=grpc.Compression.Gzip,
     )
 
     # Register servicer

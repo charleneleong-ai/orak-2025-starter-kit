@@ -18,10 +18,21 @@ def load_json(path):
         return json.load(f)
 
 def load_map_module(map_name):
-    path = os.path.join(game_code_dir, "game", "processed_map", f"{map_name}.py")
+    map_dir = os.path.join(game_code_dir, "game", "processed_map")
+    map_filename = f"{map_name}.py"
+    path = os.path.join(map_dir, map_filename)
+
     if not os.path.exists(path):
-        print(f"[WARN] Map module not found: {path}")
-        return None, None, None, None
+        path_not_found = True
+        for filename in os.listdir(map_dir):
+            if filename.lower() == map_filename.lower():
+                path = os.path.join(map_dir, filename)
+                path_not_found = False
+                break
+        
+        if path_not_found:
+            print(f"[WARN] Map module not found: {path}")
+            return None, None, None, None
 
     spec = importlib.util.spec_from_file_location(map_name, path)
     mod = importlib.util.module_from_spec(spec)

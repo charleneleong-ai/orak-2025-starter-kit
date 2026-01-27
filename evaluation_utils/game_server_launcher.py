@@ -9,8 +9,16 @@ from dotenv import load_dotenv
 
 from evaluation_utils.commons import GAME_SERVER_PORTS, GAME_DATA_DIR
 from evaluation_utils.renderer import get_renderer, Renderer
+from evaluation_utils.live_export import live_export_enabled
 from config.base import Settings
 from config.utils import load_hydra_settings
+
+
+LIVE_EXPORT_ENABLED = live_export_enabled()
+if LIVE_EXPORT_ENABLED:
+    from evaluation_utils.live_export import EvaluationStateAggregator
+else:
+    EvaluationStateAggregator = None
 
 load_dotenv()
 
@@ -26,6 +34,21 @@ class GameLauncher:
             self.games = self.load_games() or list(GAME_SERVER_PORTS.keys())
         self.game_servers_procs = {}
         self.output_files = {}
+        self.proc_start_times: dict[str, float] = {}
+        self.proc_end_times: dict[str, float] = {}
+
+        self._live_export_enabled = LIVE_EXPORT_ENABLED
+        self._live_export_aggregator: EvaluationStateAggregator | None = None
+        if self._live_export_enabled and EvaluationStateAggregator is not None:
+            self._live_export_aggregator = EvaluationStateAggregator(
+                renderer=self.renderer,
+                games=self.games,
+                game_servers_procs=self.game_servers_procs,
+                proc_start_times=self.proc_start_times,
+                proc_end_times=self.proc_end_times,
+                game_data_dir=GAME_DATA_DIR,
+                aggregate_path=os.path.join(GAME_DATA_DIR, "evaluation_state.json"),
+            )
 
         # Initialize only selected game servers as queued in the renderer
         for game in self.games:
@@ -83,6 +106,7 @@ class GameLauncher:
 
         if not os.path.exists(game_data_dir):
             os.makedirs(game_data_dir)
+<<<<<<< HEAD
             
         # Generate config file from settings if available
         config_path = None
@@ -115,6 +139,14 @@ class GameLauncher:
                 
         if not config_path:
              raise ValueError(f"Configuration for {game_name} is missing in settings. Cannot start game server.")
+=======
+
+        # Clean frames directory when live export is enabled
+        if self._live_export_enabled:
+            frames_dir = os.path.join(game_data_dir, "frames")
+            if os.path.exists(frames_dir):
+                shutil.rmtree(frames_dir, ignore_errors=True)
+>>>>>>> 5a796b6e230aa2ecf33a25b19bcec39111e3a78d
 
         cmd = [
             "python",
@@ -134,6 +166,7 @@ class GameLauncher:
 
         proc = subprocess.Popen(cmd, env=env, stdout=self.output_files[game_name], stderr=self.output_files[game_name])
         self.game_servers_procs[game_name] = proc
+        self.proc_start_times[game_name] = time.time()
 
         return proc
 
@@ -150,6 +183,8 @@ class GameLauncher:
 
         time.sleep(1.5)
         self.renderer.event("All game servers launched successfully")
+        if self._live_export_aggregator:
+            self._live_export_aggregator.start()
     
     def clean_up_game_server(self, game_name: str):
         """
@@ -204,6 +239,8 @@ class GameLauncher:
     def force_stop_all_games(self):
         for game_name in list(self.game_servers_procs.keys()):
             self.stop_game_server(game_name, silent=True)
+        if self._live_export_aggregator:
+            self._live_export_aggregator.stop()
     
     def wait_for_games_to_finish(self):
         completed_games: set[str] = set()
@@ -238,7 +275,12 @@ class GameLauncher:
                     self.renderer.set_server_status(game_name, "completed")
                     self._update_scores_from_disk()
                     self.renderer.event(f"Game {game_name} completed")
+                    if self._live_export_aggregator:
+                        self._live_export_aggregator.finalize_game_media(game_name)
                     completed_games.add(game_name)
+
+        if self._live_export_aggregator:
+            self._live_export_aggregator.finalize_all_media()
 
 
 if __name__ == "__main__":
