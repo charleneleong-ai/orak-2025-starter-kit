@@ -1,0 +1,6 @@
+class_name: "agents.starcraft.openai_starcraft.OpenAIStarCraftAgent"
+model: "gpt-5-nano"
+temperature: 1.0
+reasoning_effort: "high"
+track: "TRACK2"
+

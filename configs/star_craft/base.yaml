@@ -1,8 +1,8 @@
 defaults:
-  - agent: random
+  - agent: gemini
   - env: default
 
 wandb:
   project: "orak-star-craft"
   mode: "online"
-  tags: ["random", "star_craft"]
+  tags: ["random", "starcraft"]
