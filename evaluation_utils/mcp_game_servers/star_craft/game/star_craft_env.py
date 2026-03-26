@@ -1,4 +1,5 @@
 import os
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 import json
 import time
 from dataclasses import asdict, dataclass, field
@@ -358,9 +359,9 @@ class StarCraftEnv(BaseEnv):
         minimap_image = None
         if self.use_image:
             # image = self.window_capture.capture(log_path=self.cfg.log_path)
-            image = self.transaction['map_image']
-            minimap_image = self.transaction['minimap_image']
-            
+            image = self.transaction.get('map_image')
+            minimap_image = self.transaction.get('minimap_image')
+
         state = from_dict(StarCraftObs, {'observation': self.summary, 'image': image, 'minimap_image': minimap_image})
 
         return state, 0, done, False, None
