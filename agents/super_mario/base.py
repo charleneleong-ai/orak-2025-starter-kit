@@ -13,7 +13,7 @@ import weave
 
 GAME_RULES = """
 ### Super Mario Bros Game Rules ###
-- *Reach the Flag*: Navigate through the level and reach the flagpole before time runs out
+- *Reach the Flag*: Navigate through the level and jump through the flagpole line before time runs out
 - *Avoid Enemies*: Defeat or bypass enemies using jumps or power-ups
 - *Collect Power-ups*: Gain abilities by collecting mushrooms and flowers. When powered-up, collisions with enemies reduce size instead of causing death
 - *Preserve Lives*: Avoid hazards such as pits and enemies to stay alive
@@ -108,10 +108,6 @@ class SuperMarioAgent(BaseOrakAgent):
         
         metrics["score"] = float(game_info.get("score", 0))
         
-        # Add jump level distribution counts
-        for level in range(7):
-            metrics[f"jump_level_{level}_count"] = self._jump_level_counts[level]
-            
         return metrics
     @weave.op()
     def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, Any, str]:

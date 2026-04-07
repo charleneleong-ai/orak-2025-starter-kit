@@ -73,7 +73,6 @@ class PokemonRedAgent(BaseOrakAgent):
     _current_goal: str = PrivateAttr(default="")
     _map_memory: dict = PrivateAttr(default_factory=dict)
     _warp_memory: dict = PrivateAttr(default_factory=dict)
-    _action_counts: dict = PrivateAttr(default_factory=dict)
 
     def _preprocess_observation(self, obs_str: str) -> str:
         """Preprocess observation string to ensure '[Full Map]' is present using normalization utility."""
@@ -291,6 +290,7 @@ class PokemonRedAgent(BaseOrakAgent):
             progress_indicators.append(f"RECENT DIALOG/TEXT: {history_str}")
 
         return "\n".join(progress_indicators)
+    
     def calculate_metrics(self, game_info: dict[str, Any]) -> dict[str, Any]:
         """
         Calculate custom metrics based on game info.
@@ -312,10 +312,6 @@ class PokemonRedAgent(BaseOrakAgent):
         if "map_name" in game_info:
             metrics["map_name"] = game_info["map_name"]
             
-        # Add action counts
-        for action_key, count in self._action_counts.items():
-            metrics[f"action_{action_key}_count"] = count
-
         return metrics
 
     def get_state(self) -> dict[str, Any]:
@@ -496,14 +492,6 @@ class PokemonRedAgent(BaseOrakAgent):
             action = response.action.lower()
             reasoning = response.reasoning
             current_goal = response.current_goal or "Unknown"
-            
-            # Track action usage
-            if action.startswith("use_tool("):
-                match = re.match(r"use_tool\s*\(\s*([a-zA-Z0-9_]+)", action, re.IGNORECASE)
-                key = f"tool_{match.group(1)}" if match else "tool_unknown"
-            else:
-                key = action
-            self._action_counts[key] = self._action_counts.get(key, 0) + 1
             
             # Update internal state with new goal
             if current_goal != "Unknown":
