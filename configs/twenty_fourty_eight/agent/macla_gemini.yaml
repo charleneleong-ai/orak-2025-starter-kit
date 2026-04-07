@@ -1,0 +1,6 @@
+class_name: "agents.twenty_fourty_eight.macla.TwentyFourtyEightMaclaAgent"
+model: gemini-2.5-pro
+temperature: 1.0
+gcp_location: "europe-west1"
+thinking_level: "high"
+track: "TRACK2" 
