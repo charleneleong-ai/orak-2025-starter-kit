@@ -265,6 +265,20 @@ class SuperMarioEnv(BaseEnv):
         self.mario_loc_history = []
         self.last_info = {}  # Track the latest game info
 
+    def _sanitize_info(self, info):
+        """Convert numpy types in info dict to native Python types."""
+        if not info:
+            return info
+        clean_info = {}
+        for k, v in info.items():
+            if isinstance(v, (np.integer, np.floating)):
+                clean_info[k] = v.item()
+            elif isinstance(v, np.ndarray):
+                clean_info[k] = v.tolist()
+            else:
+                clean_info[k] = v
+        return clean_info
+
     def to_pil_image(self, image):
         # unwrap LazyFrames
         if LazyFrames is not None and isinstance(image, LazyFrames):
@@ -315,6 +329,8 @@ class SuperMarioEnv(BaseEnv):
             last_info = info
             if done or trunc:
                 break
+        
+        last_info = self._sanitize_info(last_info)
 
         self.env.render()
         self.jump_level = 0
@@ -442,6 +458,8 @@ class SuperMarioEnv(BaseEnv):
         self.env.render()
 
         #time.sleep(1)
+        
+        info = self._sanitize_info(info)
 
         obs = SuperMarioObs(
             state={"image": state},
