@@ -1,6 +1,7 @@
 from multiprocessing import Process
 import os
 import subprocess
+import sys
 import time
 import shutil
 import json
@@ -106,50 +107,43 @@ class GameLauncher:
 
         if not os.path.exists(game_data_dir):
             os.makedirs(game_data_dir)
-<<<<<<< HEAD
-            
+
+        # Clean frames directory when live export is enabled
+        if getattr(self, '_live_export_enabled', False):
+            frames_dir = os.path.join(game_data_dir, "frames")
+            if os.path.exists(frames_dir):
+                shutil.rmtree(frames_dir, ignore_errors=True)
+
         # Generate config file from settings if available
         config_path = None
         if self.settings:
             env_config = None
-            # Dynamically get the game config from settings using the game_name
             game_config = getattr(self.settings, game_name, None)
             if game_config and hasattr(game_config, "env"):
                 env_config = game_config.env
             self.renderer.event(f"Using config for {game_name}: {env_config}")
             if env_config and env_config is not None:
                 config_path = os.path.join(game_data_dir, "config.yaml")
-                
-                # Convert dataclass/pydantic model to dict
+
                 if hasattr(env_config, "model_dump"):
                     data = env_config.model_dump()
                 else:
                     from dataclasses import asdict
                     data = asdict(env_config)
-                
-                # Restructure for game server config format
+
                 common_fields = ["env_name", "log_path"]
                 yaml_data = {k: v for k, v in data.items() if k in common_fields}
                 yaml_data["env"] = {k: v for k, v in data.items() if k not in common_fields}
-                
-                # Save using OmegaConf
+
                 cfg = omegaconf.OmegaConf.create(yaml_data)
                 omegaconf.OmegaConf.save(cfg, config_path)
                 self.renderer.event(f"Generated config for {game_name} at {config_path}...")
-                
+
         if not config_path:
              raise ValueError(f"Configuration for {game_name} is missing in settings. Cannot start game server.")
-=======
-
-        # Clean frames directory when live export is enabled
-        if self._live_export_enabled:
-            frames_dir = os.path.join(game_data_dir, "frames")
-            if os.path.exists(frames_dir):
-                shutil.rmtree(frames_dir, ignore_errors=True)
->>>>>>> 5a796b6e230aa2ecf33a25b19bcec39111e3a78d
 
         cmd = [
-            "python",
+            sys.executable,
             game_server_script,
         ]
         

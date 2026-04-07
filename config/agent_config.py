@@ -23,10 +23,12 @@ class GeminiConfig(AgentConfig):
     """Configuration for Gemini (Vertex AI) agent."""
 
     model: str = "gemini-pro-3-preview"
+    refinement_model: str = ""  # optional separate model for MACLA refinement (e.g. gemini-2.5-pro)
     temperature: float = 0.1
     gcp_project: Optional[str] = None
     gcp_location: str = "us-central1"
-    thinking_level: str = "high"  # low,, high
+    thinking_level: str = "high"  # low, high
+    game_config_path: str = ""  # path to game config YAML for UnifiedMaclaAgent
     track: str = "TRACK1"
 
     def __post_init__(self):
@@ -41,10 +43,12 @@ class GeminiConfig(AgentConfig):
         """Convert to dict for wandb logging."""
         return {
             "model": self.model,
+            "refinement_model": self.refinement_model,
             "temperature": self.temperature,
             "gcp_project": self.gcp_project,
             "gcp_location": self.gcp_location,
             "thinking_level": self.thinking_level,
+            "game_config_path": self.game_config_path,
             "track": self.track,
         }
 
