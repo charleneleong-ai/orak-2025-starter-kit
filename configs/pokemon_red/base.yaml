@@ -5,4 +5,4 @@ defaults:
 wandb:
   project: "orak-pokemon-red"
   mode: "online"
-  tags: ["openai", "pokemon_red"]
+  tags: ["gemini", "pokemon_red"]
