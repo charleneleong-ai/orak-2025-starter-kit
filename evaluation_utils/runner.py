@@ -320,7 +320,19 @@ class Runner:
                     iteration += 1
                     total_steps += 1
                     obs = await self._call_in_thread(env.load_obs)
-                    action = await self._call_in_thread(agent.act, obs, step=total_steps)
+
+                    # Wrap act() with weave client context so traces go to correct project
+                    def _act_with_weave_context(agent, obs, step):
+                        if hasattr(agent, '_weave_project') and agent._weave_project:
+                            from weave.trace.context.weave_client_context import with_weave_client
+                            entity, _, project = agent._weave_project.rpartition("/")
+                            with with_weave_client(entity or None, project):
+                                return agent.act(obs, step=step)
+                        return agent.act(obs, step=step)
+
+                    act_result = await self._call_in_thread(_act_with_weave_context, agent, obs, total_steps)
+                    action = act_result.get("action")
+
                     result = await self._call_in_thread(env.dispatch_final_action, action)
                     finished = bool(result.get("is_finished"))
                     evaluation_score = result.get("score", 0)
@@ -337,7 +349,7 @@ class Runner:
                     try:
                         obs["obs_image"] = pil_image_to_base64(obs["obs_image"])
                         result.pop("obs")
-                        states_f.write(json.dumps({
+                        log_entry = {
                             "iteration": iteration,
                             "obs": obs,
                             "action": action,
@@ -345,7 +357,13 @@ class Runner:
                             "current_score": current_score,
                             "evaluation_score": evaluation_score,
                             "game_score": game_score
-                        }, ensure_ascii=False) + "\n")
+                        }
+                        
+                        # Add game_phase if available
+                        if hasattr(agent, '_game_phase'):
+                            log_entry["game_phase"] = agent._game_phase
+                        
+                        states_f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
                         states_f.flush()   
                         # Save checkpoint if enabled (step-based)
                         if self.save_checkpoints and hasattr(agent, 'get_state'):
