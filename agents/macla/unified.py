@@ -1,0 +1,279 @@
+"""
+UnifiedMaclaAgent: single MACLA agent that works across all games.
+
+Game-specific behavior imported from per-game adapter modules:
+  agents/{game}/game_adapter.py
+
+Each adapter exports: action schema, valid actions, prompts, context config,
+success detection params, and an extract_action() function.
+"""
+import importlib
+import io
+import base64
+import re
+from types import ModuleType
+from typing import Any
+
+import weave
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from loguru import logger
+from pydantic import BaseModel
+
+from agents.base import BaseOrakAgent
+from agents.macla.base import BaseMaclaAgent
+from agents.macla.context_extractors import build_context_extractor
+from agents.macla.structured_output import safe_structured_invoke
+
+
+# ── Game adapter registry ────────────────────────────────────────────
+
+GAME_ADAPTERS: dict[str, str] = {
+    "super_mario": "agents.super_mario.game_adapter",
+    "pokemon_red": "agents.pokemon_red.game_adapter",
+    "twenty_fourty_eight": "agents.twenty_fourty_eight.game_adapter",
+}
+
+
+def _load_adapter(game_name: str) -> ModuleType:
+    module_path = GAME_ADAPTERS.get(game_name)
+    if not module_path:
+        raise ValueError(f"No game adapter for '{game_name}'. Available: {list(GAME_ADAPTERS)}")
+    return importlib.import_module(module_path)
+
+
+# ── Config-driven success detection ──────────────────────────────────
+
+class ConfigSuccessDetector:
+    def __init__(self, adapter: ModuleType):
+        self.score_pattern = adapter.SCORE_PATTERN
+        self.progress_pattern = adapter.PROGRESS_PATTERN
+        self.progress_threshold = adapter.PROGRESS_THRESHOLD
+        self.success_keywords = adapter.SUCCESS_KEYWORDS
+        self.fatal_keywords = adapter.FATAL_KEYWORDS
+        self.lives_pattern = adapter.LIVES_PATTERN
+
+    def detect(self, execution_result: dict, prev_state: str, cur_state: str) -> tuple[bool, bool]:
+        is_fatal = False
+        if self.lives_pattern:
+            prev_lives = self._extract_int(self.lives_pattern, prev_state)
+            cur_lives = self._extract_int(self.lives_pattern, cur_state)
+            if prev_lives is not None and cur_lives is not None and cur_lives < prev_lives:
+                is_fatal = True
+        for kw in self.fatal_keywords:
+            if kw.lower() in cur_state.lower() and kw.lower() not in prev_state.lower():
+                is_fatal = True
+
+        strong_success = False
+        prev_score = self._extract_int(self.score_pattern, prev_state) or 0
+        cur_score = self._extract_int(self.score_pattern, cur_state) or 0
+        if cur_score > prev_score:
+            strong_success = True
+
+        if self.progress_pattern:
+            prev_pos = self._extract_float(self.progress_pattern, prev_state) or 0
+            cur_pos = self._extract_float(self.progress_pattern, cur_state) or 0
+            if cur_pos > prev_pos + self.progress_threshold:
+                strong_success = True
+
+        for kw in self.success_keywords:
+            if kw.lower() in cur_state.lower() and kw.lower() not in prev_state.lower():
+                strong_success = True
+
+        if is_fatal:
+            strong_success = False
+        return strong_success, is_fatal
+
+    def _extract_int(self, pattern: str, text: str) -> int | None:
+        m = re.search(pattern, text, re.IGNORECASE)
+        return int(m.group(1)) if m else None
+
+    def _extract_float(self, pattern: str, text: str) -> float | None:
+        m = re.search(pattern, text, re.IGNORECASE)
+        return float(m.group(1)) if m else None
+
+
+# ── The unified agent ────────────────────────────────────────────────
+
+class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
+    """
+    Single MACLA agent for all games.
+    Game-specific behavior loaded from agents/{game}/game_adapter.py.
+    Supports dual-model: fast model for actions, smart model for refinement.
+    """
+
+    def __init__(self, config=None, wandb_config=None, game_name: str | None = None):
+        BaseOrakAgent.__init__(self, config=config, wandb_config=wandb_config)
+
+        # Resolve game name from config or kwarg
+        if not game_name and hasattr(config, "game_config_path") and config.game_config_path:
+            game_name = config.game_config_path  # reuse field as game name
+        if not game_name:
+            raise ValueError("UnifiedMaclaAgent requires game_name (e.g. 'super_mario')")
+
+        self._game_name = game_name
+        self._adapter = _load_adapter(game_name)
+
+        # Build strategies from adapter
+        self._context_extractor = build_context_extractor(
+            self._adapter.CONTEXT_EXTRACTION_MODE,
+            self._adapter.CONTEXT_FIELDS,
+        )
+        self._success_detector = ConfigSuccessDetector(self._adapter)
+        # Find the game-specific action schema (a BaseModel subclass, not BaseModel itself)
+        self._action_schema = next(
+            v for v in self._adapter.__dict__.values()
+            if isinstance(v, type) and issubclass(v, BaseModel) and v is not BaseModel
+        )
+
+        self._init_macla_agent()
+
+    def _determine_game_phase(self, observation: str) -> tuple[str, float]:
+        """Game phase based on evaluation score (0-100 scale)."""
+        score = getattr(self, "_last_score", 0) or 0
+        if score < 15:
+            return "early", float(score) / 100
+        elif score < 50:
+            return "mid", float(score) / 100
+        return "late", float(score) / 100
+
+    # ── Core MACLA _get_action (called by BaseMaclaAgent.get_action) ──
+
+    @weave.op()
+    def _get_action(self, task_description: str, cur_state_str: str, obs_image=None):
+        """MACLA action loop: feedback → execute → log → validate → return 8-tuple."""
+        # 1. Provide feedback on previous execution
+        update_info = self._provide_feedback(self._prev_state_str, cur_state_str)
+
+        # 2. Execute task using MACLA
+        action, execution_result, memory_stats = self._execute_task(
+            task_description, cur_state_str, obs_image
+        )
+
+        # 3. Log MACLA stats
+        self._log_stats(update_info, memory_stats)
+
+        # 4. Validate action
+        action = self._validate_action(action)
+
+        # 5. Build output with LLM reasoning
+        avg_exec_time = sum(self._execution_times) / len(self._execution_times) if self._execution_times else 0
+        method = execution_result.get('method', 'unknown')
+        confidence = execution_result.get('confidence', 0.0)
+        llm_reasoning = execution_result.get('reasoning', '') or getattr(self, '_llm_reasoning', '')
+        selected_proc = execution_result.get('selected_procedure', '')
+
+        reasoning_parts = [f"[{method}] conf={confidence:.3f} time={avg_exec_time:.1f}s"]
+        if selected_proc:
+            reasoning_parts.append(f"procedure={selected_proc}")
+        if llm_reasoning:
+            reasoning_parts.append(f"\n{llm_reasoning}")
+
+        reasoning = " | ".join(reasoning_parts[:2]) + (f"\n{llm_reasoning}" if llm_reasoning else "")
+        output_text = f"Action: {action}\nMethod: {method}\nConfidence: {confidence:.3f}\nReasoning: {llm_reasoning}"
+        goal = self._get_task_description({"task_description": task_description})
+        game_phase, _ = self._determine_game_phase(cur_state_str)
+
+        return action, reasoning, output_text, memory_stats, f"Goal: {goal}\nObs: {cur_state_str}", game_phase, self._last_update_type, update_info
+
+    # ── Abstract method implementations ──────────────────────────────
+
+    def _extract_context(self, observation: str) -> str | dict:
+        return self._context_extractor.extract(observation)
+
+    def extract_preconditions(self, context_key: str, observation: str) -> list[str]:
+        return self._context_extractor.extract_preconditions(context_key, observation)
+
+    def extract_postconditions(self, success_contexts) -> dict[str, Any]:
+        """Extract postconditions from success contexts for procedure refinement."""
+        if not success_contexts:
+            return {}
+        # Use the terminal observation from the most recent success context
+        last = success_contexts[-1]
+        obs = getattr(last, "observation_term", "") or ""
+        if isinstance(obs, list):
+            obs = "\n".join(str(item) for item in obs)
+        context = self._extract_context(obs) if obs else {}
+        if isinstance(context, str):
+            return {"postconditions_added": [context]} if context else {}
+        return context if isinstance(context, dict) else {}
+
+    def _detect_success(self, execution_result: dict, prev_state: str, cur_state: str) -> tuple[bool, bool]:
+        return self._success_detector.detect(execution_result, prev_state, cur_state)
+
+    def _validate_action(self, action: str) -> str:
+        if action in self._adapter.VALID_ACTIONS:
+            return action
+        for va in self._adapter.VALID_ACTIONS:
+            if action.lower().strip() == va.lower().strip():
+                return va
+        # Allow game-specific action formats to pass through
+        if action.startswith("use_tool(") or action.startswith("Jump Level:"):
+            return action
+        return self._adapter.DEFAULT_ACTION
+
+    def _get_task_description(self, game_info: dict) -> str:
+        return game_info.get("task_description", self._adapter.DEFAULT_GOAL)
+
+    def _get_default_goal(self) -> str:
+        return self._adapter.DEFAULT_GOAL
+
+    def _get_default_action(self) -> str:
+        return self._adapter.DEFAULT_ACTION
+
+    def _base_fallback(self, goal: str, observation: str, **kwargs) -> tuple[list[str], str]:
+        """LLM fallback using game adapter prompts + structured output."""
+        obs_image = kwargs.get("obs_image")
+
+        # Use defaultdict-style formatting to handle any template vars
+        class SafeDict(dict):
+            def __missing__(self, key):
+                return ""
+
+        user_text = self._adapter.USER_PROMPT_TEMPLATE.format_map(SafeDict(
+            last_action=getattr(self, "_last_action", "none"),
+            cur_state_str=observation,
+            task_description=goal,
+            prev_state_str=getattr(self, "_prev_state_str", ""),
+        ))
+
+        user_content = [{"type": "text", "text": user_text}]
+        if obs_image:
+            buffered = io.BytesIO()
+            obs_image.save(buffered, format="JPEG")
+            img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            user_content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{img_str}"},
+            })
+
+        messages = [
+            SystemMessage(content=self._adapter.SYSTEM_PROMPT),
+            HumanMessage(content=user_content),
+        ]
+
+        try:
+            result = safe_structured_invoke(self._llm, messages, self._action_schema)
+            reasoning = getattr(result, "reasoning", "")
+            action = self._adapter.extract_action(result)
+            self._llm_reasoning = reasoning
+            return [action], reasoning
+        except Exception as e:
+            logger.error(f"Unified fallback failed: {e}")
+            return [self._adapter.DEFAULT_ACTION], f"Fallback error: {e}"
+
+    def calculate_metrics(self, game_info: dict[str, Any]) -> dict[str, Any]:
+        if hasattr(self._adapter, "calculate_metrics"):
+            return self._adapter.calculate_metrics(game_info)
+        metrics = {}
+        for field_name in self._adapter.METRIC_FIELDS:
+            if field_name in game_info:
+                try:
+                    metrics[field_name] = float(game_info[field_name])
+                except (ValueError, TypeError):
+                    pass
+        return metrics
+
+    def record_episode_end(self, episode, game_name, seed, score):
+        BaseOrakAgent.record_episode_end(self, episode, game_name, seed, score)
+        self._record_episode_end(episode, score)

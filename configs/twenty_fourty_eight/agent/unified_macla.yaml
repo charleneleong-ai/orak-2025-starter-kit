@@ -1,0 +1,7 @@
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: gemini-2.5-pro
+temperature: 1.0
+gcp_location: "europe-west1"
+thinking_level: "high"
+game_config_path: "twenty_fourty_eight"
+track: "TRACK2"
