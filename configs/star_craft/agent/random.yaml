@@ -1,1 +1,1 @@
-class_name: "agents.random_starcraft.RandomStarCraftAgent"
+class_name: "agents.starcraft.random_starcraft.RandomStarCraftAgent"

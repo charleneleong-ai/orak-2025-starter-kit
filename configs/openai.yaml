@@ -12,6 +12,8 @@ defaults:
   - twenty_fourty_eight: base
   - super_mario: base
   - pokemon_red: base
+  - star_craft: base
   - override twenty_fourty_eight/agent: openai
   - override super_mario/agent: openai
   - override pokemon_red/agent: openai
+  - override star_craft/agent: openai

@@ -1,4 +1,5 @@
 import os
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 import json
 import time
 from dataclasses import asdict, dataclass, field
@@ -145,7 +146,10 @@ class StarCraftEnv(BaseEnv):
         
         log_path: str
 
-        input_modality: str = "text"
+        input_modality: str = "text_image"
+        max_episodes: int = 3
+        max_steps: int = 1000
+
 
     cfg: Config
     
@@ -265,14 +269,9 @@ class StarCraftEnv(BaseEnv):
         image = None
         minimap_image = None
         if self.use_image:
-            try:
-                # image = self.window_capture.capture(log_path=self.cfg.log_path)
-                image = self.transaction['map_image']
-                minimap_image = self.transaction['minimap_image']
-            except Exception as e:
-                print(f"[WARNING] Failed to capture image: {e}")
-                pass
-            
+            image = self.transaction.get('map_image')
+            minimap_image = self.transaction.get('minimap_image')
+
         state = from_dict(StarCraftObs, {'observation': self.transaction['information'], 'image': image, 'minimap_image': minimap_image})
 
         return state
@@ -354,10 +353,9 @@ class StarCraftEnv(BaseEnv):
         image = None
         minimap_image = None
         if self.use_image:
-            # image = self.window_capture.capture(log_path=self.cfg.log_path)
-            image = self.transaction['map_image']
-            minimap_image = self.transaction['minimap_image']
-            
+            image = self.transaction.get('map_image')
+            minimap_image = self.transaction.get('minimap_image')
+
         state = from_dict(StarCraftObs, {'observation': self.summary, 'image': image, 'minimap_image': minimap_image})
 
         return state, 0, done, False, None
