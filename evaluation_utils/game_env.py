@@ -7,6 +7,7 @@ from PIL import Image
 
 from evaluation_utils.protos import game_service_pb2 as pb2
 from evaluation_utils.protos import game_service_pb2_grpc as pb2_grpc
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,22 @@ class GameEnv:
 
     def dispatch_final_action(self, action: str, request_id: str = None) -> dict:
         """Execute action and return result with new observation."""
+        def convert_numpy(obj):
+            if isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            return obj
+
+        if isinstance(action, (np.uint8, np.integer, np.floating)):
+            action = str(convert_numpy(action))
+        elif isinstance(action, np.ndarray):
+            action = str(action.tolist())
+        else:
+            action = str(action)
+
         request = pb2.StepRequest(
             session_token=self.session_token,
             action=action,

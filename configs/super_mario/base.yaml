@@ -5,4 +5,4 @@ defaults:
 wandb:
   project: "orak-super-mario"
   mode: "online"
-  tags: ["openai", "super_mario"]
+  tags: ["gemini", "super_mario"]

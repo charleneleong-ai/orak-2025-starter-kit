@@ -1,0 +1,5 @@
+class_name: "agents.super_mario.macla.MarioMaclaAgent"
+model: gpt-5-nano
+temperature: 1.0
+reasoning_effort: "high"
+track: "TRACK2" 

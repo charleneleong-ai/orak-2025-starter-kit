@@ -9,6 +9,11 @@ from loguru import logger
 from config.agent_config import AgentConfig
 from config.base import WandbConfig
 
+try:
+    from PIL import Image as PILImage
+except ImportError:
+    PILImage = None
+
 class BaseOrakAgent(weave.Model):
     TRACK: ClassVar[str] = "TRACK1"
     
@@ -37,28 +42,48 @@ class BaseOrakAgent(weave.Model):
         "output_tokens": 0,
         "tokens": 0
     })
+    # Action distribution tracking
+    _action_counts: dict[str, int] = PrivateAttr(default_factory=lambda: {})
+
+
 
     def __init__(self, config: AgentConfig = None, wandb_config: WandbConfig = None):
         super().__init__(config=config, wandb_config=wandb_config)
-        
+        self._wandb_run = None
+
         if self.wandb_config and self.wandb_config.enabled:
             # Ensure tags is a list
             tags = list(self.wandb_config.tags) if self.wandb_config.tags else []
-            
+
             # Add agent specific tags if available
             if hasattr(self, "AGENT_TAGS"):
                 tags.extend(self.AGENT_TAGS)
-                
-            wandb.init(
-                project=self.wandb_config.project, 
+
+            # Use project-specific run_id to avoid cross-game collisions
+            run_id = self.wandb_config.run_id
+            if run_id and self.wandb_config.project:
+                run_id = f"{run_id}_{self.wandb_config.project}"
+            self._wandb_run = wandb.init(
+                project=self.wandb_config.project,
                 entity=self.wandb_config.entity,
-                id=self.wandb_config.run_id,
+                id=run_id,
                 resume="allow",
+                reinit="create_new",
                 config=self.config.to_dict() if hasattr(self.config, "to_dict") else {},
                 tags=tags,
                 notes=self.wandb_config.notes,
                 name=self.wandb_config.run_id
             )
+            # Initialize weave for this game's project and store client for act() switching
+            self._weave_project = self.wandb_config.project
+            if self.wandb_config.entity:
+                self._weave_project = f"{self.wandb_config.entity}/{self._weave_project}"
+            try:
+                self._weave_client = weave.init(self._weave_project)
+                if self._weave_client and self._wandb_run:
+                    self._weave_client.set_wandb_run_context(run_id=self._wandb_run.id)
+            except Exception:
+                self._weave_client = None
 
     def set_log_dir(self, log_dir: str):
         """Set directory for logging raw requests."""
@@ -95,6 +120,33 @@ class BaseOrakAgent(weave.Model):
             "tokens": self._current_episode_stats["tokens"],
             "final_score": final_score
         })
+        
+        # Log episode summary to wandb
+        if self.wandb_config and self.wandb_config.enabled:
+            num_episodes = len(self._episode_stats)
+            total_score = sum(e["final_score"] for e in self._episode_stats)
+            mean_score = total_score / num_episodes if num_episodes > 0 else 0
+            max_score = max([e["final_score"] for e in self._episode_stats]) if num_episodes > 0 else 0
+            self._wandb_run.log({
+                # Episode stats (renamed from episode/ to episode_end/)
+                "episode_end/id": episode_id,
+                "episode_end/final_score": final_score,
+                "episode_end/inference_calls": self._current_episode_stats["inference_calls"],
+                "episode_end/tokens": self._current_episode_stats["tokens"],
+                "episode_end/input_tokens": self._current_episode_stats["input_tokens"],
+                "episode_end/output_tokens": self._current_episode_stats["output_tokens"],
+
+                "agg/total_inference_calls": self._stats["total_inference_calls"],
+                "agg/total_tokens": self._stats["total_tokens"],
+                "agg/total_input_tokens": self._stats["total_input_tokens"],
+                "agg/total_output_tokens": self._stats["total_output_tokens"],
+                "agg/mean_calls_per_episode": self._stats["total_inference_calls"] / num_episodes if num_episodes > 0 else 0,
+                "agg/mean_tokens_per_episode": self._stats["total_tokens"] / num_episodes if num_episodes > 0 else 0,
+                "agg/mean_score": mean_score,
+                "agg/max_score": max_score,
+                "agg/total_episodes": num_episodes,
+            }, step=self._step_count)
+        
         # Reset current episode stats
         self._current_episode_stats = {
             "inference_calls": 0,
@@ -102,9 +154,12 @@ class BaseOrakAgent(weave.Model):
             "output_tokens": 0,
             "tokens": 0
         }
+        
+        # Reset step count for next episode
+        self._step_count = 0
 
     @weave.op()
-    def act(self, obs: dict[str, Any], step: int = None) -> str:
+    def act(self, obs: dict[str, Any], step: int = None) -> dict[str, Any]:
         """Main action method tracked by Weave."""
         game_info = obs.get("game_info", {})
         cur_state_str = obs.get("obs_str", "")
@@ -120,8 +175,9 @@ class BaseOrakAgent(weave.Model):
         action, log_extras = self.get_action(obs)
         
         # Update stats
-        self._stats["total_inference_calls"] += 1
-        self._current_episode_stats["inference_calls"] += 1
+        if not log_extras or log_extras.get("inference_called", True):
+            self._stats["total_inference_calls"] += 1
+            self._current_episode_stats["inference_calls"] += 1
         
         if log_extras:
             tokens_prompt = log_extras.get("tokens_prompt", 0)
@@ -167,6 +223,18 @@ class BaseOrakAgent(weave.Model):
                 "action": action,
             }
             
+            # Add game_phase if available
+            if hasattr(self, '_game_phase'):
+                log_data["game_phase"] = self._game_phase
+                
+            # Add update_type if available
+            if hasattr(self, '_last_update_type'):
+                log_data["update_type"] = self._last_update_type
+        
+            # Add _method_used if available
+            if hasattr(self, '_method_used'):
+                log_data["method_used"] = self._method_used
+            
             # Add game specific metrics from game_info
             # We can log everything in game_info that is a number
             for k, v in game_info.items():
@@ -189,7 +257,10 @@ class BaseOrakAgent(weave.Model):
                          # Log prompt as HTML for readability
                          log_data[k] = wandb.Html(f"<pre style='white-space: pre-wrap;'>{v}</pre>")
                     elif k not in ["output_text"]:
-                        log_data[k] = v
+                        if PILImage and isinstance(v, PILImage.Image):
+                            log_data[k] = wandb.Image(v)
+                        else:
+                            log_data[k] = v
 
             # Log action distribution with simplified action name
             # Subclasses can provide "simplified_action" in log_extras to override default behavior
@@ -202,27 +273,56 @@ class BaseOrakAgent(weave.Model):
                  except (IndexError, AttributeError):
                     pass
 
-            log_data[f"action/{simplified_action}"] = 1
+            # Log action distributio
+            self._action_counts[simplified_action] = self._action_counts.get(simplified_action, 0) + 1
+            total_actions = sum(self._action_counts.values())
             
+            for act, count in self._action_counts.items():
+                log_data[f"action_history/{act}"] = count / total_actions
+            
+            episode_num = len(self._episode_stats) + 1
+
             # Log obs_str as text
             if cur_state_str:
-                log_data["obs_str"] = wandb.Html(f"<pre>{cur_state_str}</pre>")
+                log_data["obs_str"] = wandb.Html(f"<pre>Ep: {episode_num}\n{cur_state_str}</pre>")
             
             # Log obs_image if available
             if obs_image is not None:
                 try:
-                    log_data["obs_image"] = wandb.Image(obs_image, caption=f"Step {self._step_count}")
+                    log_data["obs_image"] = wandb.Image(obs_image, caption=f"Ep: {episode_num} | Step {self._step_count}")
                 except Exception as e:
                     # If image logging fails, just continue
                     logger.warning(f"Warning: Could not log image: {traceback.format_exc()}")
             
-            wandb.log(log_data, step=self._step_count)
+            self._wandb_run.log(log_data, step=self._step_count)
 
         self._prev_state_str = cur_state_str
         self._last_action = action
         self._last_score = current_score
 
-        return action
+        # Return dict for Weave to capture metadata
+        result = {"action": action}
+
+        # Game-specific metrics (evaluation_score, score, etc.)
+        metrics = self.calculate_metrics(game_info)
+        result.update(metrics)
+
+        if hasattr(self, '_game_phase'):
+            result["game_phase"] = self._game_phase
+        if hasattr(self, '_last_update_type'):
+            result["update_type"] = self._last_update_type
+        if hasattr(self, '_method_used'):
+            result["method_used"] = self._method_used
+
+        if log_extras:
+            if "precondition_image" in log_extras:
+                result["precondition_image"] = log_extras["precondition_image"]
+            if "postcondition_image" in log_extras:
+                result["postcondition_image"] = log_extras["postcondition_image"]
+            if "reasoning" in log_extras:
+                result["reasoning"] = log_extras["reasoning"]
+
+        return result
 
     def get_action(self, obs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """

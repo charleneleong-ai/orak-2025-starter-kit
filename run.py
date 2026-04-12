@@ -21,6 +21,8 @@ class ExperimentConfigName(StrEnum):
     GEMINI = "gemini"
     OPENAI = "openai"
     POETIQ = "poetiq"
+    MACLA = "macla"
+    UNIFIED_MACLA = "unified_macla"
 
 
 load_dotenv()
@@ -108,13 +110,8 @@ def main(
         logger.info(f"Experiment description set: {experiment_description}")
         
 
-    # Initialize Weave if enabled (uses same W&B credentials)
-    if settings.wandb.weave_enabled:
-        try:
-            weave.init(settings.wandb.project_name)
-            logger.info(f"Weave initialized for project: {set is not None and len(games) > settings.wandb.project_name}")
-        except Exception as e:
-            logger.warning(f"Failed to initialize Weave: {e}")
+    # Note: weave is auto-initialized by wandb.init() per game project.
+    # Do NOT call weave.init() globally — it overrides per-game initialization.
 
     # If loading checkpoint and run_id not provided, try to find the latest run
     if run_id is None and load_checkpoint and local and games:
