@@ -1,23 +1,25 @@
 """
 Autoresearch loop for MACLA parameter optimisation.
 
-Iteratively runs experiments, adjusting per-game theta/warmup params
-based on results. Logs to experiment tracker and regenerates plots.
+Iteratively runs experiments, analyzes trajectories for failure patterns,
+and proposes targeted changes (prompts, params, success detection) based
+on what's actually blocking improvement.
 
 Usage:
     # Run optimisation loop (max 5 iterations)
     python experiments/autoresearch.py run --max-iterations 5
 
-    # Dry run: propose next params without running
-    python experiments/autoresearch.py run --dry-run
+    # Analyze a past run
+    python experiments/autoresearch.py analyze --run-id 20260422_221353
 
     # Log results from a completed run
     python experiments/autoresearch.py log-run --run-id 20260422_213143
 """
 import json
+import re
 import subprocess
 import time
-from datetime import datetime
+from collections import Counter
 from pathlib import Path
 
 import sys
@@ -29,6 +31,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from experiments.experiment_progress import (
     ALL_GAMES,
+    GAME_LOG_DIR,
     extract_run_results,
     load_results,
     log_experiment,
@@ -37,8 +40,326 @@ from experiments.experiment_progress import (
 
 ROOT = Path(__file__).parent.parent
 CONFIGS_DIR = ROOT / "configs"
+AGENTS_DIR = ROOT / "agents"
 
-# Per-game parameter search bounds
+# Marker to track auto-appended prompt hints (avoid duplication)
+AUTORESEARCH_MARKER = "# [autoresearch]"
+
+
+# ── Trajectory Analysis ─────────────────────────────────────────────
+
+
+def load_game_states(run_id: str, game: str) -> list[dict]:
+    """Load all entries from game_states.jsonl for a run."""
+    path = GAME_LOG_DIR / game / run_id / "game_states.jsonl"
+    if not path.exists():
+        return []
+    entries = []
+    for line in path.read_text().strip().split("\n"):
+        if line:
+            entries.append(json.loads(line))
+    return entries
+
+
+def analyze_trajectory(run_id: str, game: str) -> dict:
+    """Analyze game_states.jsonl for failure patterns.
+
+    Returns a dict with signals that propose_changes() maps to fixes.
+    """
+    entries = load_game_states(run_id, game)
+    if not entries:
+        return {"game": game, "total_steps": 0, "error": "no data"}
+
+    actions = [e.get("action", "") for e in entries]
+    action_counts = Counter(actions)
+    total = len(actions)
+    top_action, top_count = action_counts.most_common(1)[0] if action_counts else ("", 0)
+
+    # Episode boundaries (iteration resets)
+    episode_scores = []
+    current_max = 0
+    for i, e in enumerate(entries):
+        current_max = max(current_max, e.get("evaluation_score", 0))
+        if e.get("result", {}).get("is_finished") or (i > 0 and e["iteration"] <= entries[i - 1]["iteration"]):
+            episode_scores.append(current_max)
+            current_max = 0
+    if current_max > 0:
+        episode_scores.append(current_max)
+
+    max_eval = max(e.get("evaluation_score", 0) for e in entries)
+
+    # Score plateau: last 3+ episodes at same score
+    plateau = len(episode_scores) >= 3 and len(set(round(s, 1) for s in episode_scores[-3:])) == 1
+
+    analysis = {
+        "game": game,
+        "total_steps": total,
+        "episodes": len(episode_scores),
+        "max_eval": max_eval,
+        "episode_scores": episode_scores,
+        "action_distribution": dict(action_counts.most_common(5)),
+        "top_action": top_action,
+        "top_action_pct": top_count / total if total else 0,
+        "repeated_actions": top_count / total > 0.5 if total else False,
+        "score_plateau": plateau,
+    }
+
+    # Game-specific analysis
+    if game == "super_mario":
+        _analyze_mario(entries, analysis)
+    elif game == "pokemon_red":
+        _analyze_pokemon(entries, analysis)
+    elif game == "twenty_fourty_eight":
+        _analyze_2048(entries, analysis)
+
+    return analysis
+
+
+def _analyze_mario(entries: list[dict], analysis: dict):
+    """Mario-specific: find death clustering by x_pos."""
+    death_xpos = []
+    for e in entries:
+        if e.get("result", {}).get("is_finished"):
+            gi = e.get("obs", {}).get("game_info", {})
+            x = gi.get("x_pos", 0)
+            if isinstance(x, str):
+                try:
+                    x = int(x)
+                except ValueError:
+                    x = 0
+            death_xpos.append(x)
+
+    analysis["death_positions"] = death_xpos
+
+    if death_xpos:
+        # Cluster deaths into 100-unit bins
+        bins = Counter(x // 100 * 100 for x in death_xpos)
+        most_common_bin, count = bins.most_common(1)[0]
+        if count >= 3:  # At least 3 deaths in same zone
+            analysis["failure_zone"] = f"x={most_common_bin}-{most_common_bin + 100}"
+            analysis["failure_zone_deaths"] = count
+            analysis["failure_zone_total_deaths"] = len(death_xpos)
+
+
+def _analyze_pokemon(entries: list[dict], analysis: dict):
+    """Pokemon-specific: check map diversity and flag progress."""
+    maps = []
+    for e in entries:
+        gi = e.get("obs", {}).get("game_info", {})
+        m = gi.get("map_name", "")
+        if m:
+            maps.append(m)
+
+    unique_maps = set(maps)
+    analysis["maps_visited"] = list(unique_maps)
+    analysis["map_count"] = len(unique_maps)
+    analysis["map_stuck"] = len(unique_maps) <= 2 and len(maps) > 50
+
+    # Check if score ever changes
+    scores = [e.get("game_score", 0) for e in entries]
+    analysis["score_changes"] = len(set(scores))
+    analysis["max_flags"] = max(scores) if scores else 0
+
+
+def _analyze_2048(entries: list[dict], analysis: dict):
+    """2048-specific: check action balance and max tile."""
+    max_tiles = []
+    for e in entries:
+        gi = e.get("obs", {}).get("game_info", {})
+        mt = gi.get("max_tile", 0)
+        if isinstance(mt, str):
+            try:
+                mt = int(mt)
+            except ValueError:
+                mt = 0
+        max_tiles.append(mt)
+
+    analysis["max_tile"] = max(max_tiles) if max_tiles else 0
+
+    # Action balance: check if one direction dominates
+    direction_counts = {d: 0 for d in ["up", "down", "left", "right"]}
+    for a in analysis["action_distribution"]:
+        if a in direction_counts:
+            direction_counts[a] = analysis["action_distribution"][a]
+    total_dir = sum(direction_counts.values())
+    if total_dir > 0:
+        max_dir_pct = max(direction_counts.values()) / total_dir
+        analysis["action_imbalance"] = max_dir_pct > 0.4
+        analysis["direction_balance"] = {k: round(v / total_dir, 2) for k, v in direction_counts.items()}
+    else:
+        analysis["action_imbalance"] = False
+
+
+# ── Change Proposal ──────────────────────────────────────────────────
+
+
+def propose_changes(analysis: dict) -> list[dict]:
+    """Map failure patterns to specific code/config changes."""
+    changes = []
+    game = analysis["game"]
+
+    # 1. Action repetition — any game
+    if analysis.get("repeated_actions"):
+        changes.append({
+            "type": "prompt",
+            "target": "DEFAULT_GOAL",
+            "action": "append",
+            "text": " Vary your actions — avoid repeating the same action more than 3 times.",
+            "reason": f"{analysis['top_action']} used {analysis['top_action_pct']:.0%} of the time",
+        })
+
+    # 2. Score plateau — any game
+    if analysis.get("score_plateau") and analysis["episodes"] >= 5:
+        changes.append({
+            "type": "param",
+            "target": "temperature",
+            "action": "increase",
+            "step": 0.1,
+            "max": 1.5,
+            "reason": f"Score plateau for {analysis['episodes']} episodes",
+        })
+
+    # 3. Mario death clustering
+    if game == "super_mario" and analysis.get("failure_zone"):
+        zone = analysis["failure_zone"]
+        deaths = analysis["failure_zone_deaths"]
+        total = analysis["failure_zone_total_deaths"]
+        changes.append({
+            "type": "prompt",
+            "target": "DEFAULT_GOAL",
+            "action": "append",
+            "text": f" CRITICAL: You repeatedly die at {zone} ({deaths}/{total} deaths). Use Jump Level 4-6 to clear this obstacle.",
+            "reason": f"Death cluster: {deaths}/{total} at {zone}",
+        })
+
+    # 4. Pokemon map stagnation
+    if game == "pokemon_red" and analysis.get("map_stuck"):
+        maps = ", ".join(analysis.get("maps_visited", []))
+        changes.append({
+            "type": "prompt",
+            "target": "DEFAULT_GOAL",
+            "action": "append",
+            "text": f" You are stuck on [{maps}]. Explore new areas — move to exits, use doors, talk to NPCs to progress.",
+            "reason": f"Stuck on {analysis['map_count']} maps for {analysis['total_steps']} steps",
+        })
+
+    # 5. Pokemon no flag progress
+    if game == "pokemon_red" and analysis.get("max_flags", 0) <= 1 and analysis["total_steps"] > 100:
+        changes.append({
+            "type": "prompt",
+            "target": "DEFAULT_GOAL",
+            "action": "append",
+            "text": " Focus on storyline progression: defeat gym leaders, collect badges, explore new routes.",
+            "reason": f"Only {analysis.get('max_flags', 0)} flags in {analysis['total_steps']} steps",
+        })
+
+    # 6. 2048 action imbalance
+    if game == "twenty_fourty_eight" and analysis.get("action_imbalance"):
+        balance = analysis.get("direction_balance", {})
+        changes.append({
+            "type": "prompt",
+            "target": "DEFAULT_GOAL",
+            "action": "append",
+            "text": " Use all 4 directions strategically. Build tiles in a corner pattern: prefer down+right, then sweep left/up.",
+            "reason": f"Action imbalance: {balance}",
+        })
+
+    # 7. 2048 low max tile
+    if game == "twenty_fourty_eight" and analysis.get("max_tile", 0) < 128 and analysis["total_steps"] > 50:
+        changes.append({
+            "type": "prompt",
+            "target": "DEFAULT_GOAL",
+            "action": "append",
+            "text": " Keep your highest tile in a corner. Chain merges by keeping tiles in descending order along edges.",
+            "reason": f"Max tile only {analysis.get('max_tile', 0)} after {analysis['total_steps']} steps",
+        })
+
+    # 8. Theta adjustments from existing propose_next_params (kept for continuity)
+
+    return changes
+
+
+# ── Apply Changes ────────────────────────────────────────────────────
+
+
+def apply_changes(game: str, changes: list[dict], config_type: str = "unified_macla") -> list[str]:
+    """Apply proposed changes to game adapter and/or YAML config."""
+    applied = []
+    for change in changes:
+        if change["type"] == "prompt":
+            success = _apply_prompt_change(game, change)
+            if success:
+                applied.append(f"prompt: {change['reason']}")
+        elif change["type"] == "param":
+            success = _apply_param_change(game, change, config_type)
+            if success:
+                applied.append(f"param: {change['reason']}")
+    return applied
+
+
+def _apply_prompt_change(game: str, change: dict) -> bool:
+    """Append text to a game adapter constant (DEFAULT_GOAL, etc)."""
+    adapter_path = AGENTS_DIR / game / "game_adapter.py"
+    if not adapter_path.exists():
+        print(f"  [SKIP] No adapter at {adapter_path}")
+        return False
+
+    content = adapter_path.read_text()
+    target = change["target"]  # e.g. "DEFAULT_GOAL"
+    text = change["text"]
+
+    # Check if this exact hint was already appended
+    if text.strip() in content:
+        print(f"  [SKIP] Already applied: {change['reason']}")
+        return False
+
+    # Find the target constant and append before closing quote
+    # Pattern: DEFAULT_GOAL = "...existing text..."
+    pattern = rf'({target}\s*=\s*")(.*?)(")'
+    match = re.search(pattern, content, re.DOTALL)
+    if not match:
+        # Try single quotes
+        pattern = rf"({target}\s*=\s*')(.*?)(')"
+        match = re.search(pattern, content, re.DOTALL)
+
+    if match:
+        new_content = content[:match.end(2)] + text + content[match.end(2):]
+        adapter_path.write_text(new_content)
+        print(f"  [APPLIED] {target} += '{text[:60]}...'")
+        return True
+
+    print(f"  [SKIP] Could not find {target} in {adapter_path}")
+    return False
+
+
+def _apply_param_change(game: str, change: dict, config_type: str) -> bool:
+    """Update a YAML config parameter."""
+    config = read_yaml_config(game, config_type)
+    target = change["target"]
+    current = config.get(target)
+
+    if change["action"] == "increase":
+        new_val = (current or 0) + change.get("step", 0.05)
+        if "max" in change:
+            new_val = min(new_val, change["max"])
+    elif change["action"] == "decrease":
+        new_val = (current or 0) - change.get("step", 0.05)
+        if "min" in change:
+            new_val = max(new_val, change["min"])
+    else:
+        new_val = change.get("value", current)
+
+    if new_val == current:
+        print(f"  [SKIP] {target} already at {current}")
+        return False
+
+    config[target] = round(new_val, 3) if isinstance(new_val, float) else new_val
+    write_yaml_config(game, config, config_type)
+    print(f"  [APPLIED] {target}: {current} → {new_val}")
+    return True
+
+
+# ── Per-game parameter search bounds
 PARAM_BOUNDS = {
     "super_mario": {
         "macla_theta_base": (0.10, 0.30),
@@ -303,6 +624,27 @@ def run(
             print("Run failed, stopping loop")
             break
 
+        # Analyze trajectories and apply targeted changes for NEXT iteration
+        print(f"\n--- Trajectory Analysis ---")
+        change_summaries = []
+        for game in games:
+            analysis = analyze_trajectory(run_id, game)
+            print(f"\n  {game}: {analysis['total_steps']} steps, {analysis['episodes']} episodes, max_eval={analysis['max_eval']:.2f}")
+            if analysis.get("failure_zone"):
+                print(f"    Death cluster: {analysis['failure_zone']} ({analysis['failure_zone_deaths']} deaths)")
+            if analysis.get("repeated_actions"):
+                print(f"    Action repetition: {analysis['top_action']} at {analysis['top_action_pct']:.0%}")
+            if analysis.get("map_stuck"):
+                print(f"    Map stuck: {analysis.get('maps_visited', [])}")
+
+            changes = propose_changes(analysis)
+            if changes:
+                applied = apply_changes(game, changes, config_type)
+                change_summaries.extend(applied)
+
+        if change_summaries:
+            description += " | " + "; ".join(change_summaries[:3])  # Cap for plot readability
+
         # Log results
         run_results = log_run_results(run_id, games, description, tag, best)
 
@@ -326,6 +668,58 @@ def run(
 
     print(f"\nAutoresearch complete after {min(iteration + 1, max_iterations)} iterations")
     plot_progress(tag=tag)
+
+
+@app.command()
+def analyze(
+    run_id: str = typer.Option(..., help="Run ID to analyze"),
+    games: list[str] = typer.Option(ALL_GAMES, "--games", help="Games to analyze"),
+    propose: bool = typer.Option(False, help="Also propose changes (don't apply)"),
+):
+    """Analyze trajectories from a completed run and report failure patterns."""
+    for game in games:
+        analysis = analyze_trajectory(run_id, game)
+        if analysis.get("error"):
+            print(f"\n{game}: {analysis['error']}")
+            continue
+
+        print(f"\n{'='*50}")
+        print(f"  {game.upper()}")
+        print(f"{'='*50}")
+        print(f"  Steps: {analysis['total_steps']}, Episodes: {analysis['episodes']}")
+        print(f"  Max eval: {analysis['max_eval']:.2f}")
+        print(f"  Top action: {analysis['top_action']} ({analysis['top_action_pct']:.0%})")
+        print(f"  Action dist: {analysis['action_distribution']}")
+        print(f"  Score plateau: {analysis.get('score_plateau', False)}")
+        print(f"  Repeated actions: {analysis.get('repeated_actions', False)}")
+
+        if game == "super_mario":
+            if analysis.get("failure_zone"):
+                print(f"  Death cluster: {analysis['failure_zone']} ({analysis['failure_zone_deaths']}/{analysis['failure_zone_total_deaths']} deaths)")
+            if analysis.get("death_positions"):
+                print(f"  Death positions: {analysis['death_positions'][:10]}...")
+
+        elif game == "pokemon_red":
+            print(f"  Maps visited: {analysis.get('maps_visited', [])}")
+            print(f"  Map stuck: {analysis.get('map_stuck', False)}")
+            print(f"  Max flags: {analysis.get('max_flags', 0)}")
+
+        elif game == "twenty_fourty_eight":
+            print(f"  Max tile: {analysis.get('max_tile', 0)}")
+            print(f"  Action imbalance: {analysis.get('action_imbalance', False)}")
+            if analysis.get("direction_balance"):
+                print(f"  Direction balance: {analysis['direction_balance']}")
+
+        if propose:
+            changes = propose_changes(analysis)
+            if changes:
+                print(f"\n  Proposed changes:")
+                for c in changes:
+                    print(f"    [{c['type']}] {c['target']}: {c['reason']}")
+                    if c["type"] == "prompt":
+                        print(f"           → append: '{c['text'][:80]}...'")
+            else:
+                print(f"\n  No changes proposed")
 
 
 if __name__ == "__main__":
