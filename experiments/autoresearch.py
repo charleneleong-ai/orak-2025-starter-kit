@@ -20,9 +20,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import sys
+
 import typer
 import yaml
 
+# Allow running as both `python experiments/autoresearch.py` and `python -m experiments.autoresearch`
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from experiments.experiment_progress import (
     ALL_GAMES,
     extract_run_results,
