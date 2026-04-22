@@ -268,7 +268,7 @@ def run(
         print(f"\nCurrent best scores: {best}")
 
         # Propose and apply new params per game
-        descriptions = []
+        param_summaries = []
         for game in games:
             new_params = propose_next_params(game, all_results, config_type)
             current = get_current_params(game, config_type)
@@ -276,7 +276,12 @@ def run(
             changed = {k: v for k, v in new_params.items() if current.get(k) != v}
             if changed:
                 print(f"\n  {game}: {changed}")
-                descriptions.append(f"{game}: {', '.join(f'{k}={v}' for k, v in changed.items())}")
+                # Short param summary: theta=0.20, warmup=5
+                short = ", ".join(
+                    f"{k.replace('macla_', '').replace('theta_', 'θ_')}={v}"
+                    for k, v in sorted(changed.items())
+                )
+                param_summaries.append(f"{game.split('_')[0]}: {short}")
 
                 if not dry_run:
                     full_config = read_yaml_config(game, config_type)
@@ -285,7 +290,7 @@ def run(
             else:
                 print(f"\n  {game}: no changes (at boundary)")
 
-        description = f"autoresearch iter {iteration + 1}: " + "; ".join(descriptions) if descriptions else f"autoresearch iter {iteration + 1}: no param changes"
+        description = f"auto iter {iteration + 1}: {'; '.join(param_summaries)}" if param_summaries else f"auto iter {iteration + 1}: no changes"
         print(f"\nDescription: {description}")
 
         if dry_run:
