@@ -86,6 +86,39 @@ def load_results(tag: str | None = None) -> list[dict]:
     return results
 
 
+GAME_LOG_DIR = Path(__file__).parent.parent / "game_logs"
+ALL_GAMES = ["super_mario", "twenty_fourty_eight", "pokemon_red"]
+
+
+def extract_run_results(run_id: str, games: list[str] | None = None) -> dict[str, dict]:
+    """Parse game_logs/<game>/<run_id>/game_states.jsonl for final scores.
+
+    Returns dict[game] -> {evaluation_score, game_score, steps, episodes, max_eval}.
+    """
+    games = games or ALL_GAMES
+    results = {}
+    for game in games:
+        states_file = GAME_LOG_DIR / game / run_id / "game_states.jsonl"
+        if not states_file.exists():
+            continue
+        lines = states_file.read_text().strip().split("\n")
+        if not lines or not lines[0]:
+            continue
+        entries = [json.loads(l) for l in lines if l]
+        last = entries[-1]
+        # Count episodes (iteration resets to 1 at episode start)
+        episodes = sum(1 for i, e in enumerate(entries) if i > 0 and e["iteration"] <= entries[i - 1]["iteration"])
+        max_eval = max(e["evaluation_score"] for e in entries)
+        results[game] = {
+            "evaluation_score": last["evaluation_score"],
+            "game_score": last.get("game_score", 0),
+            "steps": len(entries),
+            "episodes": episodes,
+            "max_eval": max_eval,
+        }
+    return results
+
+
 def plot_progress(filter_game: str | None = None, tag: str | None = None):
     """Plot autoresearch-style progress chart per game using Plotly.
 
