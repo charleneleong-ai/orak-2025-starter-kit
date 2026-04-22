@@ -194,87 +194,121 @@ def _analyze_2048(entries: list[dict], analysis: dict):
 
 
 def propose_changes(analysis: dict) -> list[dict]:
-    """Map failure patterns to specific code/config changes."""
+    """Map failure patterns to structural MACLA changes (not prompt appends).
+
+    Targets: refinement thresholds, theta/decay, temperature, success detection.
+    """
     changes = []
     game = analysis["game"]
+    episodes = analysis.get("episodes", 0)
+    total_steps = analysis.get("total_steps", 0)
 
-    # 1. Action repetition — any game
-    if analysis.get("repeated_actions"):
+    # ── Refinement thresholds ──────────────────────────────────────
+    # If procedures are learned but never refined (not enough data),
+    # lower n_min_s/n_min_f so refinement kicks in faster
+    if episodes >= 3 and analysis.get("score_plateau"):
         changes.append({
-            "type": "prompt",
-            "target": "DEFAULT_GOAL",
-            "action": "append",
-            "text": " Vary your actions — avoid repeating the same action more than 3 times.",
-            "reason": f"{analysis['top_action']} used {analysis['top_action_pct']:.0%} of the time",
+            "type": "param",
+            "target": "macla_n_min_s",
+            "action": "decrease",
+            "step": 1,
+            "min": 1,
+            "reason": f"Score plateau {episodes} eps — refine procedures faster",
+        })
+        changes.append({
+            "type": "param",
+            "target": "macla_n_min_f",
+            "action": "decrease",
+            "step": 1,
+            "min": 1,
+            "reason": f"Score plateau {episodes} eps — need fewer failures to refine",
         })
 
-    # 2. Score plateau — any game
-    if analysis.get("score_plateau") and analysis["episodes"] >= 5:
+    # ── Theta decay ────────────────────────────────────────────────
+    # If procedures exist but score doesn't improve, decay faster
+    # so agent explores new procedure/fallback combinations
+    if episodes >= 5 and analysis.get("score_plateau"):
+        changes.append({
+            "type": "param",
+            "target": "macla_theta_decay",
+            "action": "increase",
+            "step": 0.001,
+            "max": 0.01,
+            "reason": f"Stagnation — decay theta faster for exploration",
+        })
+
+    # ── Temperature ────────────────────────────────────────────────
+    # Action repetition signals LLM is too deterministic
+    if analysis.get("repeated_actions") and analysis["top_action_pct"] > 0.6:
         changes.append({
             "type": "param",
             "target": "temperature",
             "action": "increase",
             "step": 0.1,
             "max": 1.5,
-            "reason": f"Score plateau for {analysis['episodes']} episodes",
+            "reason": f"{analysis['top_action']} at {analysis['top_action_pct']:.0%} — increase diversity",
         })
 
-    # 3. Mario death clustering
-    if game == "super_mario" and analysis.get("failure_zone"):
-        zone = analysis["failure_zone"]
-        deaths = analysis["failure_zone_deaths"]
-        total = analysis["failure_zone_total_deaths"]
-        changes.append({
-            "type": "prompt",
-            "target": "DEFAULT_GOAL",
-            "action": "append",
-            "text": f" CRITICAL: You repeatedly die at {zone} ({deaths}/{total} deaths). Use Jump Level 4-6 to clear this obstacle.",
-            "reason": f"Death cluster: {deaths}/{total} at {zone}",
-        })
+    # ── Game-specific structural changes ───────────────────────────
 
-    # 4. Pokemon map stagnation
-    if game == "pokemon_red" and analysis.get("map_stuck"):
-        maps = ", ".join(analysis.get("maps_visited", []))
-        changes.append({
-            "type": "prompt",
-            "target": "DEFAULT_GOAL",
-            "action": "append",
-            "text": f" You are stuck on [{maps}]. Explore new areas — move to exits, use doors, talk to NPCs to progress.",
-            "reason": f"Stuck on {analysis['map_count']} maps for {analysis['total_steps']} steps",
-        })
+    if game == "super_mario":
+        # Death clustering → lower theta so bayesian avoids fatal zones
+        if analysis.get("failure_zone"):
+            deaths = analysis["failure_zone_deaths"]
+            total = analysis.get("failure_zone_total_deaths", deaths)
+            if deaths / max(total, 1) > 0.3:
+                changes.append({
+                    "type": "param",
+                    "target": "macla_max_theta",
+                    "action": "decrease",
+                    "step": 0.03,
+                    "min": 0.10,
+                    "reason": f"Deaths at {analysis['failure_zone']} ({deaths}/{total}) — tighten procedure selection",
+                })
 
-    # 5. Pokemon no flag progress
-    if game == "pokemon_red" and analysis.get("max_flags", 0) <= 1 and analysis["total_steps"] > 100:
-        changes.append({
-            "type": "prompt",
-            "target": "DEFAULT_GOAL",
-            "action": "append",
-            "text": " Focus on storyline progression: defeat gym leaders, collect badges, explore new routes.",
-            "reason": f"Only {analysis.get('max_flags', 0)} flags in {analysis['total_steps']} steps",
-        })
+    elif game == "twenty_fourty_eight":
+        # Action imbalance → increase theta_base to force more fallback diversity
+        if analysis.get("action_imbalance"):
+            changes.append({
+                "type": "param",
+                "target": "macla_theta_base",
+                "action": "increase",
+                "step": 0.05,
+                "max": 0.45,
+                "reason": f"Action imbalance {analysis.get('direction_balance', {})} — more fallback for diversity",
+            })
+        # Low max tile → faster theta decay to let procedures develop
+        if analysis.get("max_tile", 0) < 128 and total_steps > 50:
+            changes.append({
+                "type": "param",
+                "target": "macla_theta_decay",
+                "action": "increase",
+                "step": 0.001,
+                "max": 0.008,
+                "reason": f"Max tile {analysis.get('max_tile', 0)} — faster procedure activation",
+            })
 
-    # 6. 2048 action imbalance
-    if game == "twenty_fourty_eight" and analysis.get("action_imbalance"):
-        balance = analysis.get("direction_balance", {})
-        changes.append({
-            "type": "prompt",
-            "target": "DEFAULT_GOAL",
-            "action": "append",
-            "text": " Use all 4 directions strategically. Build tiles in a corner pattern: prefer down+right, then sweep left/up.",
-            "reason": f"Action imbalance: {balance}",
-        })
-
-    # 7. 2048 low max tile
-    if game == "twenty_fourty_eight" and analysis.get("max_tile", 0) < 128 and analysis["total_steps"] > 50:
-        changes.append({
-            "type": "prompt",
-            "target": "DEFAULT_GOAL",
-            "action": "append",
-            "text": " Keep your highest tile in a corner. Chain merges by keeping tiles in descending order along edges.",
-            "reason": f"Max tile only {analysis.get('max_tile', 0)} after {analysis['total_steps']} steps",
-        })
-
-    # 8. Theta adjustments from existing propose_next_params (kept for continuity)
+    elif game == "pokemon_red":
+        # Map stagnation → lower warmup so procedures activate sooner
+        if analysis.get("map_stuck"):
+            changes.append({
+                "type": "param",
+                "target": "macla_warmup_steps",
+                "action": "decrease",
+                "step": 3,
+                "min": 0,
+                "reason": f"Stuck on {analysis.get('map_count', 0)} maps — reduce warmup",
+            })
+        # No flags → increase theta base (more LLM fallback, less bad procedures)
+        if analysis.get("max_flags", 0) <= 1 and total_steps > 100:
+            changes.append({
+                "type": "param",
+                "target": "macla_theta_base",
+                "action": "increase",
+                "step": 0.05,
+                "max": 0.50,
+                "reason": f"Only {analysis.get('max_flags', 0)} flags — prefer LLM fallback",
+            })
 
     return changes
 

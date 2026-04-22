@@ -1,0 +1,1 @@
+{"run_id": "20260426_204538", "started_at": "2026-04-26T20:45:57.317281", "games": ["twenty_fourty_eight", "super_mario", "pokemon_red"], "description": "daemon: gemma-4 / A100-40GB / all 3 games | max_steps 200 | per-game triage | map-transition reward | wandb online | iter 1 | no param changes"}
