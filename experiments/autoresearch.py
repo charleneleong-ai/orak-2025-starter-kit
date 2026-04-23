@@ -610,6 +610,7 @@ def run(
     games: list[str] = typer.Option(ALL_GAMES, "--games", help="Games to optimise"),
     dry_run: bool = typer.Option(False, help="Only propose params, don't run"),
     config_type: str = typer.Option("unified_macla", help="YAML config type to modify"),
+    note: str = typer.Option("", help="Extra context to prepend to experiment description (e.g. 'OnlineAgentEvaluator enabled')"),
 ):
     """Run the autoresearch optimisation loop."""
     print(f"Autoresearch loop: config={config}, tag={tag}, max_iterations={max_iterations}")
@@ -648,7 +649,15 @@ def run(
             else:
                 print(f"\n  {game}: no changes (at boundary)")
 
-        description = f"auto iter {iteration + 1}: {'; '.join(param_summaries)}" if param_summaries else f"auto iter {iteration + 1}: no changes"
+        desc_parts = []
+        if note:
+            desc_parts.append(note)
+        desc_parts.append(f"iter {iteration + 1}")
+        if param_summaries:
+            desc_parts.append("; ".join(param_summaries))
+        else:
+            desc_parts.append("no param changes")
+        description = " | ".join(desc_parts)
         print(f"\nDescription: {description}")
 
         if dry_run:
