@@ -105,30 +105,38 @@ class OnlineAgentEvaluator:
     def _extract_2048(self, state: str) -> dict:
         score = self._find_float(r"[Ss]core:?\s*(\d+\.?\d*)", state) or 0
         max_tile = self._find_int(r"[Mm]ax.?[Tt]ile:?\s*(\d+)", state) or 0
-        # Try to extract board state
-        board_str = state if "board" in state.lower() else ""
-        return {"score": score, "max_tile": max_tile, "board": board_str}
+        # Count empty cells from board representation
+        empty_cells = state.count(", 0,") + state.count("[0,") + state.count(", 0]") + state.count("[0]")
+        return {"score": score, "max_tile": max_tile, "empty_cells": empty_cells}
 
     def _reward_2048(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
         if is_fatal:
-            return -1.0
+            return -1.5
 
         reward = 0.0
-        # Score delta (main signal for 2048)
+        # Score delta (main signal — reward merges proportionally)
         score_delta = cur.get("score", 0) - prev.get("score", 0)
-        reward += score_delta / 500.0
+        reward += score_delta / 200.0  # More sensitive (was /500)
 
         # Max tile increase (big bonus for doubling)
         prev_tile = prev.get("max_tile", 0)
         cur_tile = cur.get("max_tile", 0)
         if cur_tile > prev_tile and prev_tile > 0:
-            reward += 1.0
+            reward += 1.5  # Strong signal for tile doubling
 
-        # Board stuck (no score change)
+        # Empty cells: reward freeing space, penalize filling board
+        prev_empty = prev.get("empty_cells", 0)
+        cur_empty = cur.get("empty_cells", 0)
+        if cur_empty > prev_empty:
+            reward += 0.3  # Freed a cell via merge
+        elif cur_empty < prev_empty - 1:
+            reward -= 0.2  # Board getting crowded
+
+        # Board stuck (no score change = no merges happened)
         if score_delta == 0 and not is_fatal:
             self._stagnation_count += 1
             if self._stagnation_count >= 3:
-                reward -= 0.3
+                reward -= 0.5  # Stronger stagnation penalty
         else:
             self._stagnation_count = 0
 
