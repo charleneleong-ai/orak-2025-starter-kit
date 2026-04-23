@@ -90,10 +90,33 @@ GAME_LOG_DIR = Path(__file__).parent.parent / "game_logs"
 ALL_GAMES = ["super_mario", "twenty_fourty_eight", "pokemon_red"]
 
 
+def normalize_eval_score(game: str, eval_score: float, game_score: float) -> float:
+    """Normalize evaluation scores to 0-100 scale for cross-game comparison.
+
+    Server returns different scales per game:
+    - Mario: already 0-100 (x_pos progress %)
+    - 2048: 0-1 fraction (game_score/20000) → multiply by 100
+    - Pokemon: raw flag count (0-7) → (flags/7)*100
+    """
+    if game == "twenty_fourty_eight":
+        # Server returns fraction; also compute from game_score as fallback
+        if eval_score < 1.0:
+            return eval_score * 100
+        return min(eval_score, 100.0)
+    elif game == "pokemon_red":
+        # Server returns raw flag count
+        if eval_score <= 7:
+            return (eval_score / 7) * 100
+        return min(eval_score, 100.0)
+    # Mario: already 0-100
+    return eval_score
+
+
 def extract_run_results(run_id: str, games: list[str] | None = None) -> dict[str, dict]:
     """Parse game_logs/<game>/<run_id>/game_states.jsonl for final scores.
 
     Returns dict[game] -> {evaluation_score, game_score, steps, episodes, max_eval}.
+    Scores are normalized to 0-100 scale.
     """
     games = games or ALL_GAMES
     results = {}
@@ -108,9 +131,12 @@ def extract_run_results(run_id: str, games: list[str] | None = None) -> dict[str
         last = entries[-1]
         # Count episodes (iteration resets to 1 at episode start)
         episodes = sum(1 for i, e in enumerate(entries) if i > 0 and e["iteration"] <= entries[i - 1]["iteration"])
-        max_eval = max(e["evaluation_score"] for e in entries)
+        # Normalize to 0-100
+        max_eval_raw = max(e["evaluation_score"] for e in entries)
+        max_game_score = max(e.get("game_score", 0) for e in entries)
+        max_eval = normalize_eval_score(game, max_eval_raw, max_game_score)
         results[game] = {
-            "evaluation_score": last["evaluation_score"],
+            "evaluation_score": normalize_eval_score(game, last["evaluation_score"], last.get("game_score", 0)),
             "game_score": last.get("game_score", 0),
             "steps": len(entries),
             "episodes": episodes,
