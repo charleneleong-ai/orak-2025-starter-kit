@@ -524,8 +524,11 @@ def run_experiment(config_name: str, games: list[str]) -> str:
     print(f"Running: {' '.join(cmd)}")
     print(f"{'='*60}\n")
 
+    # Disable weave to prevent thread leak from broken SDK upgrade
+    env = {**__import__("os").environ, "WEAVE_ENABLED": "false"}
+
     start = time.time()
-    result = subprocess.run(cmd, cwd=str(ROOT), capture_output=False)
+    result = subprocess.run(cmd, cwd=str(ROOT), capture_output=False, env=env)
     elapsed = (time.time() - start) / 60
 
     if result.returncode != 0:
