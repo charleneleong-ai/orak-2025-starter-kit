@@ -130,14 +130,6 @@ class LocalConfig(AgentConfig):
     gpu_memory_utilization: float = 0.90
     quantization: str = ""  # awq, gptq, fp8, or empty for none
     max_model_len: int = 8192
-    # MACLA tuning (per-game overrides via YAML)
-    macla_max_theta: float = 0.40
-    macla_min_theta: float = 0.05
-    macla_theta_base: float = 0.30
-    macla_theta_decay: float = 0.002
-    macla_warmup_steps: int = 0
-    macla_n_min_s: int = 3
-    macla_n_min_f: int = 3
 
     def __post_init__(self):
         # Env var overrides for easy CLI switching
@@ -167,13 +159,6 @@ class LocalConfig(AgentConfig):
             "quantization": self.quantization,
             "max_model_len": self.max_model_len,
             "track": self.track,
-            "macla_max_theta": self.macla_max_theta,
-            "macla_min_theta": self.macla_min_theta,
-            "macla_theta_base": self.macla_theta_base,
-            "macla_theta_decay": self.macla_theta_decay,
-            "macla_warmup_steps": self.macla_warmup_steps,
-            "macla_n_min_s": self.macla_n_min_s,
-            "macla_n_min_f": self.macla_n_min_f,
         }
 
 

@@ -18,9 +18,3 @@ server_type: "vllm"            # vllm | ollama | mlx
 max_tokens: 16384
 game_config_path: "twenty_fourty_eight"
 track: "TRACK2"
-# MACLA tuning — same as Gemini baseline
-macla_max_theta: 0.35
-macla_min_theta: 0.05
-macla_theta_base: 0.3
-macla_theta_decay: 0.005
-macla_warmup_steps: 10

@@ -14,8 +14,3 @@ server_type: "vllm"            # vllm | ollama | mlx
 max_tokens: 16384               # Headroom for thinking models (Qwen3, R1)
 game_config_path: "pokemon_red"
 track: "TRACK2"
-# MACLA tuning — same as Gemini baseline
-macla_max_theta: 0.5
-macla_min_theta: 0.17
-macla_theta_base: 0.4
-macla_warmup_steps: 13

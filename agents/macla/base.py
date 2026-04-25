@@ -122,7 +122,6 @@ class BaseMaclaAgent(BaseModel):
             postcondition_extractor=self.extract_postconditions,
             spatial_pattern_extractor=getattr(self, 'extract_spatial_patterns', None),
             precondition_extractor=self.extract_preconditions,
-            macla_config=self._build_macla_config(),
         )
 
     @abstractmethod

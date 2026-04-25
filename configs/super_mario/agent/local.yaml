@@ -14,8 +14,3 @@ server_type: "vllm"            # vllm | ollama | mlx
 max_tokens: 16384               # Headroom for thinking models (Qwen3, R1)
 game_config_path: "super_mario"
 track: "TRACK2"
-# MACLA tuning — same as Gemini baseline
-macla_max_theta: 0.3
-macla_min_theta: 0.07
-macla_theta_base: 0.25
-macla_warmup_steps: 8
