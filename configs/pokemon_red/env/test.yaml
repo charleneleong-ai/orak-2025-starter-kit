@@ -1,0 +1,8 @@
+# Fast smoke-test config for Pokemon Red — small budget for local inference.
+show_graphic: true
+log_path: ./logs
+task: "Become the Pokemon League Champion"
+input_modality: "text_image"
+env_name: "PokemonRed"
+max_episodes: 1
+max_steps: 10

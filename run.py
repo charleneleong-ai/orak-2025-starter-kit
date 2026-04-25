@@ -23,6 +23,8 @@ class ExperimentConfigName(StrEnum):
     POETIQ = "poetiq"
     MACLA = "macla"
     UNIFIED_MACLA = "unified_macla"
+    LOCAL = "local"
+    LOCAL_TEST = "local_test"
 
 
 load_dotenv()

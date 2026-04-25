@@ -70,6 +70,20 @@ dependencies = [
     "wandb>=0.24.0",
     "weave>=0.52.25",
 ]
+
+[project.optional-dependencies]
+# Local inference servers (opt-in, platform-specific)
+# Mac/Apple Silicon: pip install -e ".[local-mac]"
+# Linux/GPU:         pip install -e ".[local-gpu]"
+# NOTE: mlx-lm bumps transformers to 5.x which may conflict with the
+# pinned 4.57.1. Install in a separate venv if conflicts arise.
+local-mac = [
+    "mlx-lm>=0.31.0; sys_platform == 'darwin'",
+]
+local-gpu = [
+    "vllm>=0.6.0; sys_platform == 'linux'",
+]
+
 [tool.setuptools.packages.find]
 include = ["agents", "config", "evaluation_utils"]
 
