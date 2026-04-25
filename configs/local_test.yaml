@@ -1,0 +1,24 @@
+# @package _global_
+#
+# Fast smoke-test variant of `local.yaml`.
+# Same agent config (local model via vLLM/Ollama/MLX) but with tiny env budget
+# (1 episode, 10 steps) for quick integration testing.
+#
+# Usage:
+#   python run.py -c local_test --local --games twenty_fourty_eight
+
+ENV: ${oc.env:ENV, "dev"}
+CWD: ${hydra:runtime.cwd}
+LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
+
+defaults:
+  - _self_
+  - twenty_fourty_eight: base
+  - super_mario: base
+  - pokemon_red: base
+  - override twenty_fourty_eight/agent: local
+  - override super_mario/agent: local
+  - override pokemon_red/agent: local
+  - override twenty_fourty_eight/env: test
+  - override super_mario/env: test
+  - override pokemon_red/env: test

@@ -1,0 +1,8 @@
+# Fast smoke-test config for Super Mario — small budget for local inference.
+show_graphic: true
+log_path: ./logs
+task: "Reach the flag at the end of World 1-1"
+input_modality: "text_image"
+env_name: "SuperMario"
+max_episodes: 1
+max_steps: 10

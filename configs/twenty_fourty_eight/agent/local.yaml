@@ -1,0 +1,20 @@
+# Local model config for 2048
+#
+# Backends (server_type):
+#   vllm   — A100/H100 GPU serving (default). Best throughput.
+#   ollama — Easy local Mac/Linux. Uses MLX on Apple Silicon.
+#   mlx    — Max perf on Apple Silicon via mlx-lm.
+#
+# Override at runtime (no YAML edit needed):
+#   LOCAL_MODEL=qwen3:8b LOCAL_BASE_URL=http://localhost:11434/v1 python run.py -c local ...
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "Qwen/Qwen3-32B"       # vLLM: HF repo name | Ollama: qwen3:8b | MLX: mlx-community/Qwen3-8B-4bit
+temperature: 0.7
+server_type: "vllm"            # vllm | ollama | mlx
+# Game agents need thinking for strategic reasoning. Size max_tokens to fit
+# both internal reasoning AND the structured JSON action. 16384 is safe;
+# increase if you see "Could not parse response content as the length limit
+# was reached" errors.
+max_tokens: 16384
+game_config_path: "twenty_fourty_eight"
+track: "TRACK2"

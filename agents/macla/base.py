@@ -14,7 +14,7 @@ import wandb
 from langchain_google_vertexai import ChatVertexAI
 from langchain_openai import ChatOpenAI
 from loguru import logger
-from config.agent_config import GeminiConfig, OpenAIConfig
+from config.agent_config import GeminiConfig, LocalConfig, OpenAIConfig
 from pydantic import BaseModel
 from agents.macla.macla_lib import LLMMACLAAgent
 
@@ -46,7 +46,9 @@ class BaseMaclaAgent(BaseModel):
     
     def _init_macla_agent(self):
         """Initialize the MACLA agent based on config type."""
-        if isinstance(self.config, GeminiConfig):
+        if isinstance(self.config, LocalConfig):
+            self._init_local_macla()
+        elif isinstance(self.config, GeminiConfig):
             self._init_gemini_macla()
         elif isinstance(self.config, OpenAIConfig):
             self._init_openai_macla()
@@ -93,7 +95,35 @@ class BaseMaclaAgent(BaseModel):
             spatial_pattern_extractor=getattr(self, 'extract_spatial_patterns', None),
             precondition_extractor=self.extract_preconditions
         )
-    
+
+    def _init_local_macla(self):
+        """Initialize MACLA with a local model via OpenAI-compatible API (vLLM, Ollama, MLX)."""
+        extra_body = self.config.extra_body or {}
+        logger.info(
+            f"Initializing local model: {self.config.model} "
+            f"via {self.config.server_type} at {self.config.base_url} "
+            f"(vision={self.config.supports_vision}, extra_body={extra_body})"
+        )
+        self._supports_vision = self.config.supports_vision
+        llm_kwargs = dict(
+            model=self.config.model,
+            api_key=self.config.api_key,
+            base_url=self.config.base_url,
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+        )
+        if extra_body:
+            llm_kwargs["extra_body"] = extra_body
+        self._llm = ChatOpenAI(**llm_kwargs)
+        self._macla_agent = LLMMACLAAgent(
+            generator=self._llm,
+            fallback_generator=self._base_fallback,
+            context_extractor=self._extract_context,
+            postcondition_extractor=self.extract_postconditions,
+            spatial_pattern_extractor=getattr(self, 'extract_spatial_patterns', None),
+            precondition_extractor=self.extract_preconditions,
+        )
+
     @abstractmethod
     def _extract_context(self, observation: str) -> str:
         """

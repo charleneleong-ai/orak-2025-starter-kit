@@ -237,8 +237,11 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             prev_state_str=getattr(self, "_prev_state_str", ""),
         ))
 
-        user_content = [{"type": "text", "text": user_text}]
-        if obs_image:
+        # Text-only models (most local models): pass plain string content.
+        # Vision models (Gemini, OpenAI gpt-4o, Llama-4-Scout): pass list with image.
+        supports_vision = getattr(self, "_supports_vision", True)
+        if supports_vision and obs_image:
+            user_content = [{"type": "text", "text": user_text}]
             buffered = io.BytesIO()
             obs_image.save(buffered, format="JPEG")
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
@@ -246,10 +249,13 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                 "type": "image_url",
                 "image_url": {"url": f"data:image/jpeg;base64,{img_str}"},
             })
+            human_content = user_content
+        else:
+            human_content = user_text
 
         messages = [
             SystemMessage(content=self._adapter.SYSTEM_PROMPT),
-            HumanMessage(content=user_content),
+            HumanMessage(content=human_content),
         ]
 
         try:

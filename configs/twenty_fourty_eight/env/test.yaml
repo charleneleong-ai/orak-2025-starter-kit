@@ -1,0 +1,10 @@
+# Fast smoke-test config for 2048 — small budget for local inference.
+# Use with: --env-overrides twenty_fourty_eight/env=test
+show_graphic: true
+log_path: ./logs
+target_tile: 2048
+task: "Merge Tiles to Reach the Target"
+input_modality: "text_image"
+env_name: "TwentyFourtyEight"
+max_episodes: 1
+max_steps: 10
