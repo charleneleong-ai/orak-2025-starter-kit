@@ -98,19 +98,23 @@ class BaseMaclaAgent(BaseModel):
 
     def _init_local_macla(self):
         """Initialize MACLA with a local model via OpenAI-compatible API (vLLM, Ollama, MLX)."""
+        extra_body = self.config.extra_body or {}
         logger.info(
             f"Initializing local model: {self.config.model} "
             f"via {self.config.server_type} at {self.config.base_url} "
-            f"(vision={self.config.supports_vision})"
+            f"(vision={self.config.supports_vision}, extra_body={extra_body})"
         )
         self._supports_vision = self.config.supports_vision
-        self._llm = ChatOpenAI(
+        llm_kwargs = dict(
             model=self.config.model,
             api_key=self.config.api_key,
             base_url=self.config.base_url,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
         )
+        if extra_body:
+            llm_kwargs["extra_body"] = extra_body
+        self._llm = ChatOpenAI(**llm_kwargs)
         self._macla_agent = LLMMACLAAgent(
             generator=self._llm,
             fallback_generator=self._base_fallback,

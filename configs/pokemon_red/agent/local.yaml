@@ -11,7 +11,7 @@ class_name: "agents.macla.unified.UnifiedMaclaAgent"
 model: "Qwen/Qwen3-32B"       # vLLM: HF repo name | Ollama: qwen3:8b | MLX: mlx-community/Qwen3-8B-4bit
 temperature: 0.7
 server_type: "vllm"            # vllm | ollama | mlx
-max_tokens: 2048
+max_tokens: 8192               # Headroom for thinking models (Qwen3, R1)
 game_config_path: "pokemon_red"
 track: "TRACK2"
 # MACLA tuning — same as Gemini baseline

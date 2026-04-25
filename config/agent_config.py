@@ -4,7 +4,7 @@ All agent configurations are defined here and can be logged to wandb.
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, Optional, Any
 from pydantic import ConfigDict
 
@@ -119,6 +119,13 @@ class LocalConfig(AgentConfig):
     # (e.g. Qwen2.5-VL, Llama-4-Scout, Pixtral). Otherwise the agent will
     # send images as base64 data URLs which most servers reject.
     supports_vision: bool = False
+    # Vendor-specific extras forwarded to the inference server via OpenAI
+    # `extra_body`. Common cases:
+    #   Qwen3 thinking models — disable thinking to avoid burning tokens
+    #     on internal reasoning before structured output:
+    #     extra_body: {"chat_template_kwargs": {"enable_thinking": false}}
+    #   vLLM guided decoding, top_k, repetition_penalty, etc.
+    extra_body: dict = field(default_factory=dict)
     # vLLM-specific (ignored by Ollama/MLX)
     tensor_parallel_size: int = 1  # num GPUs for tensor parallelism
     gpu_memory_utilization: float = 0.90
@@ -154,6 +161,7 @@ class LocalConfig(AgentConfig):
             "base_url": self.base_url,
             "server_type": self.server_type,
             "supports_vision": self.supports_vision,
+            "extra_body": self.extra_body,
             "max_tokens": self.max_tokens,
             "tensor_parallel_size": self.tensor_parallel_size,
             "gpu_memory_utilization": self.gpu_memory_utilization,
