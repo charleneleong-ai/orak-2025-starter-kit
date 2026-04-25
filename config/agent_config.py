@@ -120,11 +120,10 @@ class LocalConfig(AgentConfig):
     # send images as base64 data URLs which most servers reject.
     supports_vision: bool = False
     # Vendor-specific extras forwarded to the inference server via OpenAI
-    # `extra_body`. Common cases:
-    #   Qwen3 thinking models — disable thinking to avoid burning tokens
-    #     on internal reasoning before structured output:
-    #     extra_body: {"chat_template_kwargs": {"enable_thinking": false}}
-    #   vLLM guided decoding, top_k, repetition_penalty, etc.
+    # `extra_body`. Examples:
+    #   vLLM guided decoding: {"guided_json": {...}}
+    #   Sampling overrides:   {"top_k": 40, "repetition_penalty": 1.05}
+    #   Qwen3 chat template:  {"chat_template_kwargs": {...}}
     extra_body: dict = field(default_factory=dict)
     # vLLM-specific (ignored by Ollama/MLX)
     tensor_parallel_size: int = 1  # num GPUs for tensor parallelism

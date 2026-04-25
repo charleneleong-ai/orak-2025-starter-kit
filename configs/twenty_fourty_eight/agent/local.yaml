@@ -11,10 +11,11 @@ class_name: "agents.macla.unified.UnifiedMaclaAgent"
 model: "Qwen/Qwen3-32B"       # vLLM: HF repo name | Ollama: qwen3:8b | MLX: mlx-community/Qwen3-8B-4bit
 temperature: 0.7
 server_type: "vllm"            # vllm | ollama | mlx
-# Thinking models (Qwen3, DeepSeek-R1) burn tokens on internal reasoning before
-# producing JSON. Use 8192+ to give thinking room AND fit structured output.
-# Drop to 2048 for non-thinking models (Mistral, Llama 3) to save latency.
-max_tokens: 8192
+# Game agents need thinking for strategic reasoning. Size max_tokens to fit
+# both internal reasoning AND the structured JSON action. 16384 is safe;
+# increase if you see "Could not parse response content as the length limit
+# was reached" errors.
+max_tokens: 16384
 game_config_path: "twenty_fourty_eight"
 track: "TRACK2"
 # MACLA tuning — same as Gemini baseline

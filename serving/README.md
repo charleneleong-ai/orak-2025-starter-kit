@@ -12,6 +12,21 @@ Three supported backends:
 
 All expose the same OpenAI-compatible chat/completions API — the MACLA agent code is identical across backends.
 
+## Thinking models and `max_tokens`
+
+Game agents need chain-of-thought to learn — strategic decisions, reading
+game state, planning ahead. Use thinking models (Qwen3, DeepSeek-R1) and
+size `max_tokens` to fit both internal reasoning AND the structured JSON
+action: **16384 is a safe default**.
+
+If a step exits with `Could not parse response content as the length limit
+was reached`, increase `max_tokens` further. Don't disable thinking —
+it's how the agent learns from each game state.
+
+**Hardware caveat**: Qwen3 thinking on Apple Silicon is slow (~3 min/step
+for 8B-4bit). Use Mac for plumbing tests; run real game evaluations on
+A100/H100 via vLLM where thinking + 16k tokens completes in seconds.
+
 ## A100/H100 (vLLM)
 
 Production GPU serving with continuous batching, PagedAttention, tensor parallelism, and FP8 quantization.
