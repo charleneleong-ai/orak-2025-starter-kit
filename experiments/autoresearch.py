@@ -39,6 +39,7 @@ from experiments.experiment_progress import (
     extract_run_results,
     load_results,
     log_experiment,
+    normalize_eval_score,
     plot_progress,
 )
 
@@ -547,8 +548,6 @@ def _triage_check(
     baseline_scores: dict[str, float],
 ) -> str | None:
     """Check if any game triggers a triage kill. Returns kill_reason or None."""
-    from experiments.experiment_progress import normalize_eval_score
-
     for game in games:
         entries = _read_game_states(run_id, game)
         if not entries:
@@ -638,7 +637,6 @@ def _cleanup_threads():
     threads. Without cleanup, asyncio shutdown in subsequent runs hits
     'RuntimeError: can't start new thread'.
     """
-    import os as _os
     patterns = ["wandb-core", "wandb-internal", "game_server", "grpc"]
     killed = 0
     for pat in patterns:
@@ -653,9 +651,9 @@ def _cleanup_threads():
                 try:
                     pid = int(pid_str)
                     # Don't kill our own process or its parent
-                    if pid in (_os.getpid(), _os.getppid()):
+                    if pid in (os.getpid(), os.getppid()):
                         continue
-                    _os.kill(pid, signal.SIGTERM)
+                    os.kill(pid, signal.SIGTERM)
                     killed += 1
                 except (ValueError, ProcessLookupError, PermissionError):
                     pass
