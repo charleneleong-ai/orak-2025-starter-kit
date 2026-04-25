@@ -631,6 +631,41 @@ def _clear_sidecar(tag: str):
         sidecar.unlink()
 
 
+def _cleanup_threads():
+    """Kill leaked wandb-core / game-server processes that exhaust threads.
+
+    wandb 0.26+ spawns dozens of wandb-core helper processes that hold OS
+    threads. Without cleanup, asyncio shutdown in subsequent runs hits
+    'RuntimeError: can't start new thread'.
+    """
+    import os as _os
+    patterns = ["wandb-core", "wandb-internal", "game_server", "grpc"]
+    killed = 0
+    for pat in patterns:
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", pat],
+                capture_output=True, text=True, timeout=5,
+            )
+            for pid_str in result.stdout.strip().split("\n"):
+                if not pid_str.strip():
+                    continue
+                try:
+                    pid = int(pid_str)
+                    # Don't kill our own process or its parent
+                    if pid in (_os.getpid(), _os.getppid()):
+                        continue
+                    _os.kill(pid, signal.SIGTERM)
+                    killed += 1
+                except (ValueError, ProcessLookupError, PermissionError):
+                    pass
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+    if killed:
+        print(f"  Cleaned up {killed} leaked processes")
+        time.sleep(2)  # Give OS time to reclaim threads
+
+
 def run_experiment(
     config_name: str,
     games: list[str],
@@ -653,7 +688,7 @@ def run_experiment(
     print(f"Triage: plateau={TRIAGE_SCORE_PLATEAU_STEPS}steps, no_learn={TRIAGE_NO_LEARN_EPISODES}eps, baseline_gate={TRIAGE_BASELINE_FACTOR}")
     print(f"{'='*60}\n")
 
-    env = {**os.environ, "WEAVE_ENABLED": "false"}
+    env = os.environ.copy()
     baseline_scores = baseline_scores or {}
 
     start = time.time()
@@ -697,6 +732,9 @@ def run_experiment(
 
     elapsed = (time.time() - start) / 60
     _clear_sidecar(tag)
+
+    # Clean up wandb-core / game-server processes that hold OS threads
+    _cleanup_threads()
 
     if not run_id:
         run_id = _find_run_id(games)
