@@ -233,15 +233,17 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None):
             "KEEP": {"color": "#2ecc71", "size": 12, "opacity": 1.0, "line_color": "black", "symbol": "circle", "text_color": "#1a7a3a"},
             "BASELINE": {"color": "#2ecc71", "size": 12, "opacity": 1.0, "line_color": "black", "symbol": "circle", "text_color": "#1a7a3a"},
             "RUNNING": {"color": "#f39c12", "size": 10, "opacity": 1.0, "line_color": "#c27d0e", "symbol": "diamond", "text_color": "#c27d0e"},
+            "EARLY_KILL": {"color": "#e74c3c", "size": 10, "opacity": 0.8, "line_color": "#c0392b", "symbol": "x", "text_color": "#c0392b"},
+            "CRASH": {"color": "#e74c3c", "size": 10, "opacity": 0.8, "line_color": "#c0392b", "symbol": "x", "text_color": "#c0392b"},
         }
-        legend_added = {"disc": False, "kept": False, "run": False}
+        legend_added = {"disc": False, "kept": False, "run": False, "kill": False}
 
         for j, (x, y, s, en, d, n, u, gs, st, rt) in enumerate(zip(
             xs, ys, statuses, exp_nums, descriptions, notes_list, wandb_urls, game_scores, steps_list, runtimes
         )):
             cfg = status_config.get(s, status_config["DISCARD"])
-            legend_key = "disc" if s == "DISCARD" else ("run" if s == "RUNNING" else "kept")
-            legend_name = {"disc": "Discarded", "kept": "Kept", "run": "Running"}[legend_key]
+            legend_key = "kill" if s in ("EARLY_KILL", "CRASH") else ("disc" if s == "DISCARD" else ("run" if s == "RUNNING" else "kept"))
+            legend_name = {"disc": "Discarded", "kept": "Kept", "run": "Running", "kill": "Killed/Crashed"}[legend_key]
             show_legend = (i == 1) and not legend_added[legend_key]
             legend_added[legend_key] = True
 
@@ -346,6 +348,7 @@ class Status(str, Enum):
     BASELINE = "BASELINE"
     RUNNING = "RUNNING"
     CRASH = "CRASH"
+    EARLY_KILL = "EARLY_KILL"
 
 
 @app.command()

@@ -16,10 +16,14 @@ Usage:
     python experiments/autoresearch.py log-run --run-id 20260422_213143
 """
 import json
+import os
 import re
+import signal
 import subprocess
+import threading
 import time
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 import sys
@@ -509,8 +513,132 @@ def propose_next_params(game: str, results: list[dict], config_type: str = "unif
     return new_params
 
 
-def run_experiment(config_name: str, games: list[str]) -> str:
-    """Run an experiment and return the run_id."""
+# ── Triage Thresholds ──────────────────────────────────────────────
+
+TRIAGE_SCORE_PLATEAU_STEPS = 50    # Kill if max eval unchanged for N steps
+TRIAGE_NO_LEARN_EPISODES = 5       # Kill if no episode score improvement for N episodes
+TRIAGE_BASELINE_FACTOR = 0.5       # Kill if max_eval < baseline * factor after 100 steps
+TRIAGE_POLL_INTERVAL = 5           # Seconds between game_states.jsonl checks
+
+
+def _find_run_id(games: list[str]) -> str:
+    """Find the latest run_id from game_logs."""
+    game_log_dir = GAME_LOG_DIR / games[0]
+    if not game_log_dir.exists():
+        return ""
+    run_dirs = sorted(game_log_dir.iterdir(), key=lambda p: p.name, reverse=True)
+    return run_dirs[0].name if run_dirs else ""
+
+
+def _read_game_states(run_id: str, game: str) -> list[dict]:
+    """Read current game_states.jsonl for a running experiment."""
+    path = GAME_LOG_DIR / game / run_id / "game_states.jsonl"
+    if not path.exists():
+        return []
+    try:
+        return [json.loads(l) for l in path.read_text().strip().split("\n") if l]
+    except Exception:
+        return []
+
+
+def _triage_check(
+    run_id: str,
+    games: list[str],
+    baseline_scores: dict[str, float],
+) -> str | None:
+    """Check if any game triggers a triage kill. Returns kill_reason or None."""
+    from experiments.experiment_progress import normalize_eval_score
+
+    for game in games:
+        entries = _read_game_states(run_id, game)
+        if not entries:
+            continue
+
+        total = len(entries)
+        evals = [e.get("evaluation_score", 0) for e in entries]
+        max_eval_raw = max(evals) if evals else 0
+        max_eval = normalize_eval_score(game, max_eval_raw, max(e.get("game_score", 0) for e in entries))
+
+        # Count episodes
+        episode_scores = []
+        cur_max = 0
+        for i, e in enumerate(entries):
+            cur_max = max(cur_max, e.get("evaluation_score", 0))
+            if i > 0 and e["iteration"] <= entries[i - 1]["iteration"]:
+                episode_scores.append(cur_max)
+                cur_max = 0
+        if cur_max > 0:
+            episode_scores.append(cur_max)
+
+        # Triage 1: Score plateau — max eval unchanged for N steps
+        if total >= TRIAGE_SCORE_PLATEAU_STEPS:
+            recent = evals[-TRIAGE_SCORE_PLATEAU_STEPS:]
+            if max(recent) == min(recent):
+                return f"{game}: score plateau ({max_eval:.2f}%) for {TRIAGE_SCORE_PLATEAU_STEPS} steps"
+
+        # Triage 2: No episode improvement for N episodes
+        if len(episode_scores) >= TRIAGE_NO_LEARN_EPISODES:
+            last_n = episode_scores[-TRIAGE_NO_LEARN_EPISODES:]
+            best_before = max(episode_scores[:-TRIAGE_NO_LEARN_EPISODES]) if len(episode_scores) > TRIAGE_NO_LEARN_EPISODES else 0
+            if max(last_n) <= best_before:
+                return f"{game}: no improvement for {TRIAGE_NO_LEARN_EPISODES} episodes (best={normalize_eval_score(game, best_before, 0):.2f}%)"
+
+        # Triage 3: Baseline gate — below baseline*factor after 100 steps
+        baseline = baseline_scores.get(game, 0)
+        if total >= 100 and baseline > 0 and max_eval < baseline * TRIAGE_BASELINE_FACTOR:
+            return f"{game}: below baseline gate ({max_eval:.2f}% < {baseline * TRIAGE_BASELINE_FACTOR:.2f}%)"
+
+    return None
+
+
+def _relabel_last_as_early_kill(tag: str, kill_reason: str, games: list[str]):
+    """Patch recent result rows to EARLY_KILL with kill_reason."""
+    results_file = ROOT / "experiments" / tag / "results.jsonl"
+    if not results_file.exists():
+        return
+    lines = results_file.read_text().strip().split("\n")
+    if len(lines) < len(games):
+        return
+    # Patch last N entries (one per game)
+    for i in range(len(games)):
+        idx = len(lines) - 1 - i
+        if idx < 0:
+            break
+        entry = json.loads(lines[idx])
+        entry["status"] = "EARLY_KILL"
+        entry["notes"] = f"KILLED: {kill_reason}. " + entry.get("notes", "")
+        lines[idx] = json.dumps(entry)
+    results_file.write_text("\n".join(lines) + "\n")
+    print(f"  Relabelled last {len(games)} entries as EARLY_KILL: {kill_reason}")
+
+
+def _write_sidecar(tag: str, run_id: str, description: str, games: list[str]):
+    """Write current_run.json sidecar for live chart updates."""
+    sidecar_dir = ROOT / "experiments" / tag
+    sidecar_dir.mkdir(parents=True, exist_ok=True)
+    (sidecar_dir / "current_run.json").write_text(json.dumps({
+        "run_id": run_id,
+        "started_at": datetime.now().isoformat(),
+        "games": games,
+        "description": description,
+    }))
+
+
+def _clear_sidecar(tag: str):
+    """Remove current_run.json after run completes."""
+    sidecar = ROOT / "experiments" / tag / "current_run.json"
+    if sidecar.exists():
+        sidecar.unlink()
+
+
+def run_experiment(
+    config_name: str,
+    games: list[str],
+    baseline_scores: dict[str, float] | None = None,
+    tag: str = "macla",
+    description: str = "",
+) -> tuple[str, float]:
+    """Run an experiment with live triage monitoring. Returns (run_id, elapsed_min)."""
     cmd = [
         str(ROOT / ".venv" / "bin" / "python"),
         str(ROOT / "run.py"),
@@ -522,25 +650,66 @@ def run_experiment(config_name: str, games: list[str]) -> str:
 
     print(f"\n{'='*60}")
     print(f"Running: {' '.join(cmd)}")
+    print(f"Triage: plateau={TRIAGE_SCORE_PLATEAU_STEPS}steps, no_learn={TRIAGE_NO_LEARN_EPISODES}eps, baseline_gate={TRIAGE_BASELINE_FACTOR}")
     print(f"{'='*60}\n")
 
-    # Disable weave to prevent thread leak from broken SDK upgrade
-    env = {**__import__("os").environ, "WEAVE_ENABLED": "false"}
+    env = {**os.environ, "WEAVE_ENABLED": "false"}
+    baseline_scores = baseline_scores or {}
 
     start = time.time()
-    result = subprocess.run(cmd, cwd=str(ROOT), capture_output=False, env=env)
+    proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
+    kill_reason = None
+
+    # Wait for run_id to appear in game_logs
+    run_id = ""
+    for _ in range(60):
+        time.sleep(2)
+        candidate = _find_run_id(games)
+        # Only accept run IDs created after we started
+        if candidate and candidate >= datetime.now().strftime("%Y%m%d"):
+            run_id = candidate
+            break
+
+    if run_id:
+        _write_sidecar(tag, run_id, description, games)
+        print(f"  Run ID: {run_id} — triage monitoring active")
+
+    # Monitor loop: poll game_states.jsonl for triage signals
+    while proc.poll() is None:
+        time.sleep(TRIAGE_POLL_INTERVAL)
+        if not run_id:
+            candidate = _find_run_id(games)
+            if candidate and candidate >= datetime.now().strftime("%Y%m%d"):
+                run_id = candidate
+                _write_sidecar(tag, run_id, description, games)
+            continue
+
+        kill_reason = _triage_check(run_id, games, baseline_scores)
+        if kill_reason:
+            print(f"\n  TRIAGE KILL: {kill_reason}")
+            proc.send_signal(signal.SIGINT)
+            try:
+                proc.wait(timeout=120)
+            except subprocess.TimeoutExpired:
+                proc.terminate()
+                proc.wait(timeout=30)
+            break
+
     elapsed = (time.time() - start) / 60
+    _clear_sidecar(tag)
 
-    if result.returncode != 0:
-        print(f"Run failed with exit code {result.returncode}")
-        return ""
+    if not run_id:
+        run_id = _find_run_id(games)
 
-    # Find latest run_id from game_logs
-    game_log_dir = ROOT / "game_logs" / games[0]
-    run_dirs = sorted(game_log_dir.iterdir(), key=lambda p: p.name, reverse=True)
-    run_id = run_dirs[0].name if run_dirs else ""
-    print(f"\nRun completed in {elapsed:.1f}min — run_id: {run_id}")
-    return run_id
+    if kill_reason:
+        print(f"\n  EARLY KILL after {elapsed:.1f}min — {kill_reason}")
+        return run_id, elapsed
+    elif proc.returncode and proc.returncode != 0:
+        print(f"  Run failed with exit code {proc.returncode}")
+        return "", 0.0
+    else:
+        print(f"\n  Run completed in {elapsed:.1f}min — run_id: {run_id}")
+        return run_id, elapsed
 
 
 def log_run_results(
@@ -664,8 +833,9 @@ def run(
             print("\n[DRY RUN] Skipping experiment execution")
             continue
 
-        # Run experiment
-        run_id = run_experiment(config, games)
+        # Run experiment with triage monitoring
+        result = run_experiment(config, games, baseline_scores=best, tag=tag, description=description)
+        run_id, elapsed_min = result if isinstance(result, tuple) else (result, 0.0)
         if not run_id:
             print("Run failed, stopping loop")
             break
@@ -692,7 +862,12 @@ def run(
             description += " | " + "; ".join(change_summaries[:3])  # Cap for plot readability
 
         # Log results
-        run_results = log_run_results(run_id, games, description, tag, best)
+        run_results = log_run_results(run_id, games, description, tag, best, runtime_min=elapsed_min)
+
+        # If triage killed the run, relabel the logged entries
+        kill_reason = _triage_check(run_id, games, best) if run_id else None
+        if kill_reason:
+            _relabel_last_as_early_kill(tag, kill_reason, games)
 
         # Reload results for next iteration
         all_results = load_results(tag=tag)
