@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 TAG = "unified_macla"
+CONFIG_TYPE = "gemma"  # configs/<game>/agent/<CONFIG_TYPE>.yaml — embedded in chart metadata
 RESULTS = ROOT / "experiments" / TAG / "results.jsonl"
 PNG = ROOT / "experiments" / TAG / "progress.png"
 HTML = ROOT / "experiments" / TAG / "progress.html"
@@ -88,7 +89,7 @@ def _refresh_chart() -> bool:
         [str(venv_py), "-c",
          f"import sys; sys.path.insert(0, '{ROOT}'); "
          f"from experiments.experiment_progress import plot_progress; "
-         f"plot_progress(tag='{TAG}')"],
+         f"plot_progress(tag='{TAG}', config_type='{CONFIG_TYPE}')"],
         cwd=str(ROOT), capture_output=True, text=True,
     )
     if proc.returncode != 0:

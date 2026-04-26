@@ -145,12 +145,53 @@ def extract_run_results(run_id: str, games: list[str] | None = None) -> dict[str
     return results
 
 
-def plot_progress(filter_game: str | None = None, tag: str | None = None):
+def _read_agent_metadata(games: list[str], config_type: str) -> str:
+    """Read configs/<game>/agent/<config_type>.yaml for each game and build a
+    HTML-ish multi-line metadata block summarising model, backend, and MACLA params.
+    Returns empty string if no config can be read.
+    """
+    import yaml as _yaml
+    cfgs_root = Path(__file__).resolve().parent.parent / "configs"
+    blocks = []
+    for g in games:
+        p = cfgs_root / g / "agent" / f"{config_type}.yaml"
+        if not p.exists():
+            continue
+        try:
+            cfg = _yaml.safe_load(p.read_text()) or {}
+        except Exception:
+            continue
+        head_bits = []
+        if cfg.get("model"):
+            head_bits.append(f"<b>{cfg['model']}</b>")
+        if cfg.get("server_type"):
+            head_bits.append(cfg["server_type"])
+        if cfg.get("temperature") is not None:
+            head_bits.append(f"T={cfg['temperature']}")
+        if cfg.get("max_tokens"):
+            head_bits.append(f"max_tok={cfg['max_tokens']}")
+        head = " · ".join(head_bits)
+        macla_keys = ["macla_theta_base", "macla_max_theta", "macla_min_theta",
+                      "macla_theta_decay", "macla_warmup_steps"]
+        macla_bits = [f"{k.replace('macla_', '')}={cfg[k]}" for k in macla_keys if k in cfg]
+        macla_line = ", ".join(macla_bits)
+        blocks.append(
+            f"<b>{g.replace('_', ' ').title()}</b> ({config_type}.yaml)<br>"
+            f"&nbsp;&nbsp;{head}<br>"
+            f"&nbsp;&nbsp;<span style='color:#666'>{macla_line}</span>"
+        )
+    return "<br>".join(blocks)
+
+
+def plot_progress(filter_game: str | None = None, tag: str | None = None,
+                  config_type: str | None = None):
     """Plot autoresearch-style progress chart per game using Plotly.
 
     Args:
         filter_game: Only show this game
         tag: Load from experiments/<tag>/, use as plot title + output dir
+        config_type: If set, read configs/<game>/agent/<config_type>.yaml and
+            embed model/backend/MACLA params as a metadata annotation.
     """
     results = load_results(tag=tag)
 
@@ -314,14 +355,30 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None):
                     wandb_link = f"<a href='{WANDB_PROJECTS[game]}'>[W&B]</a>"
                     ann.text = f"{ann.text}<br><span style='font-size:11px;color:#666'>{EVAL_FORMULAS[game]} {wandb_link}</span>"
 
+    # Top margin / title — extra room when we add a config metadata box
+    metadata = _read_agent_metadata(games, config_type) if config_type else ""
+    top_margin = 220 if metadata else 80
+
     fig.update_layout(
         title=dict(text=plot_title, font=dict(size=20)),
-        height=650 * n_games,
-        margin=dict(t=80),
+        height=650 * n_games + (140 if metadata else 0),
+        margin=dict(t=top_margin),
         template="plotly_white",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         hovermode="closest",
     )
+
+    if metadata:
+        fig.add_annotation(
+            xref="paper", yref="paper", x=0.0, y=1.0,
+            xanchor="left", yanchor="bottom",
+            text=metadata, showarrow=False, align="left",
+            font=dict(size=11, color="#222"),
+            bgcolor="rgba(245,247,250,0.95)",
+            bordercolor="#dde",
+            borderwidth=1, borderpad=8,
+            xshift=0, yshift=40,
+        )
 
     # Save to experiments/<tag>/progress.html
     out_dir = _tag_dir(tag)
