@@ -86,6 +86,65 @@ def load_results(tag: str | None = None) -> list[dict]:
     return results
 
 
+GAME_LOG_DIR = Path(__file__).parent.parent / "game_logs"
+ALL_GAMES = ["super_mario", "twenty_fourty_eight", "pokemon_red"]
+
+
+def normalize_eval_score(game: str, eval_score: float, game_score: float) -> float:
+    """Normalize evaluation scores to 0-100 scale for cross-game comparison.
+
+    Server returns different scales per game:
+    - Mario: already 0-100 (x_pos progress %)
+    - 2048: 0-1 fraction (game_score/20000) → multiply by 100
+    - Pokemon: raw flag count (0-7) → (flags/7)*100
+    """
+    if game == "twenty_fourty_eight":
+        # Server returns fraction; also compute from game_score as fallback
+        if eval_score < 1.0:
+            return eval_score * 100
+        return min(eval_score, 100.0)
+    elif game == "pokemon_red":
+        # Server returns raw flag count
+        if eval_score <= 7:
+            return (eval_score / 7) * 100
+        return min(eval_score, 100.0)
+    # Mario: already 0-100
+    return eval_score
+
+
+def extract_run_results(run_id: str, games: list[str] | None = None) -> dict[str, dict]:
+    """Parse game_logs/<game>/<run_id>/game_states.jsonl for final scores.
+
+    Returns dict[game] -> {evaluation_score, game_score, steps, episodes, max_eval}.
+    Scores are normalized to 0-100 scale.
+    """
+    games = games or ALL_GAMES
+    results = {}
+    for game in games:
+        states_file = GAME_LOG_DIR / game / run_id / "game_states.jsonl"
+        if not states_file.exists():
+            continue
+        lines = states_file.read_text().strip().split("\n")
+        if not lines or not lines[0]:
+            continue
+        entries = [json.loads(l) for l in lines if l]
+        last = entries[-1]
+        # Count episodes (iteration resets to 1 at episode start)
+        episodes = sum(1 for i, e in enumerate(entries) if i > 0 and e["iteration"] <= entries[i - 1]["iteration"])
+        # Normalize to 0-100
+        max_eval_raw = max(e["evaluation_score"] for e in entries)
+        max_game_score = max(e.get("game_score", 0) for e in entries)
+        max_eval = normalize_eval_score(game, max_eval_raw, max_game_score)
+        results[game] = {
+            "evaluation_score": normalize_eval_score(game, last["evaluation_score"], last.get("game_score", 0)),
+            "game_score": last.get("game_score", 0),
+            "steps": len(entries),
+            "episodes": episodes,
+            "max_eval": max_eval,
+        }
+    return results
+
+
 def plot_progress(filter_game: str | None = None, tag: str | None = None):
     """Plot autoresearch-style progress chart per game using Plotly.
 
@@ -174,15 +233,17 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None):
             "KEEP": {"color": "#2ecc71", "size": 12, "opacity": 1.0, "line_color": "black", "symbol": "circle", "text_color": "#1a7a3a"},
             "BASELINE": {"color": "#2ecc71", "size": 12, "opacity": 1.0, "line_color": "black", "symbol": "circle", "text_color": "#1a7a3a"},
             "RUNNING": {"color": "#f39c12", "size": 10, "opacity": 1.0, "line_color": "#c27d0e", "symbol": "diamond", "text_color": "#c27d0e"},
+            "EARLY_KILL": {"color": "#e74c3c", "size": 10, "opacity": 0.8, "line_color": "#c0392b", "symbol": "x", "text_color": "#c0392b"},
+            "CRASH": {"color": "#e74c3c", "size": 10, "opacity": 0.8, "line_color": "#c0392b", "symbol": "x", "text_color": "#c0392b"},
         }
-        legend_added = {"disc": False, "kept": False, "run": False}
+        legend_added = {"disc": False, "kept": False, "run": False, "kill": False}
 
         for j, (x, y, s, en, d, n, u, gs, st, rt) in enumerate(zip(
             xs, ys, statuses, exp_nums, descriptions, notes_list, wandb_urls, game_scores, steps_list, runtimes
         )):
             cfg = status_config.get(s, status_config["DISCARD"])
-            legend_key = "disc" if s == "DISCARD" else ("run" if s == "RUNNING" else "kept")
-            legend_name = {"disc": "Discarded", "kept": "Kept", "run": "Running"}[legend_key]
+            legend_key = "kill" if s in ("EARLY_KILL", "CRASH") else ("disc" if s == "DISCARD" else ("run" if s == "RUNNING" else "kept"))
+            legend_name = {"disc": "Discarded", "kept": "Kept", "run": "Running", "kill": "Killed/Crashed"}[legend_key]
             show_legend = (i == 1) and not legend_added[legend_key]
             legend_added[legend_key] = True
 
@@ -287,6 +348,7 @@ class Status(str, Enum):
     BASELINE = "BASELINE"
     RUNNING = "RUNNING"
     CRASH = "CRASH"
+    EARLY_KILL = "EARLY_KILL"
 
 
 @app.command()

@@ -17,6 +17,7 @@ from loguru import logger
 from config.agent_config import GeminiConfig, LocalConfig, OpenAIConfig
 from pydantic import BaseModel
 from agents.macla.macla_lib import LLMMACLAAgent
+from agents.macla.online_evaluator import OnlineAgentEvaluator
 
 
 class BaseMaclaAgent(BaseModel):
@@ -55,6 +56,10 @@ class BaseMaclaAgent(BaseModel):
         else:
             logger.warning(f"Unsupported config type: {type(self.config)}. Defaulting to Gemini initialisation.")
             self._init_gemini_macla()
+
+        # Online evaluator for per-step reward shaping
+        game_name = getattr(self, '_game_name', 'unknown')
+        self._online_evaluator = OnlineAgentEvaluator(game_name=game_name)
     
     def _init_gemini_macla(self):
         """Initialize MACLA with Gemini/Vertex AI."""
@@ -243,13 +248,18 @@ class BaseMaclaAgent(BaseModel):
             prev_state_str, 
             cur_state_str
         )
-        logger.debug(f"Providing feedback to MACLA: strong_success={strong_success}, is_fatal_game_over={is_fatal_game_over} Image: {cur_obs_image}")
+        # Compute shaped reward from evaluator
+        shaped_reward = self._online_evaluator.evaluate_step(
+            prev_state_str, cur_state_str, strong_success, is_fatal_game_over
+        )
+        logger.debug(f"Providing feedback to MACLA: strong_success={strong_success}, is_fatal_game_over={is_fatal_game_over}, shaped_reward={shaped_reward:.3f} Image: {cur_obs_image}")
         update_info = self._macla_agent.provide_feedback(
-            self._last_execution_result, 
-            strong_success, 
+            self._last_execution_result,
+            strong_success,
             next_observation=cur_state_str,
             next_obs_image=cur_obs_image,
-            is_fatal=is_fatal_game_over
+            is_fatal=is_fatal_game_over,
+            shaped_reward=shaped_reward,
         )
         
         # Track update type
@@ -389,6 +399,10 @@ class BaseMaclaAgent(BaseModel):
                         if isinstance(value, (int, float)):
                             log_data[f"memory/{key}"] = value
                     
+                # Shaped reward stats from online evaluator
+                log_data["shaped_reward/mean"] = self._online_evaluator.mean_reward()
+                log_data["shaped_reward/last"] = self._online_evaluator.last_reward()
+
                 if hasattr(self, '_wandb_run') and self._wandb_run:
                     self._wandb_run.log(log_data, step=self._step_count)
                 else:

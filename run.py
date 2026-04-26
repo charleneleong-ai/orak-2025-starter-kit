@@ -127,7 +127,7 @@ def main(
             if runs:
                 # Sort to find the latest (assuming timestamp or lexicographical order)
                 runs.sort()
-                latest_run = runs[-1]
+                latest_run = runs[tas-1]
                 run_id = latest_run
                 logger.info(f"Auto-detected latest run: {latest_run}")
                 logger.info(f"Resuming Run ID: {run_id}")

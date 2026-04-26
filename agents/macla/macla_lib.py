@@ -921,7 +921,7 @@ class EnhancedMACLAAgent:
         result["confidence"] = 0.5
         return result
 
-    def provide_feedback(self, execution_result: dict, actual_success: bool, next_observation: str = "", next_obs_image: Any = None, is_fatal: bool = False) -> dict:
+    def provide_feedback(self, execution_result: dict, actual_success: bool, next_observation: str = "", next_obs_image: Any = None, is_fatal: bool = False, shaped_reward: float | None = None) -> dict:
         """
         Provides feedback on the execution result and updates memory.
         
@@ -962,10 +962,11 @@ class EnhancedMACLAAgent:
         else:
             action_str = str(action_seq) if action_seq else "wait"
         
+        reward = shaped_reward if shaped_reward is not None else (1.0 if actual_success else (-1.0 if is_fatal else 0.0))
         self.memory_system.add_atomic_entry(
             action=action_str,
             observation=execution_result.get("observation", ""),
-            reward=1.0 if actual_success else (-1.0 if is_fatal else 0.0),
+            reward=reward,
             context=self.bayesian_selector._extract_context(execution_result.get("observation", next_observation)),
             trajectory_id=execution_result.get("trajectory_id", "global_stream"),
             step_index=self.stats["total_executions"],
@@ -981,7 +982,7 @@ class EnhancedMACLAAgent:
                 observation_init=execution_result.get("observation", ""),
                 action_sequence=execution_result.get("action_sequence", []),
                 observation_term=next_observation,
-                cumulative_reward=1.0 if actual_success else 0.0,
+                cumulative_reward=shaped_reward if shaped_reward is not None else (1.0 if actual_success else 0.0),
                 trajectory_id=execution_result.get("trajectory_id", "unknown"),
                 success=actual_success,
                 context=self.bayesian_selector._extract_context(execution_result.get("observation", "")),
@@ -1040,7 +1041,7 @@ class EnhancedMACLAAgent:
                     observation_init=obs,
                     action_sequence=action_seq,
                     observation_term=next_observation,
-                    cumulative_reward=1.0,
+                    cumulative_reward=shaped_reward if shaped_reward is not None else 1.0,
                     trajectory_id=execution_result.get("trajectory_id", "unknown"),
                     success=True,
                     context=str(context_key),

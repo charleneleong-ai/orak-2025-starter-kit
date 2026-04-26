@@ -283,6 +283,15 @@ class Runner:
             else:
                 max_episodes = game_config.get("max_episodes")
 
+            # Max total steps per game (prevents endless single-episode games)
+            max_steps = None
+            if self.settings:
+                game_settings = getattr(self.settings, game_name, None)
+                if game_settings and hasattr(game_settings, "env") and hasattr(game_settings.env, "max_steps"):
+                    max_steps = game_settings.env.max_steps
+            if max_steps is None:
+                max_steps = game_config.get("max_steps")
+
             try:
                 # Game loop
                 current_score = 0
@@ -317,6 +326,13 @@ class Runner:
                         
                 avg_score = 0
                 while episode < max_episodes:
+                    # Max steps guard (prevents endless single-episode games like Pokemon)
+                    if max_steps and total_steps >= max_steps:
+                        self.renderer.event(
+                            f"{game_display_name}: Max steps ({max_steps}) reached. Stopping."
+                        )
+                        break
+
                     iteration += 1
                     total_steps += 1
                     obs = await self._call_in_thread(env.load_obs)
