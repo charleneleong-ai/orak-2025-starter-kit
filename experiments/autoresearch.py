@@ -796,6 +796,7 @@ def log_run_results(
             wandb_url=wandb_url,
             notes=notes,
             game_score=game_score,
+            runtime_min=runtime_min,
             tags=[tag],
         )
 
