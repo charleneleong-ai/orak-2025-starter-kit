@@ -516,7 +516,7 @@ def propose_next_params(game: str, results: list[dict], config_type: str = "unif
 
 # ── Triage Thresholds ──────────────────────────────────────────────
 
-TRIAGE_SCORE_PLATEAU_STEPS = 50    # Kill if max eval unchanged for N steps
+TRIAGE_SCORE_PLATEAU_STEPS = 80    # Kill if max eval unchanged for N steps
 TRIAGE_NO_LEARN_EPISODES = 5       # Kill if no episode score improvement for N episodes
 TRIAGE_BASELINE_FACTOR = 0.5       # Kill if max_eval < baseline * factor after 100 steps
 TRIAGE_POLL_INTERVAL = 5           # Seconds between game_states.jsonl checks
@@ -590,25 +590,32 @@ def _triage_check(
     return None
 
 
-def _relabel_last_as_early_kill(tag: str, kill_reason: str, games: list[str]):
-    """Patch recent result rows to EARLY_KILL with kill_reason."""
+def _relabel_last_as_early_kill(tag: str, kill_reason: str, games: list[str], triggered_game: str | None = None):
+    """Patch the triggering game's result row to EARLY_KILL.
+
+    Only relabels the game that triggered the triage kill, NOT all games.
+    This prevents a single stuck game (e.g. pokemon_red at 0) from
+    invalidating good results from other games in the same iteration.
+    """
     results_file = ROOT / "experiments" / tag / "results.jsonl"
     if not results_file.exists():
         return
     lines = results_file.read_text().strip().split("\n")
-    if len(lines) < len(games):
-        return
-    # Patch last N entries (one per game)
+    # Determine which games to relabel: only the triggered game if specified
+    games_to_kill = [triggered_game] if triggered_game else games
+    patched = 0
     for i in range(len(games)):
         idx = len(lines) - 1 - i
         if idx < 0:
             break
         entry = json.loads(lines[idx])
-        entry["status"] = "EARLY_KILL"
-        entry["notes"] = f"KILLED: {kill_reason}. " + entry.get("notes", "")
-        lines[idx] = json.dumps(entry)
+        if entry.get("game") in games_to_kill:
+            entry["status"] = "EARLY_KILL"
+            entry["notes"] = f"KILLED: {kill_reason}. " + entry.get("notes", "")
+            lines[idx] = json.dumps(entry)
+            patched += 1
     results_file.write_text("\n".join(lines) + "\n")
-    print(f"  Relabelled last {len(games)} entries as EARLY_KILL: {kill_reason}")
+    print(f"  Relabelled {patched} entr{'y' if patched==1 else 'ies'} as EARLY_KILL ({', '.join(games_to_kill)}): {kill_reason}")
 
 
 def _write_sidecar(tag: str, run_id: str, description: str, games: list[str]):
@@ -904,7 +911,7 @@ def run(
         # If triage killed the run, relabel the logged entries
         kill_reason = _triage_check(run_id, games, best) if run_id else None
         if kill_reason:
-            _relabel_last_as_early_kill(tag, kill_reason, games)
+            _relabel_last_as_early_kill(tag, kill_reason, games, triggered_game=kill_reason.split(':')[0].strip())
 
         # Reload results for next iteration
         all_results = load_results(tag=tag)
