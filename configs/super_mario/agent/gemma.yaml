@@ -1,0 +1,11 @@
+# Gemma-3n-E4B-it (multimodal) for Super Mario — A100-40GB sized
+# See configs/twenty_fourty_eight/agent/gemma.yaml for full notes.
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "unsloth/gemma-3n-E4B-it"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: true
+max_tokens: 8192
+max_model_len: 16384
+game_config_path: "super_mario"
+track: "TRACK2"
