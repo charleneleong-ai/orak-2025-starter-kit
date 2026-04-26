@@ -33,9 +33,9 @@ RESULTS = ROOT / "experiments" / TAG / "results.jsonl"
 PNG = ROOT / "experiments" / TAG / "progress.png"
 HTML = ROOT / "experiments" / TAG / "progress.html"
 POLL_S = 600  # 10 min
-PR_NUMBER = 14
+PR_NUMBER = 20
 REPO = "charleneleong-ai/orak-2025-starter-kit"
-BRANCH = "feat/macla-optimisation"
+BRANCH = "feat/macla-sweep-live"
 MARKER_START = "<!-- SWEEP_NARRATIVE_START -->"
 MARKER_END = "<!-- SWEEP_NARRATIVE_END -->"
 
