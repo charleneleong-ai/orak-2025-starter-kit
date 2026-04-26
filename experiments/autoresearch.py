@@ -754,6 +754,7 @@ def log_run_results(
     description: str,
     tag: str = "macla",
     best_scores: dict[str, float] | None = None,
+    runtime_min: float = 0.0,
 ):
     """Extract results from a run and log to experiment tracker."""
     results = extract_run_results(run_id, games)
