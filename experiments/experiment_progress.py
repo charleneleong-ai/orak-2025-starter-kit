@@ -289,19 +289,71 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
 
         model_for_game = game_models.get(game)
 
-        def _label(exp_num, desc, notes, runtime=0, model=model_for_game):
-            """Full readable label: Exp N (runtime) + description + model + outcome."""
-            header = f"<b>E{exp_num}</b>"
-            if runtime:
-                header += f" [{int(runtime)}min]"
-            lines = [header]
-            lines.append(desc)
-            if model:
-                lines.append(f"<span style='color:#666;font-size:7px'>model: {model}</span>")
+        _SNAMES = {"DISCARD": "discarded", "KEEP": "kept", "BASELINE": "baseline",
+                    "RUNNING": "running", "EARLY_KILL": "killed early", "CRASH": "crashed"}
+
+        def _clean_label_text(desc, notes, game=""):
+            """Strip note/machine prefix; show only this game's param changes."""
+            import re as _re
+            m = _re.search(r'iter\s*(\d+)', desc or "")
+            iter_n = f"iter {m.group(1)}" if m else ""
+            # Get everything after "| iter N |"
+            after_iter = _re.sub(r'^.*?\|\s*iter\s*\d+\s*\|\s*', '', desc or "").strip()
+            if after_iter == (desc or "").strip():
+                after_iter = ""
+            # Try to extract params for this specific game only
+            # param_summaries format: "twenty: ...; super: ...; pokemon: ..."
+            game_short = game.split("_")[0] if game else ""
+            params = ""
+            if after_iter and game_short:
+                # Find this game's segment: "twenty: <stuff>" up to ";" or end
+                gm = _re.search(rf'{game_short}:\s*([^;]+)', after_iter)
+                if gm:
+                    params = gm.group(1).strip()
+            if not params and after_iter:
+                # Fallback: show the whole thing (no per-game split found)
+                params = after_iter
+            # Abbreviate verbose param names
+            params = _re.sub(r'macla_max_theta|max_theta', 'θ_max', params)
+            params = _re.sub(r'macla_min_theta|min_theta', 'θ_min', params)
+            params = _re.sub(r'macla_theta_base|theta_base', 'θ_base', params)
+            params = _re.sub(r'macla_warmup_steps?|warmup_steps?', 'wu', params)
+            params = _re.sub(r'macla_theta_decay|theta_decay', 'θ_decay', params)
+            params = _re.sub(r'param:\s*', '', params)  # strip "param: " prefix
+            if params.lower().strip() in ("no param changes", "no changes", "at boundary", ""):
+                params = ""
+            iter_line = iter_n
+            if params:
+                short = params.strip()[:48] + ("…" if len(params.strip()) > 48 else "")
+                iter_line = f"{iter_n} · {short}" if iter_n else short
+            # Outcome from notes: "Improved from X" / "Below best X"
+            outcome = ""
             if notes:
-                outcome = notes.split(".")[0]
-                lines.append(outcome)
-            return "<br>".join(lines)
+                for sent in reversed([s.strip() for s in notes.split(".") if s.strip()]):
+                    if "improved" in sent.lower():
+                        outcome = "↑ " + sent; break
+                    elif "below" in sent.lower():
+                        outcome = "↓ " + sent; break
+            return iter_line, outcome
+
+        def _label(exp_num, desc, notes, runtime=0, model=model_for_game, status="", score=0, steps=0, game_name=""):
+            """Label: E{n} · {runtime}min · {status} / iter N · params / outcome · eval."""
+            head = f"<b>E{exp_num}</b>"
+            if runtime:
+                head += f" · {int(runtime)}min"
+            if status:
+                head += f" · {_SNAMES.get(status, status.lower())}"
+            iter_line, outcome = _clean_label_text(desc, notes, game=game_name)
+            bits = [f"eval={score:.2f}"]
+            if steps:
+                bits.append(f"{steps}st")
+            label_lines = [head]
+            if iter_line:
+                label_lines.append(iter_line)
+            if outcome:
+                label_lines.append(outcome)
+            label_lines.append(" · ".join(bits))
+            return "<br>".join(label_lines)
 
         # Plot markers (no text) + add annotations for labels
         status_config = {
@@ -334,7 +386,7 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
             ), row=i, col=1)
 
             # Add annotation with full label text, alternating positions
-            label = _label(en, d, n, rt)
+            label = _label(en, d, n, rt, status=s, score=y, steps=st, game_name=game)
             y_shift = 30 if j % 2 == 0 else -30
             xref = f"x{i}" if i > 1 else "x"
             yref = f"y{i}" if i > 1 else "y"
@@ -366,7 +418,10 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
                 hoverinfo="skip",
             ), row=i, col=1)
 
-        fig.update_yaxes(title_text="Evaluation Score (higher is better)", rangemode="tozero", row=i, col=1)
+        max_y = max((r["evaluation_score"] for r in game_results), default=0)
+        y_range = [0, max(max_y * 1.3, 5)] if max_y == 0 else None
+        fig.update_yaxes(title_text="Evaluation Score (higher is better)",
+                         rangemode="tozero", range=y_range, row=i, col=1)
         # Only show tick marks for experiments that have data (skip gaps)
         fig.update_xaxes(title_text="Experiment #", tickvals=sorted(set(xs)), dtick=1, row=i, col=1)
 

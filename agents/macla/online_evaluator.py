@@ -155,6 +155,13 @@ class OnlineAgentEvaluator:
             return -1.5
 
         reward = 0.0
+        # Map transition bonus — reward moving between rooms/maps.
+        # This is the primary navigation signal before any flags are earned.
+        prev_map = prev.get("map_name", "")
+        cur_map = cur.get("map_name", "")
+        if cur_map and prev_map and cur_map != prev_map:
+            reward += 0.8
+
         # Flag collected (big bonus)
         flag_delta = cur.get("flags", 0) - prev.get("flags", 0)
         if flag_delta > 0:
