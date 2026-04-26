@@ -8,4 +8,4 @@ supports_vision: true
 max_tokens: 8192
 max_model_len: 16384
 game_config_path: "super_mario"
-track: "TRACK2"
+track: "TRACK1"

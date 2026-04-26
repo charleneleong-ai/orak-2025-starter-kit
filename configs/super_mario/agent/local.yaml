@@ -13,4 +13,4 @@ temperature: 0.7
 server_type: "vllm"            # vllm | ollama | mlx
 max_tokens: 16384               # Headroom for thinking models (Qwen3, R1)
 game_config_path: "super_mario"
-track: "TRACK2"
+track: "TRACK1"

@@ -20,4 +20,4 @@ supports_vision: true     # Gemma 3n is multimodal — send screenshots
 max_tokens: 8192          # No thinking budget needed
 max_model_len: 16384
 game_config_path: "twenty_fourty_eight"
-track: "TRACK2"
+track: "TRACK1"
