@@ -35,7 +35,7 @@ Production GPU serving with continuous batching, PagedAttention, tensor parallel
 
 | Model | Params (active) | A100 GPUs | Quantization | Notes |
 |-------|-----------------|-----------|--------------|-------|
-| `unsloth/gemma-3n-E4B-it` | ~8B (E4B) | 1x 40GB | none | **Multimodal**, fast, fits A100-40GB with headroom |
+| `unsloth/gemma-4-E4B-it` | ~8B (E4B) | 1x 40GB | none | **Multimodal**, fast, fits A100-40GB with headroom |
 | `Qwen/Qwen3-32B` | 32B | 1x 80GB | none | Strong reasoning, best single-GPU option |
 | `Qwen/Qwen3-32B-AWQ` | 32B | 1x 40GB | awq | 4-bit Qwen3 — fits 40GB, retains thinking |
 | `meta-llama/Llama-4-Scout-17B-16E-Instruct` | 17B | 1x 40GB | none | Good structured output |
@@ -48,7 +48,7 @@ Production GPU serving with continuous batching, PagedAttention, tensor parallel
 ```bash
 pip install vllm
 
-# Gemma-3n-E4B-it on 1x A100-40GB (multimodal, fast, recommended for 40GB)
+# Gemma-4-E4B-it on 1x A100-40GB (multimodal, fast, recommended for 40GB)
 ./serving/gemma_serve.sh
 
 # Qwen3-32B on 1x A100-80GB
@@ -63,7 +63,7 @@ pip install vllm
 For a single 40GB card, two options:
 
 ```bash
-# Option 1: Gemma-3n-E4B-it (multimodal, ~8GB weights, fits with huge KV headroom)
+# Option 1: Gemma-4-E4B-it (multimodal, ~8GB weights, fits with huge KV headroom)
 ./serving/gemma_serve.sh
 python run.py -c gemma_test --local --games twenty_fourty_eight
 

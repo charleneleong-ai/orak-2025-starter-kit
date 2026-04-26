@@ -1,6 +1,6 @@
 # @package _global_
 #
-# Gemma-3n-E4B-it via vLLM (multimodal, A100-40GB friendly).
+# Gemma-4-E4B-it via vLLM (multimodal, A100-40GB friendly).
 # Mirrors local.yaml but routes all games to the gemma agent variant.
 #
 # Usage:
