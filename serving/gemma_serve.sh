@@ -12,9 +12,7 @@
 # OpenAI-compatible HTTP API, so the version split is safe.
 #
 # Bootstrap the serving venv once:
-#   uv venv --python 3.11 /workspace/vllm-serve/.venv
-#   VIRTUAL_ENV=/workspace/vllm-serve/.venv uv pip install \
-#       "vllm==0.19.1" "transformers>=5.5.1" timm
+#   ./serving/bootstrap_venv.sh
 #
 # Local cache (no download needed if already present):
 #   /workspace/.hf_home/hub/models--unsloth--gemma-4-E4B-it
@@ -52,9 +50,7 @@ echo "============================================"
 
 if [[ ! -x "${VENV}/bin/python" ]]; then
     echo "ERROR: serving venv not found at ${VENV}"
-    echo "Bootstrap once with:"
-    echo "  uv venv --python 3.11 ${VENV}"
-    echo "  VIRTUAL_ENV=${VENV} uv pip install \"vllm==0.19.1\" \"transformers>=5.5.1\" timm"
+    echo "Bootstrap once:  ./serving/bootstrap_venv.sh"
     exit 1
 fi
 

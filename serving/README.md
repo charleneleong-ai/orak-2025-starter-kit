@@ -64,6 +64,8 @@ For a single 40GB card, two options:
 
 ```bash
 # Option 1: Gemma-4-E4B-it (multimodal, ~8GB weights, fits with huge KV headroom)
+# Note: gemma-4 needs transformers >= 5.5.1, so we use a side venv.
+./serving/bootstrap_venv.sh         # one-off
 ./serving/gemma_serve.sh
 python run.py -c gemma_test --local --games twenty_fourty_eight
 
