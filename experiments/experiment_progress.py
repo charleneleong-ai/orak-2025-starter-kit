@@ -145,6 +145,30 @@ def extract_run_results(run_id: str, games: list[str] | None = None) -> dict[str
     return results
 
 
+def _read_agent_models(games: list[str], config_type: str) -> dict[str, str]:
+    """Return {game: model_name} from configs/<game>/agent/<config_type>.yaml.
+    Used to add a per-label model snippet so reviewers can see at a glance
+    which backend each dot was produced by.
+    """
+    import yaml as _yaml
+    cfgs_root = Path(__file__).resolve().parent.parent / "configs"
+    out: dict[str, str] = {}
+    for g in games:
+        p = cfgs_root / g / "agent" / f"{config_type}.yaml"
+        if not p.exists():
+            continue
+        try:
+            cfg = _yaml.safe_load(p.read_text()) or {}
+        except Exception:
+            continue
+        m = cfg.get("model")
+        if m:
+            # Truncate provider prefix for compactness; keep readable shape
+            short = m.split("/")[-1] if "/" in m else m
+            out[g] = short
+    return out
+
+
 def _read_agent_metadata(games: list[str], config_type: str) -> str:
     """Read configs/<game>/agent/<config_type>.yaml for each game and build a
     HTML-ish multi-line metadata block summarising model, backend, and MACLA params.
@@ -223,6 +247,13 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
         vertical_spacing=0.12,
     )
 
+    # Track indices of per-experiment label annotations for the toggle widget.
+    # Plotly stores subplot titles as annotations first; later calls to
+    # fig.add_annotation append after them. We snapshot len() before the loop
+    # and after each add_annotation to record exactly which indices are labels.
+    label_annotation_indices: list[int] = []
+    game_models = _read_agent_models(games, config_type) if config_type else {}
+
     for i, game in enumerate(games, 1):
         game_results = [r for r in results if r["game"] == game]
         game_results.sort(key=lambda x: x["experiment"])
@@ -256,13 +287,17 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
 
         exp_nums = [r["experiment"] for r in game_results]
 
-        def _label(exp_num, desc, notes, runtime=0):
-            """Full readable label: Exp N (runtime) + description + outcome."""
+        model_for_game = game_models.get(game)
+
+        def _label(exp_num, desc, notes, runtime=0, model=model_for_game):
+            """Full readable label: Exp N (runtime) + description + model + outcome."""
             header = f"<b>E{exp_num}</b>"
             if runtime:
                 header += f" [{int(runtime)}min]"
             lines = [header]
             lines.append(desc)
+            if model:
+                lines.append(f"<span style='color:#666;font-size:7px'>model: {model}</span>")
             if notes:
                 outcome = notes.split(".")[0]
                 lines.append(outcome)
@@ -303,6 +338,7 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
             y_shift = 30 if j % 2 == 0 else -30
             xref = f"x{i}" if i > 1 else "x"
             yref = f"y{i}" if i > 1 else "y"
+            label_annotation_indices.append(len(fig.layout.annotations))
             fig.add_annotation(
                 x=x, y=y, xref=xref, yref=yref,
                 text=label, showarrow=True, arrowhead=2, arrowsize=0.8,
@@ -380,10 +416,21 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
             xshift=0, yshift=40,
         )
 
-    # Save to experiments/<tag>/progress.html
+    # Save to experiments/<tag>/progress.html with a label-toggle switch
     out_dir = _tag_dir(tag)
     output_path = out_dir / "progress.html"
-    fig.write_html(str(output_path))
+    try:
+        from experiments._chart_widgets import plotly_label_toggle
+        post_script = plotly_label_toggle(
+            label_indices=label_annotation_indices,
+            n_traces=len(fig.data),
+            label="labels",
+            position="top-right",
+            default_on=True,
+        )
+    except Exception:
+        post_script = None
+    fig.write_html(str(output_path), post_script=post_script)
     print(f"Saved to {output_path}")
 
     try:
