@@ -1,0 +1,21 @@
+# @package _global_
+#
+# Gemma-4-E4B-it via vLLM (multimodal, A100-40GB friendly).
+# Mirrors local.yaml but routes all games to the gemma agent variant.
+#
+# Usage:
+#   ./serving/gemma_serve.sh                 # in another shell
+#   python run.py -c gemma --local --games twenty_fourty_eight
+
+ENV: ${oc.env:ENV, "dev"}
+CWD: ${hydra:runtime.cwd}
+LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
+
+defaults:
+  - _self_
+  - twenty_fourty_eight: base
+  - super_mario: base
+  - pokemon_red: base
+  - override twenty_fourty_eight/agent: gemma
+  - override super_mario/agent: gemma
+  - override pokemon_red/agent: gemma

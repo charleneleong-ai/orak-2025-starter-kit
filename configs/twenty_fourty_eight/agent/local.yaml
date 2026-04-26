@@ -17,4 +17,4 @@ server_type: "vllm"            # vllm | ollama | mlx
 # was reached" errors.
 max_tokens: 16384
 game_config_path: "twenty_fourty_eight"
-track: "TRACK2"
+track: "TRACK1"

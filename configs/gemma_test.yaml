@@ -1,0 +1,24 @@
+# @package _global_
+#
+# Fast smoke-test variant of gemma.yaml — 1 episode, 10 steps.
+# For end-to-end integration testing on A100.
+#
+# Usage:
+#   ./serving/gemma_serve.sh
+#   python run.py -c gemma_test --local --games twenty_fourty_eight
+
+ENV: ${oc.env:ENV, "dev"}
+CWD: ${hydra:runtime.cwd}
+LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
+
+defaults:
+  - _self_
+  - twenty_fourty_eight: base
+  - super_mario: base
+  - pokemon_red: base
+  - override twenty_fourty_eight/agent: gemma
+  - override super_mario/agent: gemma
+  - override pokemon_red/agent: gemma
+  - override twenty_fourty_eight/env: test
+  - override super_mario/env: test
+  - override pokemon_red/env: test

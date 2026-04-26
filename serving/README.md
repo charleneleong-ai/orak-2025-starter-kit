@@ -35,7 +35,9 @@ Production GPU serving with continuous batching, PagedAttention, tensor parallel
 
 | Model | Params (active) | A100 GPUs | Quantization | Notes |
 |-------|-----------------|-----------|--------------|-------|
+| `unsloth/gemma-4-E4B-it` | ~8B (E4B) | 1x 40GB | none | **Multimodal**, fast, fits A100-40GB with headroom |
 | `Qwen/Qwen3-32B` | 32B | 1x 80GB | none | Strong reasoning, best single-GPU option |
+| `Qwen/Qwen3-32B-AWQ` | 32B | 1x 40GB | awq | 4-bit Qwen3 — fits 40GB, retains thinking |
 | `meta-llama/Llama-4-Scout-17B-16E-Instruct` | 17B | 1x 40GB | none | Good structured output |
 | `deepseek-ai/DeepSeek-R1-0528` | 37B active | 2x 80GB | none | Reasoning-focused |
 | `moonshotai/Kimi-K2-Instruct` | 32B active (1T total) | 4x 80GB | fp8 | Top agentic performance |
@@ -46,11 +48,31 @@ Production GPU serving with continuous batching, PagedAttention, tensor parallel
 ```bash
 pip install vllm
 
+# Gemma-4-E4B-it on 1x A100-40GB (multimodal, fast, recommended for 40GB)
+./serving/gemma_serve.sh
+
 # Qwen3-32B on 1x A100-80GB
 ./serving/vllm_serve.sh Qwen/Qwen3-32B 1
 
 # Kimi K2 on 4x A100 with FP8
 ./serving/vllm_serve.sh moonshotai/Kimi-K2-Instruct 4 fp8
+```
+
+### A100-40GB
+
+For a single 40GB card, two options:
+
+```bash
+# Option 1: Gemma-4-E4B-it (multimodal, ~8GB weights, fits with huge KV headroom)
+# Note: gemma-4 needs transformers >= 5.5.1, so we use a side venv.
+./serving/bootstrap_venv.sh         # one-off
+./serving/gemma_serve.sh
+python run.py -c gemma_test --local --games twenty_fourty_eight
+
+# Option 2: Qwen3-32B-AWQ (4-bit, ~18GB weights, keeps thinking)
+VLLM_MODEL=Qwen/Qwen3-32B-AWQ VLLM_QUANT=awq VLLM_MAX_MODEL_LEN=32768 \
+  ./serving/vllm_serve.sh
+python run.py -c local_test --local --games twenty_fourty_eight
 ```
 
 ### Docker

@@ -25,6 +25,8 @@ class ExperimentConfigName(StrEnum):
     UNIFIED_MACLA = "unified_macla"
     LOCAL = "local"
     LOCAL_TEST = "local_test"
+    GEMMA = "gemma"
+    GEMMA_TEST = "gemma_test"
 
 
 load_dotenv()

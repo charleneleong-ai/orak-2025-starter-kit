@@ -1,0 +1,23 @@
+# Gemma-4-E4B-it (multimodal) for 2048 — A100-40GB sized
+#
+# Uses unsloth/gemma-4-E4B-it served via vLLM. Vision-capable (sends
+# screenshots natively), no internal "thinking" token spend so a modest
+# max_tokens budget is fine.
+#
+# Local weights: /workspace/.hf_home/hub/models--unsloth--gemma-4-E4B-it
+# LoRA adapter:  /workspace/gemma4_rl/gemma_4_lora (Unsloth-trained, optional)
+#
+# Launch server:
+#   ./serving/gemma_serve.sh
+#
+# Override per-run:
+#   LOCAL_MODEL=unsloth/gemma-4-E4B-it python run.py -c gemma ...
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "unsloth/gemma-4-E4B-it"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: true     # Gemma 3n is multimodal — send screenshots
+max_tokens: 8192          # No thinking budget needed
+max_model_len: 16384
+game_config_path: "twenty_fourty_eight"
+track: "TRACK1"
