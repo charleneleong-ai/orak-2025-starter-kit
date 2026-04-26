@@ -825,14 +825,25 @@ def run(
     dry_run: bool = typer.Option(False, help="Only propose params, don't run"),
     config_type: str = typer.Option("unified_macla", help="YAML config type to modify"),
     note: str = typer.Option("", help="Extra context to prepend to experiment description (e.g. 'OnlineAgentEvaluator enabled')"),
+    patience: int = typer.Option(5, help="Stop sweep if no game improves over best-so-far for N consecutive iterations (0 = disable)"),
+    time_budget_min: float = typer.Option(0.0, help="Stop sweep after this many wall-clock minutes (0 = disable)"),
 ):
     """Run the autoresearch optimisation loop."""
     print(f"Autoresearch loop: config={config}, tag={tag}, max_iterations={max_iterations}")
-    print(f"Games: {games}\n")
+    print(f"Games: {games}")
+    print(f"Early stopping: patience={patience} iters, time_budget={time_budget_min}min\n")
 
     all_results = load_results(tag=tag)
+    sweep_start = time.time()
+    no_improve_streak = 0
 
     for iteration in range(max_iterations):
+        # Budget stop: hit the wall-clock cap
+        if time_budget_min > 0:
+            elapsed = (time.time() - sweep_start) / 60
+            if elapsed >= time_budget_min:
+                print(f"\nEarly stop: wall-clock budget reached ({elapsed:.1f}min >= {time_budget_min}min)")
+                break
         print(f"\n{'#'*60}")
         print(f"# Iteration {iteration + 1}/{max_iterations}")
         print(f"{'#'*60}")
@@ -929,10 +940,18 @@ def run(
         # Regenerate plot
         plot_progress(tag=tag)
 
-        if not any_improved:
-            print(f"\nNo improvements in iteration {iteration + 1}. Continuing to explore...")
+        # Convergence stop: track consecutive iterations with no improvement
+        if any_improved:
+            no_improve_streak = 0
+        else:
+            no_improve_streak += 1
+            print(f"\nNo improvements in iteration {iteration + 1} (streak={no_improve_streak}/{patience}).")
+            if patience > 0 and no_improve_streak >= patience:
+                print(f"\nEarly stop: no improvement for {patience} consecutive iterations.")
+                break
 
-    print(f"\nAutoresearch complete after {min(iteration + 1, max_iterations)} iterations")
+    elapsed_total = (time.time() - sweep_start) / 60
+    print(f"\nAutoresearch complete after {min(iteration + 1, max_iterations)} iterations ({elapsed_total:.1f}min)")
     plot_progress(tag=tag)
 
 
