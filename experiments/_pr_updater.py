@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT))
 
 TAG = "unified_macla"
 CONFIG_TYPE = "gemma"  # configs/<game>/agent/<CONFIG_TYPE>.yaml — embedded in chart metadata
-CONFIG_NAME = "macla_checkpoint_carry"  # per-config sub-dir; isolates this sweep from prior data
+CONFIG_NAME = "gemma_v2"  # per-config sub-dir; isolates this sweep from prior data
 _BASE = ROOT / "experiments" / TAG / CONFIG_NAME if CONFIG_NAME else ROOT / "experiments" / TAG
 RESULTS = _BASE / "results.jsonl"
 PNG = _BASE / "progress.png"
