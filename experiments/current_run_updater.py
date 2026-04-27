@@ -25,11 +25,14 @@ from pathlib import Path
 # ────────────────────────── EDIT FOR YOUR PROJECT ──────────────────────────
 TAG = "unified_macla"
 CONFIG_NAME = "gemma"
+PER_CONFIG = False  # True → experiments/<TAG>/<CONFIG_NAME>/, False → flat
 POLL_S = 30
 ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = ROOT / "logs"
-SIDECAR = ROOT / "experiments" / TAG / "current_run.json"
-RESULTS = ROOT / "experiments" / TAG / "results.jsonl"
+
+_BASE = ROOT / "experiments" / TAG / (CONFIG_NAME if PER_CONFIG else "")
+SIDECAR = _BASE / "current_run.json"
+RESULTS = _BASE / "results.jsonl"
 
 # Orak's autoresearch.py emits these lines (no leading timestamp wrapper):
 #   "# Iteration 3/30"

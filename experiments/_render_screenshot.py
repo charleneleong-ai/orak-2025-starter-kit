@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -24,8 +25,21 @@ SCORE_FIELD = "evaluation_score"  # 0-100 normalised in orak
 SCORE_LABEL = "Evaluation score (higher is better)"
 TITLE = "Orak MACLA Autoresearch — gemma-4-E4B-it / A100-40GB"
 ROOT = Path(__file__).resolve().parent.parent
-RESULTS = ROOT / "experiments" / TAG / "results.jsonl"
-OUT = ROOT / "experiments" / TAG / "progress_static.png"
+
+
+def _paths_for(config_name: str | None) -> tuple[Path, Path, str]:
+    """Resolve (results.jsonl, output.png, title_suffix) for a given config.
+    Pass `config_name=None` for flat layout (single sweep per TAG).
+    Per-config layout: experiments/<TAG>/<config_name>/results.jsonl."""
+    if config_name:
+        results = ROOT / "experiments" / TAG / config_name / "results.jsonl"
+        out = ROOT / "experiments" / TAG / config_name / "progress_static.png"
+        suffix = f" — {config_name}"
+    else:
+        results = ROOT / "experiments" / TAG / "results.jsonl"
+        out = ROOT / "experiments" / TAG / "progress_static.png"
+        suffix = ""
+    return results, out, suffix
 # ──────────────────────────────────────────────────────────────────────────
 
 
@@ -143,9 +157,12 @@ def _render_game_axis(ax, rows: list[dict], game: str) -> None:
 
 
 def main() -> None:
-    rows = _load(RESULTS)
+    config_name = sys.argv[1] if len(sys.argv) > 1 else None
+    results_path, out_path, title_suffix = _paths_for(config_name)
+
+    rows = _load(results_path)
     if not rows:
-        raise SystemExit(f"no results to plot at {RESULTS}")
+        raise SystemExit(f"no results to plot at {results_path}")
 
     games = sorted({r.get("game", "unknown") for r in rows})
     n_games = len(games)
@@ -161,12 +178,12 @@ def main() -> None:
         )
         _render_game_axis(axes[idx][0], game_rows, game)
 
-    fig.suptitle(TITLE, fontsize=15, color="#222", y=0.995)
+    fig.suptitle(f"{TITLE}{title_suffix}", fontsize=15, color="#222", y=0.995)
 
-    OUT.parent.mkdir(parents=True, exist_ok=True)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.tight_layout()
-    plt.savefig(OUT, dpi=140, facecolor="white", bbox_inches="tight")
-    print(f"wrote {OUT}  ({OUT.stat().st_size // 1024} KB)")
+    plt.savefig(out_path, dpi=140, facecolor="white", bbox_inches="tight")
+    print(f"wrote {out_path}  ({out_path.stat().st_size // 1024} KB)")
 
 
 if __name__ == "__main__":
