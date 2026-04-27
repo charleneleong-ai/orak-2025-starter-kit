@@ -83,6 +83,14 @@ def main(
         "--run-id",
         help="Custom run ID for organising outputs (default: timestamp)"
     ),
+    prev_run_id: str | None = typer.Option(
+        None,
+        "--prev-run-id",
+        help="If set with --load-checkpoint, load the latest checkpoint from "
+             "game_logs/<game>/<prev_run_id>/checkpoints/ instead of the "
+             "current run's (empty) checkpoint dir. Used by autoresearch to "
+             "carry MACLA's learned procedures across iterations."
+    ),
 ):
     """Run evaluation for Orak 2025 games."""
 
@@ -160,6 +168,7 @@ def main(
             save_checkpoints=save_checkpoints,
             load_checkpoint=load_checkpoint,
             checkpoint_frequency=checkpoint_frequency,
+            prev_run_id=prev_run_id,
         )
         
         asyncio.run(runner.evaluate_all_games())

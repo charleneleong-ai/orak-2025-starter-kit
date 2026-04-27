@@ -728,8 +728,17 @@ def run_experiment(
     baseline_scores: dict[str, float] | None = None,
     tag: str = "macla",
     description: str = "",
+    prev_run_id: str | None = None,
 ) -> tuple[str, float]:
-    """Run an experiment with live triage monitoring. Returns (run_id, elapsed_min)."""
+    """Run an experiment with live triage monitoring. Returns (run_id, elapsed_min).
+
+    When prev_run_id is set, the subprocess is launched with --load-checkpoint
+    --prev-run-id <prev_run_id> so MACLA's learned procedures from the previous
+    iter are restored at agent init. Without this, every iter starts from
+    procedures=0 and re-learns from scratch — root cause of the inconsistency
+    where one-shot bests (mario 77.83%, pokemon 14.29%, 2048 6.02%) couldn't
+    be reproduced in subsequent iters.
+    """
     cmd = [
         str(ROOT / ".venv" / "bin" / "python"),
         str(ROOT / "run.py"),
@@ -738,6 +747,9 @@ def run_experiment(
     ]
     for g in games:
         cmd.extend(["--games", g])
+    if prev_run_id:
+        cmd.extend(["--load-checkpoint", "--prev-run-id", prev_run_id])
+        print(f"  Loading MACLA checkpoint from prev run: {prev_run_id}")
 
     print(f"\n{'='*60}")
     print(f"Running: {' '.join(cmd)}")
@@ -923,6 +935,10 @@ def run(
     all_results = load_results(tag=tag, config_name=cfg)
     sweep_start = time.time()
     no_improve_streak = 0
+    # Track the last successful run_id so the next iter can load its MACLA
+    # checkpoint and carry procedures/meta-procedures forward — biggest lever
+    # for cross-iter consistency.
+    prev_run_id: str | None = None
 
     for iteration in range(max_iterations):
         # Budget stop: hit the wall-clock cap
@@ -976,12 +992,18 @@ def run(
             print("\n[DRY RUN] Skipping experiment execution")
             continue
 
-        # Run experiment with triage monitoring
-        result = run_experiment(config, games, baseline_scores=best, tag=tag, description=description)
+        # Run experiment with triage monitoring; carry MACLA procedures
+        # forward by loading the previous iter's checkpoint.
+        result = run_experiment(
+            config, games, baseline_scores=best, tag=tag,
+            description=description, prev_run_id=prev_run_id,
+        )
         run_id, elapsed_min = result if isinstance(result, tuple) else (result, 0.0)
         if not run_id:
             print("Run failed, stopping loop")
             break
+        # This run becomes the source for the next iter's checkpoint load.
+        prev_run_id = run_id
 
         # Analyze trajectories and apply targeted changes for NEXT iteration
         print(f"\n--- Trajectory Analysis ---")

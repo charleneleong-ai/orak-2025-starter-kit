@@ -57,19 +57,24 @@ class Runner:
         save_checkpoints: bool = False,
         load_checkpoint: bool = False,
         checkpoint_frequency: int = 10,
+        prev_run_id: str | None = None,
     ):
         self.local = local
         self.renderer = renderer
         self.manage_local_game_servers = manage_local_game_servers
         self.settings = settings
-        
+
         # Run organisation
         self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+
         # Checkpoint configuration
         self.save_checkpoints = save_checkpoints
         self.load_checkpoint = load_checkpoint
         self.checkpoint_frequency = checkpoint_frequency
+        # When set, --load-checkpoint reads from this run's dir instead of
+        # the current run's (empty) dir. Used by autoresearch.py to carry
+        # MACLA's learned procedures across iterations.
+        self.prev_run_id = prev_run_id
         self.game_checkpoint_managers = {}  # Per-game checkpoint managers
 
         # Determine which games to run
@@ -303,7 +308,20 @@ class Runner:
                 total_steps = 0
                 if self.load_checkpoint and hasattr(agent, 'load_state'):
                     try:
-                        checkpoint_manager = self._get_checkpoint_manager(game_name)
+                        # If prev_run_id is set, load from that run's checkpoint dir
+                        # rather than this (empty) run's. Used by autoresearch.py
+                        # to carry MACLA's learned procedures across iterations.
+                        if self.prev_run_id:
+                            from evaluation_utils.checkpoint_manager import CheckpointManager
+                            prev_dir = self._get_game_run_dir(game_name).parent / self.prev_run_id / "checkpoints"
+                            if prev_dir.exists():
+                                checkpoint_manager = CheckpointManager(checkpoint_dir=str(prev_dir))
+                                logger.info(f"Loading checkpoint from prev run: {prev_dir}")
+                            else:
+                                logger.warning(f"prev_run_id={self.prev_run_id} but {prev_dir} does not exist; falling back to current run")
+                                checkpoint_manager = self._get_checkpoint_manager(game_name)
+                        else:
+                            checkpoint_manager = self._get_checkpoint_manager(game_name)
                         checkpoint_data = checkpoint_manager.load_latest_agent_checkpoint(agent)
                         if checkpoint_data:
                             game_state = checkpoint_data.get('game_state', {})
