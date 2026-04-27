@@ -426,17 +426,20 @@ PARAM_BOUNDS = {
         "macla_warmup_steps": (0, 10),
     },
     "twenty_fourty_eight": {
-        # Shifted bounds upward after analysis of PR #20 sweep (rows exp 0-10).
-        # The 6.02% best (iter 6, wandb run
-        # https://wandb.ai/chaleong/orak-2048/runs/20260427_180125_orak-2048)
-        # used theta_base=0.30, max_theta=0.425, min_theta=0.14, warmup=10 —
-        # 3 of 4 params at the OLD bounds ceiling. propose_next_params could
-        # only search DOWN from the breakthrough, never UP, and lost the gain.
-        # Shifting the search window upward means HIGH-theta variants stay
-        # reachable.
-        "macla_theta_base": (0.20, 0.45),
-        "macla_max_theta": (0.30, 0.55),
-        "macla_min_theta": (0.08, 0.20),
+        # 2048 has the worst procedure-reuse profile of the three games:
+        # boards almost never repeat, so memorised "in board X do Y" procedures
+        # rarely fire. Optimal play depends on global structure (corner-anchor,
+        # snake pattern) which doesn't fit MACLA's context-matching abstraction
+        # cleanly. Lever: push max_theta high so the agent leans on LLM
+        # reasoning rather than brittle procedure fallback. With checkpoint
+        # carry-over (this PR), procedures that DO transfer accumulate over
+        # iters and θ can drop later.
+        # Bounds were shifted up once already after PR #20 sweep (the 6.02%
+        # best at iter 6 hit 3 of 4 OLD ceilings); pushing max_theta further
+        # up gives the search room to find LLM-heavy variants.
+        "macla_theta_base": (0.20, 0.50),
+        "macla_max_theta":  (0.40, 0.75),
+        "macla_min_theta":  (0.08, 0.25),
         "macla_warmup_steps": (5, 15),
     },
     "pokemon_red": {
