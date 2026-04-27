@@ -73,7 +73,26 @@ def analyze_trajectory(run_id: str, game: str) -> dict:
     """
     entries = load_game_states(run_id, game)
     if not entries:
-        return {"game": game, "total_steps": 0, "error": "no data"}
+        # Game was triage-killed (or crashed) before any state got logged.
+        # Return a complete stub so downstream consumers (the run-loop print,
+        # propose_changes, the analyze CLI) don't KeyError on missing keys.
+        # Hit on iter 8 of PR #20 sweep (wandb run
+        # https://wandb.ai/chaleong/orak-pokemon-red/runs/20260427_183055_orak-pokemon-red)
+        # when pokemon_red was triage-killed at 0% with no game_states.jsonl
+        # written, leading to KeyError: 'episodes'.
+        return {
+            "game": game,
+            "total_steps": 0,
+            "episodes": 0,
+            "max_eval": 0,
+            "episode_scores": [],
+            "action_distribution": {},
+            "top_action": "",
+            "top_action_pct": 0,
+            "repeated_actions": False,
+            "score_plateau": False,
+            "error": "no data",
+        }
 
     actions = [e.get("action", "") for e in entries]
     action_counts = Counter(actions)
@@ -407,16 +426,31 @@ PARAM_BOUNDS = {
         "macla_warmup_steps": (0, 10),
     },
     "twenty_fourty_eight": {
-        "macla_theta_base": (0.15, 0.35),
-        "macla_max_theta": (0.20, 0.45),
-        "macla_min_theta": (0.05, 0.15),
-        "macla_warmup_steps": (0, 10),
+        # Shifted bounds upward after analysis of PR #20 sweep (rows exp 0-10).
+        # The 6.02% best (iter 6, wandb run
+        # https://wandb.ai/chaleong/orak-2048/runs/20260427_180125_orak-2048)
+        # used theta_base=0.30, max_theta=0.425, min_theta=0.14, warmup=10 —
+        # 3 of 4 params at the OLD bounds ceiling. propose_next_params could
+        # only search DOWN from the breakthrough, never UP, and lost the gain.
+        # Shifting the search window upward means HIGH-theta variants stay
+        # reachable.
+        "macla_theta_base": (0.20, 0.45),
+        "macla_max_theta": (0.30, 0.55),
+        "macla_min_theta": (0.08, 0.20),
+        "macla_warmup_steps": (5, 15),
     },
     "pokemon_red": {
         "macla_theta_base": (0.25, 0.45),
         "macla_max_theta": (0.35, 0.55),
         "macla_min_theta": (0.10, 0.25),
-        "macla_warmup_steps": (5, 20),
+        # Lowered floor 5 -> 0: the iter 3 breakthrough on PR #20 sweep
+        # (max_eval=14.29%, wandb run
+        # https://wandb.ai/chaleong/orak-pokemon-red/runs/20260427_172124_orak-pokemon-red)
+        # hit warmup=5 exactly at the old bounds floor, so propose_next_params
+        # couldn't explore any lower. Subsequent iters drove warmup UP to 8
+        # then 11 and lost the gain. Letting it try warmup={0,1,2,3} preserves
+        # the high-theta / low-warmup combination that's actually working.
+        "macla_warmup_steps": (0, 15),
     },
 }
 
@@ -454,9 +488,9 @@ def write_yaml_config(game: str, config: dict, config_type: str = "unified_macla
     path.write_text("\n".join(new_lines) + "\n")
 
 
-def get_best_scores(tag: str = "macla") -> dict[str, float]:
+def get_best_scores(tag: str = "macla", config_name: str | None = None) -> dict[str, float]:
     """Get current best evaluation_score per game from results."""
-    results = load_results(tag=tag)
+    results = load_results(tag=tag, config_name=config_name)
     best = {}
     for r in results:
         game = r["game"]
@@ -517,9 +551,17 @@ def propose_next_params(game: str, results: list[dict], config_type: str = "unif
 # ── Triage Thresholds ──────────────────────────────────────────────
 
 TRIAGE_SCORE_PLATEAU_STEPS = 80    # Kill if max eval unchanged for N steps
-TRIAGE_NO_LEARN_EPISODES = 5       # Kill if no episode score improvement for N episodes
+TRIAGE_NO_LEARN_EPISODES = 8       # Kill if no episode score improvement for N episodes.
+                                   # Bumped 5 -> 8 after iter 4 of PR #20 sweep
+                                   # (wandb run https://wandb.ai/chaleong/orak-super-mario/runs/20260427_174648_orak-super-mario):
+                                   # super_mario set a new best of 51.87% in episode 1,
+                                   # then was killed in episodes 2-6 before MACLA's
+                                   # procedure-learning could compound — even though
+                                   # the iter was healthy. 5 was too tight; 8 gives
+                                   # one-shot bests room to consolidate.
 TRIAGE_BASELINE_FACTOR = 0.5       # Kill if max_eval < baseline * factor after 100 steps
 TRIAGE_POLL_INTERVAL = 5           # Seconds between game_states.jsonl checks
+ITER_TIMEOUT_MIN = 30              # Hard wall-clock cap per iteration; SIGINT subprocess if exceeded
 
 
 def _find_run_id(games: list[str]) -> str:
@@ -557,6 +599,15 @@ def _triage_check(
         evals = [e.get("evaluation_score", 0) for e in entries]
         max_eval_raw = max(evals) if evals else 0
         max_eval = normalize_eval_score(game, max_eval_raw, max(e.get("game_score", 0) for e in entries))
+
+        # Don't kill an iter that's already produced a new PR best for this
+        # game. Otherwise propose_next_params advances past the kill (which
+        # ends with a partial run.py and partial flushed state) and the gain
+        # is lost. Hit on iter 4 of PR #20 sweep — super_mario reached 77.83%
+        # (vs prior best 61.13%) then got triage-killed by no_learn=8 before
+        # the new best could be consolidated.
+        if max_eval > baseline_scores.get(game, 0):
+            continue
 
         # Count episodes
         episode_scores = []
@@ -694,9 +745,19 @@ def run_experiment(
     print(f"{'='*60}\n")
 
     env = os.environ.copy()
+    # Disable Weave tracing in subprocess: project doesn't exist on wandb,
+    # every trace upload returns 403, httpx retries forever, leaks CLOSE-WAIT
+    # sockets, eventually run.py deadlocks.
+    env["WEAVE_ENABLED"] = "false"
+    env.setdefault("WEAVE_DISABLED", "true")
     baseline_scores = baseline_scores or {}
 
+    # Capture full timestamp BEFORE Popen so we only accept run_ids created
+    # AFTER this iteration started. Comparing against just YYYYMMDD lets old
+    # iterations' run_ids (same day) leak through and confuses triage.
+    start_run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     start = time.time()
+    iter_timeout_s = ITER_TIMEOUT_MIN * 60
     proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
     kill_reason = None
 
@@ -705,8 +766,7 @@ def run_experiment(
     for _ in range(60):
         time.sleep(2)
         candidate = _find_run_id(games)
-        # Only accept run IDs created after we started
-        if candidate and candidate >= datetime.now().strftime("%Y%m%d"):
+        if candidate and candidate >= start_run_id:
             run_id = candidate
             break
 
@@ -717,9 +777,25 @@ def run_experiment(
     # Monitor loop: poll game_states.jsonl for triage signals
     while proc.poll() is None:
         time.sleep(TRIAGE_POLL_INTERVAL)
+
+        # Wall-clock timeout: a single iteration must not stall the whole sweep
+        if (time.time() - start) > iter_timeout_s:
+            kill_reason = f"iteration timeout ({ITER_TIMEOUT_MIN}min wall-clock)"
+            print(f"\n  TIMEOUT KILL: {kill_reason}")
+            proc.send_signal(signal.SIGINT)
+            try:
+                proc.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            break
+
         if not run_id:
             candidate = _find_run_id(games)
-            if candidate and candidate >= datetime.now().strftime("%Y%m%d"):
+            if candidate and candidate >= start_run_id:
                 run_id = candidate
                 _write_sidecar(tag, run_id, description, games)
             continue
@@ -762,8 +838,14 @@ def log_run_results(
     tag: str = "macla",
     best_scores: dict[str, float] | None = None,
     runtime_min: float = 0.0,
+    config_name: str | None = None,
 ):
-    """Extract results from a run and log to experiment tracker."""
+    """Extract results from a run and log to experiment tracker.
+
+    When config_name is set, results are written to
+    experiments/<tag>/<config_name>/results.jsonl so multiple parallel sweeps
+    don't trample each other.
+    """
     results = extract_run_results(run_id, games)
     best_scores = best_scores or {}
 
@@ -798,6 +880,7 @@ def log_run_results(
             game_score=game_score,
             runtime_min=runtime_min,
             tags=[tag],
+            config_name=config_name,
         )
 
     return results
@@ -825,19 +908,34 @@ def run(
     dry_run: bool = typer.Option(False, help="Only propose params, don't run"),
     config_type: str = typer.Option("unified_macla", help="YAML config type to modify"),
     note: str = typer.Option("", help="Extra context to prepend to experiment description (e.g. 'OnlineAgentEvaluator enabled')"),
+    patience: int = typer.Option(5, help="Stop sweep if no game improves over best-so-far for N consecutive iterations (0 = disable)"),
+    time_budget_min: float = typer.Option(0.0, help="Stop sweep after this many wall-clock minutes (0 = disable)"),
+    config_name: str = typer.Option("", help="Per-config sub-dir (e.g. 'gemma' or 'qwen'). Empty = flat experiments/<TAG>/. Set to isolate parallel sweeps in experiments/<TAG>/<CONFIG_NAME>/."),
 ):
     """Run the autoresearch optimisation loop."""
+    cfg = config_name or None
     print(f"Autoresearch loop: config={config}, tag={tag}, max_iterations={max_iterations}")
-    print(f"Games: {games}\n")
+    print(f"Games: {games}")
+    if cfg:
+        print(f"Per-config sub-dir: experiments/{tag}/{cfg}/")
+    print(f"Early stopping: patience={patience} iters, time_budget={time_budget_min}min\n")
 
-    all_results = load_results(tag=tag)
+    all_results = load_results(tag=tag, config_name=cfg)
+    sweep_start = time.time()
+    no_improve_streak = 0
 
     for iteration in range(max_iterations):
+        # Budget stop: hit the wall-clock cap
+        if time_budget_min > 0:
+            elapsed = (time.time() - sweep_start) / 60
+            if elapsed >= time_budget_min:
+                print(f"\nEarly stop: wall-clock budget reached ({elapsed:.1f}min >= {time_budget_min}min)")
+                break
         print(f"\n{'#'*60}")
         print(f"# Iteration {iteration + 1}/{max_iterations}")
         print(f"{'#'*60}")
 
-        best = get_best_scores(tag)
+        best = get_best_scores(tag, config_name=cfg)
         print(f"\nCurrent best scores: {best}")
 
         # Propose and apply new params per game
@@ -890,11 +988,15 @@ def run(
         change_summaries = []
         for game in games:
             analysis = analyze_trajectory(run_id, game)
-            print(f"\n  {game}: {analysis['total_steps']} steps, {analysis['episodes']} episodes, max_eval={analysis['max_eval']:.2f}")
+            print(
+                f"\n  {game}: {analysis.get('total_steps', 0)} steps, "
+                f"{analysis.get('episodes', 0)} episodes, "
+                f"max_eval={analysis.get('max_eval', 0):.2f}"
+            )
             if analysis.get("failure_zone"):
-                print(f"    Death cluster: {analysis['failure_zone']} ({analysis['failure_zone_deaths']} deaths)")
+                print(f"    Death cluster: {analysis['failure_zone']} ({analysis.get('failure_zone_deaths', 0)} deaths)")
             if analysis.get("repeated_actions"):
-                print(f"    Action repetition: {analysis['top_action']} at {analysis['top_action_pct']:.0%}")
+                print(f"    Action repetition: {analysis.get('top_action', '?')} at {analysis.get('top_action_pct', 0):.0%}")
             if analysis.get("map_stuck"):
                 print(f"    Map stuck: {analysis.get('maps_visited', [])}")
 
@@ -907,7 +1009,7 @@ def run(
             description += " | " + "; ".join(change_summaries[:3])  # Cap for plot readability
 
         # Log results
-        run_results = log_run_results(run_id, games, description, tag, best, runtime_min=elapsed_min)
+        run_results = log_run_results(run_id, games, description, tag, best, runtime_min=elapsed_min, config_name=cfg)
 
         # If triage killed the run, relabel the logged entries
         kill_reason = _triage_check(run_id, games, best) if run_id else None
@@ -915,7 +1017,7 @@ def run(
             _relabel_last_as_early_kill(tag, kill_reason, games, triggered_game=kill_reason.split(':')[0].strip())
 
         # Reload results for next iteration
-        all_results = load_results(tag=tag)
+        all_results = load_results(tag=tag, config_name=cfg)
 
         # Check if any game improved
         any_improved = False
@@ -927,13 +1029,21 @@ def run(
                 print(f"  {game}: no improvement (best={best.get(game, 0):.2f})")
 
         # Regenerate plot
-        plot_progress(tag=tag)
+        plot_progress(tag=tag, config_type=config_type, config_name=cfg)
 
-        if not any_improved:
-            print(f"\nNo improvements in iteration {iteration + 1}. Continuing to explore...")
+        # Convergence stop: track consecutive iterations with no improvement
+        if any_improved:
+            no_improve_streak = 0
+        else:
+            no_improve_streak += 1
+            print(f"\nNo improvements in iteration {iteration + 1} (streak={no_improve_streak}/{patience}).")
+            if patience > 0 and no_improve_streak >= patience:
+                print(f"\nEarly stop: no improvement for {patience} consecutive iterations.")
+                break
 
-    print(f"\nAutoresearch complete after {min(iteration + 1, max_iterations)} iterations")
-    plot_progress(tag=tag)
+    elapsed_total = (time.time() - sweep_start) / 60
+    print(f"\nAutoresearch complete after {min(iteration + 1, max_iterations)} iterations ({elapsed_total:.1f}min)")
+    plot_progress(tag=tag, config_type=config_type, config_name=cfg)
 
 
 @app.command()
