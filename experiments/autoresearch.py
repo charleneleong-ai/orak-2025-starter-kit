@@ -696,6 +696,10 @@ def run_experiment(
     env = os.environ.copy()
     baseline_scores = baseline_scores or {}
 
+    # Capture full timestamp BEFORE Popen so we only accept run_ids created
+    # AFTER this iteration started. Comparing against just YYYYMMDD lets old
+    # iterations' run_ids (same day) leak through and confuses triage.
+    start_run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     start = time.time()
     proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
     kill_reason = None
@@ -705,8 +709,7 @@ def run_experiment(
     for _ in range(60):
         time.sleep(2)
         candidate = _find_run_id(games)
-        # Only accept run IDs created after we started
-        if candidate and candidate >= datetime.now().strftime("%Y%m%d"):
+        if candidate and candidate >= start_run_id:
             run_id = candidate
             break
 
@@ -719,7 +722,7 @@ def run_experiment(
         time.sleep(TRIAGE_POLL_INTERVAL)
         if not run_id:
             candidate = _find_run_id(games)
-            if candidate and candidate >= datetime.now().strftime("%Y%m%d"):
+            if candidate and candidate >= start_run_id:
                 run_id = candidate
                 _write_sidecar(tag, run_id, description, games)
             continue
