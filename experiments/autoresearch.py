@@ -454,9 +454,9 @@ def write_yaml_config(game: str, config: dict, config_type: str = "unified_macla
     path.write_text("\n".join(new_lines) + "\n")
 
 
-def get_best_scores(tag: str = "macla") -> dict[str, float]:
+def get_best_scores(tag: str = "macla", config_name: str | None = None) -> dict[str, float]:
     """Get current best evaluation_score per game from results."""
-    results = load_results(tag=tag)
+    results = load_results(tag=tag, config_name=config_name)
     best = {}
     for r in results:
         game = r["game"]
@@ -788,8 +788,14 @@ def log_run_results(
     tag: str = "macla",
     best_scores: dict[str, float] | None = None,
     runtime_min: float = 0.0,
+    config_name: str | None = None,
 ):
-    """Extract results from a run and log to experiment tracker."""
+    """Extract results from a run and log to experiment tracker.
+
+    When config_name is set, results are written to
+    experiments/<tag>/<config_name>/results.jsonl so multiple parallel sweeps
+    don't trample each other.
+    """
     results = extract_run_results(run_id, games)
     best_scores = best_scores or {}
 
@@ -824,6 +830,7 @@ def log_run_results(
             game_score=game_score,
             runtime_min=runtime_min,
             tags=[tag],
+            config_name=config_name,
         )
 
     return results
@@ -853,13 +860,17 @@ def run(
     note: str = typer.Option("", help="Extra context to prepend to experiment description (e.g. 'OnlineAgentEvaluator enabled')"),
     patience: int = typer.Option(5, help="Stop sweep if no game improves over best-so-far for N consecutive iterations (0 = disable)"),
     time_budget_min: float = typer.Option(0.0, help="Stop sweep after this many wall-clock minutes (0 = disable)"),
+    config_name: str = typer.Option("", help="Per-config sub-dir (e.g. 'gemma' or 'qwen'). Empty = flat experiments/<TAG>/. Set to isolate parallel sweeps in experiments/<TAG>/<CONFIG_NAME>/."),
 ):
     """Run the autoresearch optimisation loop."""
+    cfg = config_name or None
     print(f"Autoresearch loop: config={config}, tag={tag}, max_iterations={max_iterations}")
     print(f"Games: {games}")
+    if cfg:
+        print(f"Per-config sub-dir: experiments/{tag}/{cfg}/")
     print(f"Early stopping: patience={patience} iters, time_budget={time_budget_min}min\n")
 
-    all_results = load_results(tag=tag)
+    all_results = load_results(tag=tag, config_name=cfg)
     sweep_start = time.time()
     no_improve_streak = 0
 
@@ -874,7 +885,7 @@ def run(
         print(f"# Iteration {iteration + 1}/{max_iterations}")
         print(f"{'#'*60}")
 
-        best = get_best_scores(tag)
+        best = get_best_scores(tag, config_name=cfg)
         print(f"\nCurrent best scores: {best}")
 
         # Propose and apply new params per game
@@ -944,7 +955,7 @@ def run(
             description += " | " + "; ".join(change_summaries[:3])  # Cap for plot readability
 
         # Log results
-        run_results = log_run_results(run_id, games, description, tag, best, runtime_min=elapsed_min)
+        run_results = log_run_results(run_id, games, description, tag, best, runtime_min=elapsed_min, config_name=cfg)
 
         # If triage killed the run, relabel the logged entries
         kill_reason = _triage_check(run_id, games, best) if run_id else None
@@ -952,7 +963,7 @@ def run(
             _relabel_last_as_early_kill(tag, kill_reason, games, triggered_game=kill_reason.split(':')[0].strip())
 
         # Reload results for next iteration
-        all_results = load_results(tag=tag)
+        all_results = load_results(tag=tag, config_name=cfg)
 
         # Check if any game improved
         any_improved = False
@@ -964,7 +975,7 @@ def run(
                 print(f"  {game}: no improvement (best={best.get(game, 0):.2f})")
 
         # Regenerate plot
-        plot_progress(tag=tag)
+        plot_progress(tag=tag, config_type=config_type, config_name=cfg)
 
         # Convergence stop: track consecutive iterations with no improvement
         if any_improved:
@@ -978,7 +989,7 @@ def run(
 
     elapsed_total = (time.time() - sweep_start) / 60
     print(f"\nAutoresearch complete after {min(iteration + 1, max_iterations)} iterations ({elapsed_total:.1f}min)")
-    plot_progress(tag=tag)
+    plot_progress(tag=tag, config_type=config_type, config_name=cfg)
 
 
 @app.command()

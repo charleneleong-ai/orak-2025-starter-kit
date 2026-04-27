@@ -33,22 +33,31 @@ from plotly.subplots import make_subplots
 EXPERIMENTS_DIR = Path(__file__).parent
 
 
-def _tag_dir(tag: str | None) -> Path:
-    """Get experiments/<tag>/ directory. Creates if needed."""
+def _tag_dir(tag: str | None, config_name: str | None = None) -> Path:
+    """Get experiments/<tag>[/<config_name>]/ directory. Creates if needed.
+
+    When config_name is set, results live in a per-config sub-dir so multiple
+    parallel sweeps (e.g. gemma vs qwen, or train_fast vs train_slow) don't
+    trample each other. Backward-compatible — config_name=None keeps the flat
+    layout.
+    """
     if tag:
         d = EXPERIMENTS_DIR / tag.lower().replace(" ", "_")
     else:
         d = EXPERIMENTS_DIR
+    if config_name:
+        d = d / config_name.lower().replace(" ", "_")
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def log_experiment(game: str, score: float, steps: int, status: str, description: str,
                    wandb_url: str = "", notes: str = "", game_score: float = 0.0,
-                   runtime_min: float = 0.0, tags: list[str] | None = None):
-    """Append an experiment result to experiments/<tag>/results.jsonl."""
+                   runtime_min: float = 0.0, tags: list[str] | None = None,
+                   config_name: str | None = None):
+    """Append an experiment result to experiments/<tag>[/<config_name>]/results.jsonl."""
     tag = tags[0] if tags else None
-    experiments = load_results(tag=tag)
+    experiments = load_results(tag=tag, config_name=config_name)
     game_experiments = [e for e in experiments if e["game"] == game]
     experiment_num = len(game_experiments)
 
@@ -66,17 +75,19 @@ def log_experiment(game: str, score: float, steps: int, status: str, description
         "wandb_url": wandb_url,
         "timestamp": datetime.now().isoformat(),
     }
+    if config_name:
+        entry["config_name"] = config_name
 
-    results_file = _tag_dir(tag) / "results.jsonl"
+    results_file = _tag_dir(tag, config_name) / "results.jsonl"
     with open(results_file, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
     print(f"Logged to {results_file}: #{experiment_num} {game} score={score} [{status}] {description}")
 
 
-def load_results(tag: str | None = None) -> list[dict]:
-    """Load experiment results from experiments/<tag>/results.jsonl."""
-    results_file = _tag_dir(tag) / "results.jsonl"
+def load_results(tag: str | None = None, config_name: str | None = None) -> list[dict]:
+    """Load experiment results from experiments/<tag>[/<config_name>]/results.jsonl."""
+    results_file = _tag_dir(tag, config_name) / "results.jsonl"
     if not results_file.exists():
         return []
     results = []
@@ -208,7 +219,7 @@ def _read_agent_metadata(games: list[str], config_type: str) -> str:
 
 
 def plot_progress(filter_game: str | None = None, tag: str | None = None,
-                  config_type: str | None = None):
+                  config_type: str | None = None, config_name: str | None = None):
     """Plot autoresearch-style progress chart per game using Plotly.
 
     Args:
@@ -216,10 +227,13 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
         tag: Load from experiments/<tag>/, use as plot title + output dir
         config_type: If set, read configs/<game>/agent/<config_type>.yaml and
             embed model/backend/MACLA params as a metadata annotation.
+        config_name: If set, read+write experiments/<tag>/<config_name>/ for
+            per-config sub-results (multi-sweep isolation).
     """
-    results = load_results(tag=tag)
+    results = load_results(tag=tag, config_name=config_name)
 
-    plot_title = f"{tag} Experiment Progress" if tag else "Experiment Progress"
+    title_suffix = f" — {config_name}" if config_name else ""
+    plot_title = f"{tag} Experiment Progress{title_suffix}" if tag else f"Experiment Progress{title_suffix}"
     if not results:
         print("No results yet. Use 'log' to add experiments.")
         return
@@ -472,7 +486,7 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
         )
 
     # Save to experiments/<tag>/progress.html with a label-toggle switch
-    out_dir = _tag_dir(tag)
+    out_dir = _tag_dir(tag, config_name)
     output_path = out_dir / "progress.html"
     try:
         from experiments._chart_widgets import plotly_label_toggle
