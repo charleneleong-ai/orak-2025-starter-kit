@@ -520,6 +520,7 @@ TRIAGE_SCORE_PLATEAU_STEPS = 80    # Kill if max eval unchanged for N steps
 TRIAGE_NO_LEARN_EPISODES = 5       # Kill if no episode score improvement for N episodes
 TRIAGE_BASELINE_FACTOR = 0.5       # Kill if max_eval < baseline * factor after 100 steps
 TRIAGE_POLL_INTERVAL = 5           # Seconds between game_states.jsonl checks
+ITER_TIMEOUT_MIN = 30              # Hard wall-clock cap per iteration; SIGINT subprocess if exceeded
 
 
 def _find_run_id(games: list[str]) -> str:
@@ -694,6 +695,11 @@ def run_experiment(
     print(f"{'='*60}\n")
 
     env = os.environ.copy()
+    # Disable Weave tracing in subprocess: project doesn't exist on wandb,
+    # every trace upload returns 403, httpx retries forever, leaks CLOSE-WAIT
+    # sockets, eventually run.py deadlocks.
+    env["WEAVE_ENABLED"] = "false"
+    env.setdefault("WEAVE_DISABLED", "true")
     baseline_scores = baseline_scores or {}
 
     # Capture full timestamp BEFORE Popen so we only accept run_ids created
@@ -701,6 +707,7 @@ def run_experiment(
     # iterations' run_ids (same day) leak through and confuses triage.
     start_run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     start = time.time()
+    iter_timeout_s = ITER_TIMEOUT_MIN * 60
     proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
     kill_reason = None
 
@@ -720,6 +727,22 @@ def run_experiment(
     # Monitor loop: poll game_states.jsonl for triage signals
     while proc.poll() is None:
         time.sleep(TRIAGE_POLL_INTERVAL)
+
+        # Wall-clock timeout: a single iteration must not stall the whole sweep
+        if (time.time() - start) > iter_timeout_s:
+            kill_reason = f"iteration timeout ({ITER_TIMEOUT_MIN}min wall-clock)"
+            print(f"\n  TIMEOUT KILL: {kill_reason}")
+            proc.send_signal(signal.SIGINT)
+            try:
+                proc.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            break
+
         if not run_id:
             candidate = _find_run_id(games)
             if candidate and candidate >= start_run_id:
