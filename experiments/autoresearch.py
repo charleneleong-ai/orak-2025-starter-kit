@@ -426,10 +426,18 @@ PARAM_BOUNDS = {
         "macla_warmup_steps": (0, 10),
     },
     "twenty_fourty_eight": {
-        "macla_theta_base": (0.15, 0.35),
-        "macla_max_theta": (0.20, 0.45),
-        "macla_min_theta": (0.05, 0.15),
-        "macla_warmup_steps": (0, 10),
+        # Shifted bounds upward after analysis of PR #20 sweep (rows exp 0-10).
+        # The 6.02% best (iter 6, wandb run
+        # https://wandb.ai/chaleong/orak-2048/runs/20260427_180125_orak-2048)
+        # used theta_base=0.30, max_theta=0.425, min_theta=0.14, warmup=10 —
+        # 3 of 4 params at the OLD bounds ceiling. propose_next_params could
+        # only search DOWN from the breakthrough, never UP, and lost the gain.
+        # Shifting the search window upward means HIGH-theta variants stay
+        # reachable.
+        "macla_theta_base": (0.20, 0.45),
+        "macla_max_theta": (0.30, 0.55),
+        "macla_min_theta": (0.08, 0.20),
+        "macla_warmup_steps": (5, 15),
     },
     "pokemon_red": {
         "macla_theta_base": (0.25, 0.45),
@@ -591,6 +599,15 @@ def _triage_check(
         evals = [e.get("evaluation_score", 0) for e in entries]
         max_eval_raw = max(evals) if evals else 0
         max_eval = normalize_eval_score(game, max_eval_raw, max(e.get("game_score", 0) for e in entries))
+
+        # Don't kill an iter that's already produced a new PR best for this
+        # game. Otherwise propose_next_params advances past the kill (which
+        # ends with a partial run.py and partial flushed state) and the gain
+        # is lost. Hit on iter 4 of PR #20 sweep — super_mario reached 77.83%
+        # (vs prior best 61.13%) then got triage-killed by no_learn=8 before
+        # the new best could be consolidated.
+        if max_eval > baseline_scores.get(game, 0):
+            continue
 
         # Count episodes
         episode_scores = []
