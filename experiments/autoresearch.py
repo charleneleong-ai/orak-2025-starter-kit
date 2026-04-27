@@ -73,7 +73,26 @@ def analyze_trajectory(run_id: str, game: str) -> dict:
     """
     entries = load_game_states(run_id, game)
     if not entries:
-        return {"game": game, "total_steps": 0, "error": "no data"}
+        # Game was triage-killed (or crashed) before any state got logged.
+        # Return a complete stub so downstream consumers (the run-loop print,
+        # propose_changes, the analyze CLI) don't KeyError on missing keys.
+        # Hit on iter 8 of PR #20 sweep (wandb run
+        # https://wandb.ai/chaleong/orak-pokemon-red/runs/20260427_183055_orak-pokemon-red)
+        # when pokemon_red was triage-killed at 0% with no game_states.jsonl
+        # written, leading to KeyError: 'episodes'.
+        return {
+            "game": game,
+            "total_steps": 0,
+            "episodes": 0,
+            "max_eval": 0,
+            "episode_scores": [],
+            "action_distribution": {},
+            "top_action": "",
+            "top_action_pct": 0,
+            "repeated_actions": False,
+            "score_plateau": False,
+            "error": "no data",
+        }
 
     actions = [e.get("action", "") for e in entries]
     action_counts = Counter(actions)
@@ -416,10 +435,13 @@ PARAM_BOUNDS = {
         "macla_theta_base": (0.25, 0.45),
         "macla_max_theta": (0.35, 0.55),
         "macla_min_theta": (0.10, 0.25),
-        # Lowered floor 5 -> 0: the iter 3 breakthrough (14.29%) hit warmup=5
-        # exactly at the old floor, so propose_next_params couldn't explore
-        # any lower. Letting it try warmup={0,1,2,3} preserves the high-theta
-        # / low-warmup combination that's working.
+        # Lowered floor 5 -> 0: the iter 3 breakthrough on PR #20 sweep
+        # (max_eval=14.29%, wandb run
+        # https://wandb.ai/chaleong/orak-pokemon-red/runs/20260427_172124_orak-pokemon-red)
+        # hit warmup=5 exactly at the old bounds floor, so propose_next_params
+        # couldn't explore any lower. Subsequent iters drove warmup UP to 8
+        # then 11 and lost the gain. Letting it try warmup={0,1,2,3} preserves
+        # the high-theta / low-warmup combination that's actually working.
         "macla_warmup_steps": (0, 15),
     },
 }
@@ -522,9 +544,13 @@ def propose_next_params(game: str, results: list[dict], config_type: str = "unif
 
 TRIAGE_SCORE_PLATEAU_STEPS = 80    # Kill if max eval unchanged for N steps
 TRIAGE_NO_LEARN_EPISODES = 8       # Kill if no episode score improvement for N episodes.
-                                   # Was 5 — too tight: super_mario sets a new best in
-                                   # ep 1 then dies in eps 2-6 before procedure learning
-                                   # can compound, even though the iter is healthy.
+                                   # Bumped 5 -> 8 after iter 4 of PR #20 sweep
+                                   # (wandb run https://wandb.ai/chaleong/orak-super-mario/runs/20260427_174648_orak-super-mario):
+                                   # super_mario set a new best of 51.87% in episode 1,
+                                   # then was killed in episodes 2-6 before MACLA's
+                                   # procedure-learning could compound — even though
+                                   # the iter was healthy. 5 was too tight; 8 gives
+                                   # one-shot bests room to consolidate.
 TRIAGE_BASELINE_FACTOR = 0.5       # Kill if max_eval < baseline * factor after 100 steps
 TRIAGE_POLL_INTERVAL = 5           # Seconds between game_states.jsonl checks
 ITER_TIMEOUT_MIN = 30              # Hard wall-clock cap per iteration; SIGINT subprocess if exceeded
@@ -945,11 +971,15 @@ def run(
         change_summaries = []
         for game in games:
             analysis = analyze_trajectory(run_id, game)
-            print(f"\n  {game}: {analysis['total_steps']} steps, {analysis['episodes']} episodes, max_eval={analysis['max_eval']:.2f}")
+            print(
+                f"\n  {game}: {analysis.get('total_steps', 0)} steps, "
+                f"{analysis.get('episodes', 0)} episodes, "
+                f"max_eval={analysis.get('max_eval', 0):.2f}"
+            )
             if analysis.get("failure_zone"):
-                print(f"    Death cluster: {analysis['failure_zone']} ({analysis['failure_zone_deaths']} deaths)")
+                print(f"    Death cluster: {analysis['failure_zone']} ({analysis.get('failure_zone_deaths', 0)} deaths)")
             if analysis.get("repeated_actions"):
-                print(f"    Action repetition: {analysis['top_action']} at {analysis['top_action_pct']:.0%}")
+                print(f"    Action repetition: {analysis.get('top_action', '?')} at {analysis.get('top_action_pct', 0):.0%}")
             if analysis.get("map_stuck"):
                 print(f"    Map stuck: {analysis.get('maps_visited', [])}")
 
