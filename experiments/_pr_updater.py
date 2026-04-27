@@ -29,13 +29,15 @@ sys.path.insert(0, str(ROOT))
 
 TAG = "unified_macla"
 CONFIG_TYPE = "gemma"  # configs/<game>/agent/<CONFIG_TYPE>.yaml — embedded in chart metadata
-RESULTS = ROOT / "experiments" / TAG / "results.jsonl"
-PNG = ROOT / "experiments" / TAG / "progress.png"
-HTML = ROOT / "experiments" / TAG / "progress.html"
+CONFIG_NAME = "macla_checkpoint_carry"  # per-config sub-dir; isolates this sweep from prior data
+_BASE = ROOT / "experiments" / TAG / CONFIG_NAME if CONFIG_NAME else ROOT / "experiments" / TAG
+RESULTS = _BASE / "results.jsonl"
+PNG = _BASE / "progress.png"
+HTML = _BASE / "progress.html"
 POLL_S = 600  # 10 min
-PR_NUMBER = 20
+PR_NUMBER = 21
 REPO = "charleneleong-ai/orak-2025-starter-kit"
-BRANCH = "feat/macla-sweep-live"
+BRANCH = "feat/macla-checkpoint-carry-2048"
 MARKER_START = "<!-- SWEEP_NARRATIVE_START -->"
 MARKER_END = "<!-- SWEEP_NARRATIVE_END -->"
 
@@ -89,7 +91,7 @@ def _refresh_chart() -> bool:
         [str(venv_py), "-c",
          f"import sys; sys.path.insert(0, '{ROOT}'); "
          f"from experiments.experiment_progress import plot_progress; "
-         f"plot_progress(tag='{TAG}', config_type='{CONFIG_TYPE}')"],
+         f"plot_progress(tag='{TAG}', config_type='{CONFIG_TYPE}', config_name={'None' if not CONFIG_NAME else repr(CONFIG_NAME)})"],
         cwd=str(ROOT), capture_output=True, text=True,
     )
     if proc.returncode != 0:
