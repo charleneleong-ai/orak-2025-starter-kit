@@ -35,9 +35,9 @@ RESULTS = _BASE / "results.jsonl"
 PNG = _BASE / "progress.png"
 HTML = _BASE / "progress.html"
 POLL_S = 600  # 10 min
-PR_NUMBER = 21
+PR_NUMBER = 22
 REPO = "charleneleong-ai/orak-2025-starter-kit"
-BRANCH = "feat/macla-checkpoint-carry-2048"
+BRANCH = "feat/macla-checkpoint-carry"
 MARKER_START = "<!-- SWEEP_NARRATIVE_START -->"
 MARKER_END = "<!-- SWEEP_NARRATIVE_END -->"
 
