@@ -416,7 +416,11 @@ PARAM_BOUNDS = {
         "macla_theta_base": (0.25, 0.45),
         "macla_max_theta": (0.35, 0.55),
         "macla_min_theta": (0.10, 0.25),
-        "macla_warmup_steps": (5, 20),
+        # Lowered floor 5 -> 0: the iter 3 breakthrough (14.29%) hit warmup=5
+        # exactly at the old floor, so propose_next_params couldn't explore
+        # any lower. Letting it try warmup={0,1,2,3} preserves the high-theta
+        # / low-warmup combination that's working.
+        "macla_warmup_steps": (0, 15),
     },
 }
 
@@ -517,7 +521,10 @@ def propose_next_params(game: str, results: list[dict], config_type: str = "unif
 # ── Triage Thresholds ──────────────────────────────────────────────
 
 TRIAGE_SCORE_PLATEAU_STEPS = 80    # Kill if max eval unchanged for N steps
-TRIAGE_NO_LEARN_EPISODES = 5       # Kill if no episode score improvement for N episodes
+TRIAGE_NO_LEARN_EPISODES = 8       # Kill if no episode score improvement for N episodes.
+                                   # Was 5 — too tight: super_mario sets a new best in
+                                   # ep 1 then dies in eps 2-6 before procedure learning
+                                   # can compound, even though the iter is healthy.
 TRIAGE_BASELINE_FACTOR = 0.5       # Kill if max_eval < baseline * factor after 100 steps
 TRIAGE_POLL_INTERVAL = 5           # Seconds between game_states.jsonl checks
 ITER_TIMEOUT_MIN = 30              # Hard wall-clock cap per iteration; SIGINT subprocess if exceeded
