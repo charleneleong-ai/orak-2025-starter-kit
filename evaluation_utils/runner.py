@@ -312,7 +312,6 @@ class Runner:
                         # rather than this (empty) run's. Used by autoresearch.py
                         # to carry MACLA's learned procedures across iterations.
                         if self.prev_run_id:
-                            from evaluation_utils.checkpoint_manager import CheckpointManager
                             prev_dir = self._get_game_run_dir(game_name).parent / self.prev_run_id / "checkpoints"
                             if prev_dir.exists():
                                 checkpoint_manager = CheckpointManager(checkpoint_dir=str(prev_dir))
