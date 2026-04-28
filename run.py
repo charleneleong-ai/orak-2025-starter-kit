@@ -83,6 +83,14 @@ def main(
         "--run-id",
         help="Custom run ID for organising outputs (default: timestamp)"
     ),
+    prev_run_id: str | None = typer.Option(
+        None,
+        "--prev-run-id",
+        help="If set with --load-checkpoint, load the latest checkpoint from "
+             "game_logs/<game>/<prev_run_id>/checkpoints/ instead of the "
+             "current run's (empty) checkpoint dir. Used by autoresearch to "
+             "carry MACLA's learned procedures across iterations."
+    ),
 ):
     """Run evaluation for Orak 2025 games."""
 
@@ -117,8 +125,11 @@ def main(
     # Note: weave is auto-initialized by wandb.init() per game project.
     # Do NOT call weave.init() globally — it overrides per-game initialization.
 
-    # If loading checkpoint and run_id not provided, try to find the latest run
-    if run_id is None and load_checkpoint and local and games:
+    # If loading checkpoint and neither run_id nor prev_run_id are provided,
+    # try to find the latest run to resume. Skipped when prev_run_id is set —
+    # autoresearch wants to LOAD FROM prev_run_id but WRITE to a fresh run_id,
+    # so resuming the latest run would clobber game_logs.
+    if run_id is None and load_checkpoint and local and games and not prev_run_id:
         # Check the first game's directory for runs
         first_game_dir = Path(GAME_DATA_DIR) / games[0]
         if first_game_dir.exists():
@@ -127,7 +138,7 @@ def main(
             if runs:
                 # Sort to find the latest (assuming timestamp or lexicographical order)
                 runs.sort()
-                latest_run = runs[tas-1]
+                latest_run = runs[-1]
                 run_id = latest_run
                 logger.info(f"Auto-detected latest run: {latest_run}")
                 logger.info(f"Resuming Run ID: {run_id}")
@@ -160,6 +171,7 @@ def main(
             save_checkpoints=save_checkpoints,
             load_checkpoint=load_checkpoint,
             checkpoint_frequency=checkpoint_frequency,
+            prev_run_id=prev_run_id,
         )
         
         asyncio.run(runner.evaluate_all_games())
