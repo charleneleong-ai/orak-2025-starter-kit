@@ -11,7 +11,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
 
 from agents.base import BaseOrakAgent
-from agents._harness import with_retries
+from agents._harness import structured_invoke_with_usage, with_retries
 
 
 import weave
@@ -215,40 +215,10 @@ class TwentyFourtyEightAgent(BaseOrakAgent):
             
         return "general"
 
-    def get_action(self, obs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-        game_info = obs.get("game_info", {})
-        cur_state_str = obs.get("obs_str", "")
-        obs_image = obs.get("obs_image", None)
-        
-        action, reasoning, output_text, metadata, prompt, game_phase, update_type = self._get_action(
-            task_description=game_info.get("task_description", ""),
-            cur_state_str=cur_state_str,
-            obs_image=obs_image
-        )
-        
-        self._game_phase = game_phase
-        self._last_update_type = update_type
-        
-        log_extras = {
-            "game_phase": game_phase
-        }
-        if prompt:
-            log_extras["prompt"] = prompt
-        if output_text:
-            log_extras["output_text"] = output_text
-        if reasoning:
-            log_extras["reasoning_length"] = len(reasoning)
-        
-        if metadata:
-             if hasattr(metadata, 'prompt_tokens'):
-                log_extras["tokens_prompt"] = metadata.prompt_tokens
-                log_extras["tokens_completion"] = metadata.completion_tokens
-                log_extras["tokens_total"] = metadata.total_tokens
-             elif isinstance(metadata, dict):
-                flattened_metadata = flatten_dict(metadata)
-                log_extras.update(flattened_metadata)
-                
-        return action, log_extras
+    # NOTE: get_action is inherited from BaseOrakAgent; the lenient parser
+    # handles this game's 7-tuple (action, reasoning, output_text, usage,
+    # prompt, game_phase, update_type) and feeds cache stats + fallback flag
+    # automatically.
 
     def _get_phase_hint(self, phase_name: str) -> str:
         """Get the appropriate hint for a given phase name."""
@@ -364,15 +334,15 @@ class TwentyFourtyEightAgent(BaseOrakAgent):
 
         messages.append(HumanMessage(content=user_content))
         
-        # Invoke LLM
-        structured_llm = self._llm.with_structured_output(GameAction)
-        
+        # Invoke LLM (structured_invoke_with_usage preserves token usage)
         usage = None
         output_text = ""
-        
+
         try:
-            # Note: with_structured_output returns the data model directly
-            response = with_retries(lambda: structured_llm.invoke(messages), label="twenty_fourty_eight.llm")
+            response, usage = with_retries(
+                lambda: structured_invoke_with_usage(self._llm, messages, GameAction),
+                label="twenty_fourty_eight.llm",
+            )
 
             action = response.action.lower()
             reasoning = response.reasoning

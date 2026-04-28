@@ -19,7 +19,7 @@ from agents.pokemon_red.openai_pokemon_memory_utils import (
 )
 
 from agents.base import BaseOrakAgent
-from agents._harness import with_retries
+from agents._harness import structured_invoke_with_usage, with_retries
 from .pokemon_prompts import SYSTEM_PROMPT as ADVANCED_PROMPT
 import weave
 
@@ -478,17 +478,17 @@ class PokemonRedAgent(BaseOrakAgent):
 
         messages.append(HumanMessage(content=user_content))
         
-        structured_llm = self._llm.with_structured_output(GameAction)
-        
         action = "pass"
         reasoning = "None"
         current_goal = self._current_goal or "Unknown"
         usage = None
         output_text = ""
-        
+
         try:
-            # Note: with_structured_output returns the data model directly
-            response = with_retries(lambda: structured_llm.invoke(messages), label="pokemon_red.llm")
+            response, usage = with_retries(
+                lambda: structured_invoke_with_usage(self._llm, messages, GameAction),
+                label="pokemon_red.llm",
+            )
 
             action = response.action.lower()
             reasoning = response.reasoning

@@ -15,6 +15,7 @@ from .retry_utils import (
     jittered_backoff,
     with_retries,
 )
+from .structured_invoke import structured_invoke_with_usage
 from .trajectory import (
     StepRecord,
     TrajectoryWriter,
@@ -29,6 +30,7 @@ __all__ = [
     "classify",
     "jittered_backoff",
     "with_retries",
+    "structured_invoke_with_usage",
     "StepRecord",
     "TrajectoryWriter",
     "convert_scratchpad_to_think",

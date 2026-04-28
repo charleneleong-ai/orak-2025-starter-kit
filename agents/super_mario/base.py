@@ -9,7 +9,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
 
 from agents.base import BaseOrakAgent
-from agents._harness import with_retries
+from agents._harness import structured_invoke_with_usage, with_retries
 import weave
 
 GAME_RULES = """
@@ -142,14 +142,14 @@ class SuperMarioAgent(BaseOrakAgent):
 
         messages.append(HumanMessage(content=user_content))
         
-        structured_llm = self._llm.with_structured_output(GameAction)
-        
         usage = None
         output_text = ""
-        
+
         try:
-            # Note: with_structured_output returns the data model directly
-            response = with_retries(lambda: structured_llm.invoke(messages), label="super_mario.llm")
+            response, usage = with_retries(
+                lambda: structured_invoke_with_usage(self._llm, messages, GameAction),
+                label="super_mario.llm",
+            )
 
             jump_level = response.jump_level
             reasoning = response.reasoning

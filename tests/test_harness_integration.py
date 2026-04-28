@@ -176,6 +176,80 @@ def test_with_retries_works_in_agent_context(tmp_path: Path, monkeypatch):
     assert calls["n"] == 2  # one retry, then success
 
 
+# ── Variable-length _get_action tuple parser ────────────────────────────
+
+
+def test_parser_handles_5_tuple_super_mario_shape(tmp_path: Path):
+    """SuperMarioAgent returns (action, reasoning, output_text, usage, prompt) — 5 elements."""
+    agent = _make_minimal_agent(tmp_path)
+    agent._next_response = (
+        "Jump Level: 0", "fake reasoning", "fake output",
+        _FakeChatCompletionUsage(prompt=80, completion=8, cached=20),
+        "fake prompt",
+    )
+    parsed = agent._parse_get_action_result(agent._next_response)
+    assert parsed["action"] == "Jump Level: 0"
+    assert parsed["reasoning"] == "fake reasoning"
+    assert parsed["output_text"] == "fake output"
+    assert parsed["usage"] is not None
+    assert parsed.get("current_goal") is None  # absent from 5-tuple
+
+
+def test_parser_handles_7_tuple_2048_shape(tmp_path: Path):
+    """TwentyFourtyEightAgent: (action, reasoning, output_text, usage, prompt, game_phase, update_type)."""
+    agent = _make_minimal_agent(tmp_path)
+    tup = (
+        "left", "r", "out",
+        _FakeChatCompletionUsage(prompt=50, completion=5, cached=10),
+        "p", "MID-CRITICAL", "atomic_entry",
+    )
+    parsed = agent._parse_get_action_result(tup)
+    assert parsed["game_phase"] == "MID-CRITICAL"
+    assert parsed["update_type"] == "atomic_entry"
+    assert parsed["usage"] is not None
+
+
+def test_parser_handles_8_tuple_macla_shape(tmp_path: Path):
+    """UnifiedMaclaAgent: 4th slot is memory_stats, not usage."""
+    agent = _make_minimal_agent(tmp_path)
+    tup = (
+        "up", "r", "out",
+        {"method_counts": {"bayesian_procedure": 3}},
+        "Goal: x", "EARLY", "macla_update", {"type": "atomic"},
+    )
+    parsed = agent._parse_get_action_result(tup)
+    assert parsed["memory_stats"]["method_counts"]["bayesian_procedure"] == 3
+    assert parsed["update_info"]["type"] == "atomic"
+    # usage is absent — parser sets None so cache_stats noops gracefully
+    assert parsed["usage"] is None
+
+
+def test_parser_rejects_unknown_length(tmp_path: Path):
+    agent = _make_minimal_agent(tmp_path)
+    with pytest.raises(ValueError, match="Unknown _get_action tuple length"):
+        agent._parse_get_action_result(("a", "b"))
+
+
+def test_parser_passes_through_dict_form(tmp_path: Path):
+    agent = _make_minimal_agent(tmp_path)
+    out = agent._parse_get_action_result({"action": "x", "usage": None})
+    assert out["action"] == "x"
+
+
+def test_5_tuple_agent_flows_cache_stats_through_act(tmp_path: Path):
+    """End-to-end: a 5-tuple agent (mario shape) now records cached_tokens."""
+    agent = _make_minimal_agent(tmp_path)
+    agent._next_response = (
+        "Jump Level: 1", "r", "out",
+        _FakeChatCompletionUsage(prompt=100, completion=10, cached=33),
+        "p",
+    )
+    agent.act({"obs_str": "x", "game_info": {"score": 0}}, step=1)
+    rec = agent._trajectory_writer._buffer[0]
+    assert rec.cached_tokens == 33  # 5-tuple parser correctly extracted usage
+    assert rec.action == "Jump Level: 1"
+
+
 # ── Per-step legacy log + new trajectory log coexist ─────────────────────
 
 

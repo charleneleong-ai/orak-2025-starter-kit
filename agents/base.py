@@ -365,6 +365,43 @@ class BaseOrakAgent(weave.Model):
 
         return result
 
+    # Schema map for variable-length _get_action() tuples across game agents.
+    # The harness parser uses this so subclasses can keep their existing
+    # tuple shape without breaking cache-stats / fallback / trajectory plumbing.
+    _GET_ACTION_TUPLE_SCHEMAS: ClassVar[dict[int, list[str]]] = {
+        # SuperMarioAgent — historical 5-tuple (no current_goal)
+        5: ["action", "reasoning", "output_text", "usage", "prompt"],
+        # PokemonRedAgent / StarCraftAgent / BaseOrakAgent — canonical 6-tuple
+        6: ["action", "reasoning", "current_goal", "output_text", "usage", "prompt"],
+        # TwentyFourtyEightAgent — 7-tuple with phase + update_type
+        7: ["action", "reasoning", "output_text", "usage", "prompt", "game_phase", "update_type"],
+        # UnifiedMaclaAgent — 8-tuple with memory_stats (not usage) + update_info
+        8: ["action", "reasoning", "output_text", "memory_stats", "prompt", "game_phase", "update_type", "update_info"],
+    }
+
+    def _parse_get_action_result(self, result: Any) -> dict[str, Any]:
+        """Map any known _get_action tuple/dict shape to a uniform field dict.
+
+        Lets `BaseOrakAgent.get_action` stay tolerant of the historical
+        per-game tuple variants without each subclass re-implementing
+        cache-stats and fallback plumbing.
+        """
+        if isinstance(result, dict):
+            return result
+        if not isinstance(result, tuple):
+            raise TypeError(f"_get_action must return tuple or dict, got {type(result).__name__}")
+        schema = self._GET_ACTION_TUPLE_SCHEMAS.get(len(result))
+        if schema is None:
+            raise ValueError(
+                f"Unknown _get_action tuple length {len(result)}. "
+                f"Register the shape in BaseOrakAgent._GET_ACTION_TUPLE_SCHEMAS."
+            )
+        parsed = dict(zip(schema, result))
+        # MACLA's 8-tuple replaces `usage` with `memory_stats` — fall back to None
+        # so the cache-stats path no-ops gracefully.
+        parsed.setdefault("usage", None)
+        return parsed
+
     def get_action(self, obs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """
         Get action from LLM.
@@ -373,31 +410,55 @@ class BaseOrakAgent(weave.Model):
         game_info = obs.get("game_info", {})
         cur_state_str = obs.get("obs_str", "")
         obs_image = obs.get("obs_image", None)
-        
+
         task_description = game_info.get("task_description", "")
-        
-        action, reasoning, current_goal, output_text, usage, prompt = self._get_action(
+
+        result = self._get_action(
             task_description=task_description,
             cur_state_str=cur_state_str,
-            obs_image=obs_image
+            obs_image=obs_image,
         )
-        
-        log_extras = {}
-        if prompt:
-            log_extras["user_prompt"] = prompt
-        if output_text:
-            log_extras["output_text"] = output_text
-        if reasoning:
-            log_extras["reasoning"] = f"Action: {action}\n\nGoal: {current_goal}\n\n{reasoning}"
-            log_extras["reasoning_length"] = len(reasoning)
-        if usage:
-             if hasattr(usage, 'prompt_tokens'):
+        parsed = self._parse_get_action_result(result)
+
+        action = parsed["action"]
+        usage = parsed.get("usage")
+
+        log_extras: dict[str, Any] = {}
+        if parsed.get("prompt"):
+            log_extras["user_prompt"] = parsed["prompt"]
+        if parsed.get("output_text"):
+            log_extras["output_text"] = parsed["output_text"]
+        if parsed.get("reasoning"):
+            current_goal = parsed.get("current_goal") or ""
+            log_extras["reasoning"] = (
+                f"Action: {action}\n\nGoal: {current_goal}\n\n{parsed['reasoning']}"
+            )
+            log_extras["reasoning_length"] = len(parsed["reasoning"])
+        if parsed.get("game_phase"):
+            log_extras["game_phase"] = parsed["game_phase"]
+            self._game_phase = parsed["game_phase"]
+        if parsed.get("update_type"):
+            log_extras["update_type"] = parsed["update_type"]
+            self._last_update_type = parsed["update_type"]
+
+        if usage is not None:
+            if hasattr(usage, "prompt_tokens"):
                 log_extras["tokens_prompt"] = usage.prompt_tokens
                 log_extras["tokens_completion"] = usage.completion_tokens
                 log_extras["tokens_total"] = usage.total_tokens
-             elif isinstance(usage, dict):
+            elif isinstance(usage, dict):
                 log_extras.update(usage)
 
+        self._postprocess_log_extras(log_extras, usage)
+        return action, log_extras
+
+    def _postprocess_log_extras(self, log_extras: dict[str, Any], usage: Any) -> None:
+        """Add cache stats + fallback flag to log_extras.
+
+        Reusable from `BaseMaclaAgent.get_action` and any other override that
+        builds log_extras manually — keeps cache/fallback plumbing in one place.
+        Mutates `log_extras` in place.
+        """
         cache_stats = extract_cache_stats(usage)
         if cache_stats["cached_tokens"]:
             log_extras["tokens_cached"] = cache_stats["cached_tokens"]
@@ -408,8 +469,6 @@ class BaseOrakAgent(weave.Model):
             log_extras["is_fallback"] = True
             log_extras["fallback_reason"] = self._pending_fallback.get("reason", "")
             self._pending_fallback = None
-
-        return action, log_extras
 
     def _mark_fallback(self, reason: str) -> None:
         """Subclasses call this when their _get_action falls back to a default
