@@ -11,6 +11,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
 
 from agents.base import BaseOrakAgent
+from agents._harness import with_retries
 
 
 import weave
@@ -371,14 +372,15 @@ class TwentyFourtyEightAgent(BaseOrakAgent):
         
         try:
             # Note: with_structured_output returns the data model directly
-            response = structured_llm.invoke(messages)
-            
+            response = with_retries(lambda: structured_llm.invoke(messages), label="twenty_fourty_eight.llm")
+
             action = response.action.lower()
             reasoning = response.reasoning
             output_text = f"Action: {action}\nReasoning: {reasoning}"
-            
+
         except Exception as e:
-            logger.error(f"Error invoking LLM: {traceback.format_exc()}")
+            logger.error(f"Error invoking LLM after retries: {traceback.format_exc()}")
+            self._mark_fallback(f"llm_error: {type(e).__name__}: {str(e)[:200]}")
             action = "left"
             reasoning = f"Error: {e}"
             output_text = str(e)

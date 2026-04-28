@@ -19,6 +19,7 @@ from agents.pokemon_red.openai_pokemon_memory_utils import (
 )
 
 from agents.base import BaseOrakAgent
+from agents._harness import with_retries
 from .pokemon_prompts import SYSTEM_PROMPT as ADVANCED_PROMPT
 import weave
 
@@ -487,8 +488,8 @@ class PokemonRedAgent(BaseOrakAgent):
         
         try:
             # Note: with_structured_output returns the data model directly
-            response = structured_llm.invoke(messages)
-            
+            response = with_retries(lambda: structured_llm.invoke(messages), label="pokemon_red.llm")
+
             action = response.action.lower()
             reasoning = response.reasoning
             current_goal = response.current_goal or "Unknown"
@@ -514,7 +515,8 @@ class PokemonRedAgent(BaseOrakAgent):
                     self._history.pop(0)
 
         except Exception as e:
-            logger.error(f"Error invoking LLM: {traceback.format_exc()}")
+            logger.error(f"Error invoking LLM after retries: {traceback.format_exc()}")
+            self._mark_fallback(f"llm_error: {type(e).__name__}: {str(e)[:200]}")
             # Default fallback action
             action = "pass"
             reasoning = f"Error: {e}"

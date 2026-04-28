@@ -8,6 +8,11 @@ import json
 from loguru import logger
 from config.agent_config import AgentConfig
 from config.base import WandbConfig
+from agents._harness import (
+    StepRecord,
+    TrajectoryWriter,
+    extract_cache_stats,
+)
 
 try:
     from PIL import Image as PILImage
@@ -33,6 +38,9 @@ class BaseOrakAgent(weave.Model):
         "total_tokens": 0
     })
     _requests_log_path: Optional[str] = PrivateAttr(default=None)
+    _trajectory_writer: Optional[TrajectoryWriter] = PrivateAttr(default=None)
+    _cached_tokens_total: int = PrivateAttr(default=0)
+    _pending_fallback: Optional[dict[str, Any]] = PrivateAttr(default=None)
 
     # Per-episode stats
     _episode_stats: list[dict[str, Any]] = PrivateAttr(default_factory=list)
@@ -86,9 +94,11 @@ class BaseOrakAgent(weave.Model):
                 self._weave_client = None
 
     def set_log_dir(self, log_dir: str):
-        """Set directory for logging raw requests."""
+        """Set directory for logging raw requests + structured trajectory."""
         os.makedirs(log_dir, exist_ok=True)
         self._requests_log_path = os.path.join(log_dir, "raw_requests.jsonl")
+        model_name = getattr(self.config, "model", "unknown") if self.config else "unknown"
+        self._trajectory_writer = TrajectoryWriter(log_dir, model=model_name)
 
     def get_model_declaration(self) -> dict[str, Any]:
         """Return model declaration."""
@@ -112,6 +122,17 @@ class BaseOrakAgent(weave.Model):
 
     def record_episode_end(self, episode_id: int, game_name: str, seed: Any, final_score: float):
         """Record stats for a completed episode."""
+        if self._trajectory_writer is not None:
+            try:
+                self._trajectory_writer.flush_episode(
+                    episode_id=episode_id,
+                    completed=True,
+                    final_score=float(final_score),
+                    game_name=game_name,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to flush trajectory at episode end: {e}")
+
         self._episode_stats.append({
             "episode_id": episode_id,
             "game_name": game_name,
@@ -207,13 +228,33 @@ class BaseOrakAgent(weave.Model):
                         "tokens": {
                             "prompt": log_extras.get("tokens_prompt", 0),
                             "completion": log_extras.get("tokens_completion", 0),
-                            "total": log_extras.get("tokens_total", 0)
+                            "total": log_extras.get("tokens_total", 0),
+                            "cached": log_extras.get("tokens_cached", 0),
                         }
                     }
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
             except Exception as e:
                 logger.error(f"Failed to log raw request: {e}")
                 raise ValueError(f"Failed to log raw request: {traceback.format_exc()}")
+
+        if self._trajectory_writer is not None and log_extras and "user_prompt" in log_extras:
+            try:
+                self._trajectory_writer.add_step(StepRecord(
+                    step=self._step_count,
+                    system_prompt=log_extras.get("system_prompt"),
+                    user_prompt=log_extras.get("user_prompt", ""),
+                    assistant_output=log_extras.get("output_text", ""),
+                    action=action,
+                    reasoning=log_extras.get("reasoning", "") or "",
+                    tokens_prompt=log_extras.get("tokens_prompt", 0),
+                    tokens_completion=log_extras.get("tokens_completion", 0),
+                    tokens_total=log_extras.get("tokens_total", 0),
+                    cached_tokens=log_extras.get("tokens_cached", 0),
+                    is_fallback=bool(log_extras.get("is_fallback", False)),
+                    fallback_reason=log_extras.get("fallback_reason"),
+                ))
+            except Exception as e:
+                logger.warning(f"Failed to record trajectory step: {e}")
 
         if self.wandb_config and self.wandb_config.enabled:
             log_data = {
@@ -356,8 +397,24 @@ class BaseOrakAgent(weave.Model):
                 log_extras["tokens_total"] = usage.total_tokens
              elif isinstance(usage, dict):
                 log_extras.update(usage)
-                
+
+        cache_stats = extract_cache_stats(usage)
+        if cache_stats["cached_tokens"]:
+            log_extras["tokens_cached"] = cache_stats["cached_tokens"]
+            self._cached_tokens_total += cache_stats["cached_tokens"]
+            log_extras["cached_tokens_total"] = self._cached_tokens_total
+
+        if self._pending_fallback is not None:
+            log_extras["is_fallback"] = True
+            log_extras["fallback_reason"] = self._pending_fallback.get("reason", "")
+            self._pending_fallback = None
+
         return action, log_extras
+
+    def _mark_fallback(self, reason: str) -> None:
+        """Subclasses call this when their _get_action falls back to a default
+        action because of an LLM error. Surfaces in trajectory + log_extras."""
+        self._pending_fallback = {"reason": reason}
 
     def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, str, Any, str]:
         """
