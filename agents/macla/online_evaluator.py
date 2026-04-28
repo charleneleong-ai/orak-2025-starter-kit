@@ -107,7 +107,46 @@ class OnlineAgentEvaluator:
         max_tile = self._find_int(r"[Mm]ax.?[Tt]ile:?\s*(\d+)", state) or 0
         # Count empty cells from board representation
         empty_cells = state.count(", 0,") + state.count("[0,") + state.count(", 0]") + state.count("[0]")
-        return {"score": score, "max_tile": max_tile, "empty_cells": empty_cells}
+        # Locate max-tile position (corner / edge / center) — corner-anchoring
+        # is the dominant 2048 strategy, so densifying its signal helps the
+        # agent learn it from procedure feedback rather than from terminal
+        # game-over reward alone.
+        max_pos = self._extract_2048_max_position(state, max_tile)
+        return {"score": score, "max_tile": max_tile, "empty_cells": empty_cells, "max_pos": max_pos}
+
+    def _extract_2048_max_position(self, state: str, max_tile: int) -> str:
+        """Return 'corner' / 'edge' / 'center' / 'unknown' for the max tile.
+
+        Parses the 4×4 board from the state string. The board is typically
+        rendered as nested lists, e.g. '[[0, 2, 4, 0], [0, 0, 8, 0], ...]'.
+        """
+        if max_tile <= 0:
+            return "unknown"
+        # Match 4 consecutive rows of 4 numbers each
+        m = re.search(
+            r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]"
+            r"\s*,\s*"
+            r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]"
+            r"\s*,\s*"
+            r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]"
+            r"\s*,\s*"
+            r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]",
+            state,
+        )
+        if not m:
+            return "unknown"
+        cells = [int(x) for x in m.groups()]
+        # Find max-tile cell index (0-15, row-major)
+        try:
+            idx = cells.index(max_tile)
+        except ValueError:
+            return "unknown"
+        r, c = divmod(idx, 4)
+        if (r, c) in {(0, 0), (0, 3), (3, 0), (3, 3)}:
+            return "corner"
+        if r in (0, 3) or c in (0, 3):
+            return "edge"
+        return "center"
 
     def _reward_2048(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
         if is_fatal:
@@ -132,6 +171,18 @@ class OnlineAgentEvaluator:
         elif cur_empty < prev_empty - 1:
             reward -= 0.2  # Board getting crowded
 
+        # Corner-anchoring (the dominant 2048 strategy). Densifies the strategic
+        # signal so procedures get update events for "max-tile in corner →
+        # GOOD" and "anchor disturbed → BAD" without needing terminal game-over
+        # feedback. Doesn't bias toward any specific corner (all 4 are
+        # symmetric); it's the *invariant* that's rewarded.
+        prev_pos = prev.get("max_pos")
+        cur_pos = cur.get("max_pos")
+        if cur_pos == "corner":
+            reward += 0.4  # max-tile is anchored — keep it there
+        if prev_pos == "corner" and cur_pos in ("edge", "center"):
+            reward -= 0.5  # anchor was disturbed — strong negative signal
+
         # Board stuck (no score change = no merges happened)
         if score_delta == 0 and not is_fatal:
             self._stagnation_count += 1
@@ -155,32 +206,34 @@ class OnlineAgentEvaluator:
             return -1.5
 
         reward = 0.0
-        # Map transition bonus — reward moving between rooms/maps.
-        # This is the primary navigation signal before any flags are earned.
+        # Map transition bonus — reward moving between rooms/maps. This is the
+        # primary navigation signal before any flags are earned. Pokemon's main
+        # blocker in the PR #20 / #22 sweeps was getting stuck on the starting
+        # map, so the map-change reward is the densest progress signal we have.
         prev_map = prev.get("map_name", "")
         cur_map = cur.get("map_name", "")
-        if cur_map and prev_map and cur_map != prev_map:
-            reward += 0.8
+        map_changed = bool(cur_map and prev_map and cur_map != prev_map)
+        if map_changed:
+            reward += 1.5  # consolidated (was +0.8 + duplicate +1.0 below)
 
-        # Flag collected (big bonus)
+        # Flag collected (big bonus — these are the actual eval scoring units)
         flag_delta = cur.get("flags", 0) - prev.get("flags", 0)
         if flag_delta > 0:
             reward += 3.0 * flag_delta
 
-        # Score increase
+        # Score increase (intermediate)
         score_delta = cur.get("score", 0) - prev.get("score", 0)
         if score_delta > 0:
             reward += score_delta / 2.0
 
-        # New area entered
-        if cur.get("map_name") and cur["map_name"] != prev.get("map_name", ""):
-            reward += 1.0
-
-        # Stuck in same area with no progress
-        if score_delta == 0 and flag_delta == 0 and cur.get("map_name") == prev.get("map_name"):
+        # Stuck in same area with no progress — tightened from 5 → 3 turns and
+        # penalty from -0.2 → -0.4. Pokemon iters in the prior sweep showed
+        # 50+ steps with the agent mashing the same direction without leaving
+        # the starting map; the prior penalty was too weak to discourage it.
+        if score_delta == 0 and flag_delta == 0 and not map_changed:
             self._stagnation_count += 1
-            if self._stagnation_count >= 5:
-                reward -= 0.2
+            if self._stagnation_count >= 3:
+                reward -= 0.4
         else:
             self._stagnation_count = 0
 
