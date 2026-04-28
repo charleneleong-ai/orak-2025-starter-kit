@@ -195,6 +195,162 @@ class GeometricExtractor:
         return []
 
 
+class StrategicGridExtractor:
+    """
+    Extracts strategic-feature signatures from grid-based games (2048).
+
+    The previous `GeometricExtractor` keyed procedures on the literal grid
+    text, so every board produced a unique context key — procedures rarely
+    fired on subsequent boards because the keys never matched. This extractor
+    instead emits a strategic feature signature that captures the *invariants*
+    that 2048 strategy depends on:
+
+      max_tile_value  — quantised to log2 buckets (4, 16, 64, 256, ...)
+      max_corner      — TL / TR / BL / BR / edge / center / none
+      empty_bucket    — many (>=8) / mid (4-7) / few (<=3)
+      chain_dir       — strongest descending-row direction (N/S/E/W/none)
+      merge_count     — adjacent same-value pairs (0 / 1 / 2+)
+
+    Millions of literal boards collapse into a few hundred strategic clusters.
+    Procedures keyed on this signature fire across many boards with the same
+    *shape*, accumulating the alpha/beta updates needed to actually be
+    selected by the Bayesian selector.
+    """
+
+    def __init__(self, config: dict[str, Any]):
+        self.score_pattern = config.get("score_pattern", r"Score:\s*(\d+)")
+        self.grid_pattern = config.get(
+            "grid_pattern",
+            r"\[\[\s*\d+(?:\s*,\s*\d+){3}\s*\][\s,]*"
+            r"\[\s*\d+(?:\s*,\s*\d+){3}\s*\][\s,]*"
+            r"\[\s*\d+(?:\s*,\s*\d+){3}\s*\][\s,]*"
+            r"\[\s*\d+(?:\s*,\s*\d+){3}\s*\]",
+        )
+        self.grid_size = config.get("grid_size", 4)
+
+    def extract(self, observation: str) -> dict[str, Any]:
+        if isinstance(observation, list):
+            observation = "\n".join(str(item) for item in observation)
+
+        context: dict[str, Any] = {}
+        try:
+            score_match = re.search(self.score_pattern, observation)
+            if score_match:
+                context["score"] = int(score_match.group(1))
+
+            grid = self._parse_grid(observation)
+            if grid is None:
+                return context
+
+            sig = self._strategic_signature(grid)
+            # The Bayesian selector matches on `context_key` (a string). We
+            # stringify the signature deterministically so identical shapes
+            # produce identical keys.
+            key = (
+                f"max={sig['max_bucket']}|corner={sig['max_corner']}"
+                f"|empty={sig['empty_bucket']}|chain={sig['chain_dir']}"
+                f"|merges={sig['merge_bucket']}"
+            )
+            context["context_key"] = key
+            context["signature"] = sig
+        except Exception as e:
+            logger.warning(f"StrategicGridExtractor failed: {e}")
+        return context
+
+    def extract_preconditions(self, context_key: str, observation: str) -> list[str]:
+        # The signature key already encodes preconditions. Split it back so
+        # individual features can be matched as discriminative tokens.
+        if not context_key:
+            return []
+        return [tok for tok in context_key.split("|") if tok]
+
+    def _parse_grid(self, observation: str) -> list[list[int]] | None:
+        m = re.search(self.grid_pattern, observation)
+        if not m:
+            return None
+        # Pull the 16 cell numbers in row-major order
+        cells = [int(x) for x in re.findall(r"\d+", m.group(0))]
+        if len(cells) != self.grid_size * self.grid_size:
+            return None
+        return [cells[i * self.grid_size:(i + 1) * self.grid_size]
+                for i in range(self.grid_size)]
+
+    def _strategic_signature(self, grid: list[list[int]]) -> dict[str, Any]:
+        n = len(grid)
+        max_val = max(max(row) for row in grid)
+
+        # max_tile bucket — log2-style so 256 / 257 collapse to the same bucket
+        if max_val <= 0:
+            max_bucket = "0"
+        else:
+            # Find largest power of 2 <= max_val
+            bucket_val = 1
+            while bucket_val * 2 <= max_val:
+                bucket_val *= 2
+            max_bucket = str(bucket_val)
+
+        # Locate max-tile position
+        max_corner = "none"
+        if max_val > 0:
+            for r in range(n):
+                for c in range(n):
+                    if grid[r][c] == max_val:
+                        if (r, c) == (0, 0): max_corner = "TL"
+                        elif (r, c) == (0, n - 1): max_corner = "TR"
+                        elif (r, c) == (n - 1, 0): max_corner = "BL"
+                        elif (r, c) == (n - 1, n - 1): max_corner = "BR"
+                        elif r in (0, n - 1) or c in (0, n - 1): max_corner = "edge"
+                        else: max_corner = "center"
+                        break
+                if max_corner != "none":
+                    break
+
+        # Empty cell bucket
+        empty = sum(1 for row in grid for v in row if v == 0)
+        if empty >= 8:
+            empty_bucket = "many"
+        elif empty >= 4:
+            empty_bucket = "mid"
+        else:
+            empty_bucket = "few"
+
+        # Strongest descending-row direction (where the largest values cluster).
+        # Compares row sums and col sums to find the dominant edge.
+        row_sums = [sum(row) for row in grid]
+        col_sums = [sum(grid[r][c] for r in range(n)) for c in range(n)]
+        edges = {
+            "N": row_sums[0],
+            "S": row_sums[-1],
+            "W": col_sums[0],
+            "E": col_sums[-1],
+        }
+        chain_dir = max(edges, key=edges.get) if max(edges.values()) > 0 else "none"
+
+        # Merge opportunities: adjacent cells with same value (and non-zero)
+        merges = 0
+        for r in range(n):
+            for c in range(n):
+                v = grid[r][c]
+                if v == 0:
+                    continue
+                if c + 1 < n and grid[r][c + 1] == v:
+                    merges += 1
+                if r + 1 < n and grid[r + 1][c] == v:
+                    merges += 1
+        merge_bucket = "0" if merges == 0 else ("1" if merges == 1 else "2+")
+
+        return {
+            "max_value": max_val,
+            "max_bucket": max_bucket,
+            "max_corner": max_corner,
+            "empty_count": empty,
+            "empty_bucket": empty_bucket,
+            "chain_dir": chain_dir,
+            "merge_count": merges,
+            "merge_bucket": merge_bucket,
+        }
+
+
 def build_context_extractor(mode: str, config: dict[str, Any]) -> ContextExtractor:
     """Factory: build the right extractor from game config."""
     if mode == "regex_spatial":
@@ -203,5 +359,7 @@ def build_context_extractor(mode: str, config: dict[str, Any]) -> ContextExtract
         return DictFieldExtractor(config)
     elif mode == "geometric":
         return GeometricExtractor(config)
+    elif mode == "strategic_grid":
+        return StrategicGridExtractor(config)
     else:
         raise ValueError(f"Unknown context extraction mode: {mode}")

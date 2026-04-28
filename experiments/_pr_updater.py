@@ -29,15 +29,15 @@ sys.path.insert(0, str(ROOT))
 
 TAG = "unified_macla"
 CONFIG_TYPE = "gemma"  # configs/<game>/agent/<CONFIG_TYPE>.yaml — embedded in chart metadata
-CONFIG_NAME = "macla_procedure_carryover"  # per-config sub-dir; isolates this sweep from prior data
+CONFIG_NAME = "macla_state_abstraction"  # per-config sub-dir; isolates this sweep from prior data
 _BASE = ROOT / "experiments" / TAG / CONFIG_NAME if CONFIG_NAME else ROOT / "experiments" / TAG
 RESULTS = _BASE / "results.jsonl"
 PNG = _BASE / "progress.png"
 HTML = _BASE / "progress.html"
 POLL_S = 600  # 10 min
-PR_NUMBER = 22
+PR_NUMBER = 23
 REPO = "charleneleong-ai/orak-2025-starter-kit"
-BRANCH = "feat/macla-checkpoint-carry"
+BRANCH = "feat/macla-reward-shaping"
 MARKER_START = "<!-- SWEEP_NARRATIVE_START -->"
 MARKER_END = "<!-- SWEEP_NARRATIVE_END -->"
 

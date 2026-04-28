@@ -22,10 +22,19 @@ FATAL_KEYWORDS: list[str] = []
 
 METRIC_FIELDS = ["score", "max_tile"]
 
-CONTEXT_EXTRACTION_MODE = "geometric"
+CONTEXT_EXTRACTION_MODE = "strategic_grid"
 CONTEXT_FIELDS = {
     "score_pattern": r"Score:\s*(\d+)",
-    "grid_pattern": r"Grid:\s*\n((?:.*\n){4})",
+    # Match the 4×4 board literal in the observation (any of:
+    # [[a, b, c, d], [...], [...], [...]] format). Falls back to default
+    # in StrategicGridExtractor if absent.
+    "grid_pattern": (
+        r"\[\[\s*\d+(?:\s*,\s*\d+){3}\s*\][\s,]*"
+        r"\[\s*\d+(?:\s*,\s*\d+){3}\s*\][\s,]*"
+        r"\[\s*\d+(?:\s*,\s*\d+){3}\s*\][\s,]*"
+        r"\[\s*\d+(?:\s*,\s*\d+){3}\s*\]"
+    ),
+    "grid_size": 4,
 }
 
 
