@@ -8,11 +8,12 @@ Embedding backends, in priority order:
 
 1. ``embedding_fn`` injected at construction (tests, custom embedders).
 2. OpenAI ``text-embedding-3-small`` if ``OPENAI_API_KEY`` is set.
-3. Hash-based deterministic fallback when neither is available — keeps the
-   provider usable in fully-local deployments (vLLM-only, no API keys).
-   Semantic similarity is degraded to exact-token overlap, but dedup,
-   retrieval lifecycle, and stats keep working so callers can opt in
-   without crashing.
+3. ``sentence-transformers`` local model (default ``all-MiniLM-L6-v2``,
+   384-dim, ~80MB, CPU-fast) — fully local, no API needed. This is the
+   happy path for vLLM-Gemma deployments.
+4. SHA256 hash-based fallback when no semantic backend is available —
+   degrades semantic similarity to exact-string overlap but keeps dedup,
+   retrieval lifecycle, and stats working without crashing.
 """
 from __future__ import annotations
 
@@ -52,6 +53,7 @@ class VectorMemoryProvider(MemoryProvider):
         embedding_fn: Optional[Callable[[str], np.ndarray]] = None,
         *,
         embedding_model: str = "text-embedding-3-small",
+        local_model: str = "sentence-transformers/all-MiniLM-L6-v2",
         max_memories: int = 100,
         default_top_k: int = 3,
         default_threshold: float = 0.5,
@@ -59,13 +61,17 @@ class VectorMemoryProvider(MemoryProvider):
     ) -> None:
         self._embedding_fn = embedding_fn
         self._embedding_model = embedding_model
+        self._local_model_name = local_model
         self._max_memories = max_memories
         self._default_top_k = default_top_k
         self._default_threshold = default_threshold
         self._dim = dim
         self._memories: list[dict[str, Any]] = []
-        self._client = None  # lazy — only when default backend is used
-        self._client_unavailable = False  # set on first failure to skip retries
+        self._client = None  # lazy — only when OpenAI backend is used
+        self._client_unavailable = False
+        self._local_model = None  # lazy — only when sentence-transformers is used
+        self._local_model_unavailable = False
+        self._backend_in_use: str = "none"  # "openai" | "local" | "hash" | "injected"
         self._stats = {"adds": 0, "retrievals": 0, "hits": 0}
 
     # ── MemoryProvider interface ─────────────────────────────────────
@@ -132,31 +138,61 @@ class VectorMemoryProvider(MemoryProvider):
                 if self._stats["retrievals"] > 0
                 else 0.0
             ),
+            "backend": self._backend_in_use,
         }
 
     # ── Internals (mirrored from pokemon's VectorMemory) ─────────────
 
     def _embed(self, text: str) -> np.ndarray:
         if self._embedding_fn is not None:
+            self._backend_in_use = "injected"
             return self._embedding_fn(text)
+
+        # 1. OpenAI cloud (if API key is set).
         if not self._client_unavailable:
             try:
                 if self._client is None:
                     if not os.environ.get("OPENAI_API_KEY"):
-                        raise RuntimeError("OPENAI_API_KEY not set — using local hash fallback")
+                        raise RuntimeError("OPENAI_API_KEY not set")
                     import openai
                     self._client = openai.OpenAI()
                 response = self._client.embeddings.create(
                     model=self._embedding_model,
                     input=text,
                 )
+                self._backend_in_use = "openai"
                 return np.array(response.data[0].embedding)
             except Exception as e:
-                logger.warning(
-                    f"[VectorMemory] OpenAI embeddings unavailable, falling back "
-                    f"to hash-based local embeddings (semantic match degraded): {e}"
+                logger.info(
+                    f"[VectorMemory] OpenAI embeddings unavailable ({e}), "
+                    f"trying local sentence-transformers"
                 )
                 self._client_unavailable = True
+
+        # 2. sentence-transformers local model.
+        if not self._local_model_unavailable:
+            try:
+                if self._local_model is None:
+                    from sentence_transformers import SentenceTransformer
+                    logger.info(
+                        f"[VectorMemory] loading local embedding model "
+                        f"{self._local_model_name!r} (first call only)"
+                    )
+                    self._local_model = SentenceTransformer(self._local_model_name)
+                vec = self._local_model.encode(
+                    text, convert_to_numpy=True, show_progress_bar=False
+                )
+                self._backend_in_use = "local"
+                return np.asarray(vec)
+            except Exception as e:
+                logger.warning(
+                    f"[VectorMemory] sentence-transformers unavailable ({e}), "
+                    f"falling back to hash embeddings (semantic match degraded)"
+                )
+                self._local_model_unavailable = True
+
+        # 3. Hash-based deterministic fallback.
+        self._backend_in_use = "hash"
         return self._hash_embed(text)
 
     @staticmethod

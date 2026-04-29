@@ -169,3 +169,27 @@ def test_on_session_end_no_op():
 def test_system_prompt_block_default_empty():
     p = VectorMemoryProvider(embedding_fn=_det_embed)
     assert p.system_prompt_block() == ""
+
+
+# ── backend selection ──────────────────────────────────────────────────
+
+
+def test_stats_reports_backend_in_use():
+    p = VectorMemoryProvider(embedding_fn=_det_embed)
+    p.add_event("hello")
+    s = p.stats()
+    assert s["backend"] == "injected"
+
+
+def test_local_sentence_transformers_backend(monkeypatch):
+    """When OPENAI_API_KEY is missing, provider falls through to the local
+    sentence-transformers model. Skipped if sentence-transformers is not
+    installed in this environment."""
+    pytest.importorskip("sentence_transformers")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    p = VectorMemoryProvider()  # no embedding_fn — exercises the real chain
+    p.add_event("the quick brown fox")
+    p.add_event("a different memory entirely")
+    out = p.prefetch("brown fox")
+    assert "brown fox" in out  # semantic match should succeed
+    assert p.stats()["backend"] == "local"
