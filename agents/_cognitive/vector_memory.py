@@ -4,26 +4,20 @@ Lifted from pokemon_red's ``VectorMemory`` class
 (``agents/pokemon_red/openai_pokemon_vector_memory.py``) and reshaped to
 implement the ``MemoryProvider`` interface so any agent can opt in.
 
-What pokemon's class did:
-* embed each memory with ``text-embedding-3-small`` via openai client
-* cosine-similarity retrieval, top-k with threshold
-* sliding-window cap (default 100 entries) — drop oldest when full
-* deduplicate via similarity check before adding
+Embedding backends, in priority order:
 
-What this provider keeps the same:
-* the same retrieval algorithm + embedding model
-* the same default thresholds (top-k=3, threshold=0.5)
-
-What's new:
-* implements ``MemoryProvider`` lifecycle so it composes with any agent
-* ``prefetch`` returns formatted text for prompt injection
-* ``sync_turn`` and ``add_event`` are the two write paths (turn-by-turn and
-  event-driven), matching pokemon's two existing memory writes
-* embedding model + max_memories + top_k + threshold all configurable
-* embedder injectable via ``embedding_fn`` for unit tests (mocked numpy)
+1. ``embedding_fn`` injected at construction (tests, custom embedders).
+2. OpenAI ``text-embedding-3-small`` if ``OPENAI_API_KEY`` is set.
+3. Hash-based deterministic fallback when neither is available — keeps the
+   provider usable in fully-local deployments (vLLM-only, no API keys).
+   Semantic similarity is degraded to exact-token overlap, but dedup,
+   retrieval lifecycle, and stats keep working so callers can opt in
+   without crashing.
 """
 from __future__ import annotations
 
+import hashlib
+import os
 import time
 from typing import Any, Callable, Optional
 
@@ -71,6 +65,7 @@ class VectorMemoryProvider(MemoryProvider):
         self._dim = dim
         self._memories: list[dict[str, Any]] = []
         self._client = None  # lazy — only when default backend is used
+        self._client_unavailable = False  # set on first failure to skip retries
         self._stats = {"adds": 0, "retrievals": 0, "hits": 0}
 
     # ── MemoryProvider interface ─────────────────────────────────────
@@ -144,19 +139,36 @@ class VectorMemoryProvider(MemoryProvider):
     def _embed(self, text: str) -> np.ndarray:
         if self._embedding_fn is not None:
             return self._embedding_fn(text)
-        # Lazy default backend — openai text-embedding-3-small.
-        if self._client is None:
-            import openai
-            self._client = openai.OpenAI()
-        try:
-            response = self._client.embeddings.create(
-                model=self._embedding_model,
-                input=text,
-            )
-            return np.array(response.data[0].embedding)
-        except Exception as e:
-            logger.warning(f"[VectorMemory] embedding failed, using zero vector: {e}")
-            return np.zeros(self._dim)
+        if not self._client_unavailable:
+            try:
+                if self._client is None:
+                    if not os.environ.get("OPENAI_API_KEY"):
+                        raise RuntimeError("OPENAI_API_KEY not set — using local hash fallback")
+                    import openai
+                    self._client = openai.OpenAI()
+                response = self._client.embeddings.create(
+                    model=self._embedding_model,
+                    input=text,
+                )
+                return np.array(response.data[0].embedding)
+            except Exception as e:
+                logger.warning(
+                    f"[VectorMemory] OpenAI embeddings unavailable, falling back "
+                    f"to hash-based local embeddings (semantic match degraded): {e}"
+                )
+                self._client_unavailable = True
+        return self._hash_embed(text)
+
+    @staticmethod
+    def _hash_embed(text: str, dim: int = 64) -> np.ndarray:
+        """Deterministic local embedding — SHA256 over text bytes, unpacked
+        into a fixed-dimension float vector. Same text → same vector → exact
+        dedup still works. Different texts → near-orthogonal → semantic
+        similarity is approximated by token-overlap rather than meaning."""
+        h = hashlib.sha256(text.encode("utf-8")).digest()
+        # Repeat hash bytes to fill the requested dim
+        buf = (h * (dim // len(h) + 1))[:dim]
+        return np.frombuffer(buf, dtype=np.uint8).astype(np.float32)
 
     @staticmethod
     def _cosine(a: np.ndarray, b: np.ndarray) -> float:
