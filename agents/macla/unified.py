@@ -21,6 +21,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from agents.base import BaseOrakAgent
+from agents._cognitive import VectorMemoryProvider
 from agents._harness import with_retries
 from agents.macla.base import BaseMaclaAgent
 from agents.macla.context_extractors import build_context_extractor
@@ -128,6 +129,29 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         )
 
         self._init_macla_agent()
+        self._memory_provider = self._maybe_init_memory_provider(config)
+
+    def _maybe_init_memory_provider(self, config: Any):
+        """Stage C: optional vector-memory provider. Activated by
+        ``config.use_vector_memory``; default off so existing runs are
+        unchanged. Provider has its own observability surface via stats()."""
+        if not getattr(config, "use_vector_memory", False):
+            return None
+        provider = VectorMemoryProvider(
+            max_memories=getattr(config, "vector_memory_max", 100),
+            default_top_k=getattr(config, "vector_memory_top_k", 3),
+            default_threshold=getattr(config, "vector_memory_threshold", 0.5),
+        )
+        provider.initialize(
+            session_id=str(getattr(self.wandb_config, "run_id", "") or ""),
+            game_name=self._game_name,
+        )
+        logger.info(
+            f"[MACLA] vector memory provider enabled "
+            f"(max={provider._max_memories}, top_k={provider._default_top_k}, "
+            f"threshold={provider._default_threshold})"
+        )
+        return provider
 
     def _determine_game_phase(self, observation: str) -> tuple[str, float]:
         """Game phase based on evaluation score (0-100 scale)."""
@@ -174,6 +198,19 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         output_text = f"Action: {action}\nMethod: {method}\nConfidence: {confidence:.3f}\nReasoning: {llm_reasoning}"
         goal = self._get_task_description({"task_description": task_description})
         game_phase, _ = self._determine_game_phase(cur_state_str)
+
+        # Stage C: write a memory whenever score increased — that's the
+        # signal worth recalling later. Skip the cold start (first few steps
+        # are noisy) and the trivial no-change case.
+        if self._memory_provider is not None and self._step_count > 3:
+            score_delta = (self._last_score or 0) - getattr(self, "_prev_score_for_memory", 0) or 0
+            if score_delta > 0:
+                self._memory_provider.add_event(
+                    f"Action '{action}' (method={method}, conf={confidence:.2f}) "
+                    f"increased score by {score_delta} at step {self._step_count}",
+                    metadata={"step": self._step_count, "method": method, "score_delta": score_delta},
+                )
+            self._prev_score_for_memory = self._last_score or 0
 
         return action, reasoning, output_text, memory_stats, f"Goal: {goal}\nObs: {cur_state_str}", game_phase, self._last_update_type, update_info
 
@@ -238,6 +275,19 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             prev_state_str=getattr(self, "_prev_state_str", ""),
         ))
 
+        # Stage C: prepend retrieved memories to the user prompt when the
+        # vector-memory provider is active. Query is the goal + a slice of
+        # the current observation — enough signal for cosine retrieval.
+        if self._memory_provider is not None:
+            query = f"{goal} | {observation[:300]}"
+            recalled = self._memory_provider.prefetch(query)
+            if recalled:
+                user_text = (
+                    "[Recalled memories from prior steps]\n"
+                    f"{recalled}\n\n"
+                    f"{user_text}"
+                )
+
         # Text-only models (most local models): pass plain string content.
         # Vision models (Gemini, OpenAI gpt-4o, Llama-4-Scout): pass list with image.
         supports_vision = getattr(self, "_supports_vision", True)
@@ -288,3 +338,7 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
     def record_episode_end(self, episode, game_name, seed, score):
         BaseOrakAgent.record_episode_end(self, episode, game_name, seed, score)
         self._record_episode_end(episode, score)
+        if self._memory_provider is not None:
+            stats = self._memory_provider.stats()
+            logger.info(f"[MACLA] vector memory ep={episode} stats: {stats}")
+            self._memory_provider.on_session_end()

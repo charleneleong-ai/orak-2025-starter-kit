@@ -171,6 +171,15 @@ class LocalConfig(AgentConfig):
     macla_n_min_s: int = 3
     macla_n_min_f: int = 3
 
+    # Optional vector-memory provider (Stage C). When True, UnifiedMaclaAgent
+    # instantiates VectorMemoryProvider, prefetches retrieved context into the
+    # LLM-fallback prompt, and writes significant events as memories. Defaults
+    # to False so existing runs are unchanged.
+    use_vector_memory: bool = False
+    vector_memory_max: int = 100
+    vector_memory_top_k: int = 3
+    vector_memory_threshold: float = 0.5
+
     def __post_init__(self):
         # Env var overrides for easy CLI switching
         self.base_url = os.environ.get("LOCAL_BASE_URL", self.base_url)
