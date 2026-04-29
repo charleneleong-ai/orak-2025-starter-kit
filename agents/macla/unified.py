@@ -202,13 +202,31 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         # Stage C: write a memory whenever score increased — that's the
         # signal worth recalling later. Skip the cold start (first few steps
         # are noisy) and the trivial no-change case.
+        #
+        # Event template includes the observation snippet + procedure name so
+        # each memory has unique semantic content. Earlier template ("Action X
+        # method Y delta N") was too uniform and got collapsed into 2 dedup
+        # buckets per episode by the cosine-similarity dedup. Richer text means
+        # the embedder produces distinct vectors → memory bank actually grows
+        # → retrieval has more signal to work with.
         if self._memory_provider is not None and self._step_count > 3:
             score_delta = (self._last_score or 0) - getattr(self, "_prev_score_for_memory", 0) or 0
             if score_delta > 0:
+                # Trim observation to ~200 chars — enough to identify game
+                # state (board layout for 2048, position for mario, map for
+                # pokemon) without blowing up embedding length.
+                obs_snippet = (cur_state_str or "").strip().replace("\n", " ")[:200]
                 self._memory_provider.add_event(
-                    f"Action '{action}' (method={method}, conf={confidence:.2f}) "
-                    f"increased score by {score_delta} at step {self._step_count}",
-                    metadata={"step": self._step_count, "method": method, "score_delta": score_delta},
+                    f"step={self._step_count} action={action} method={method} "
+                    f"procedure={selected_proc or 'none'} conf={confidence:.2f} "
+                    f"score_delta={score_delta} obs={obs_snippet}",
+                    metadata={
+                        "step": self._step_count,
+                        "method": method,
+                        "procedure": selected_proc or "",
+                        "score_delta": score_delta,
+                        "game_phase": game_phase,
+                    },
                 )
             self._prev_score_for_memory = self._last_score or 0
 
