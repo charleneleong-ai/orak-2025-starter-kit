@@ -181,6 +181,75 @@ def test_stats_reports_backend_in_use():
     assert s["backend"] == "injected"
 
 
+# ── SubtaskPlanner ─────────────────────────────────────────────────────
+
+
+class _FakeMsg:
+    def __init__(self, content: str):
+        self.content = content
+
+
+class _FakeLLM:
+    """Mock langchain-style LLM that returns a fixed response."""
+    def __init__(self, response_text: str = ""):
+        self._response_text = response_text
+        self.invoke_count = 0
+
+    def invoke(self, messages):
+        self.invoke_count += 1
+        return _FakeMsg(self._response_text)
+
+
+def test_subtask_planner_parses_section():
+    from agents._cognitive import LLMSubtaskPlanner
+    response = (
+        "### Subtask_reasoning\n"
+        "Agent must leave the starting house to make any progress.\n"
+        "### Subtask\n"
+        "Exit the starting room through the south door.\n"
+    )
+    p = LLMSubtaskPlanner(_FakeLLM(response))
+    out = p.plan(goal="champion", observation="RedsHouse interior", history="")
+    assert out == "Exit the starting room through the south door."
+    assert p.stats()["calls"] == 1
+
+
+def test_subtask_planner_caches_when_replan_every_gt_1():
+    from agents._cognitive import LLMSubtaskPlanner
+    response = "### Subtask\nGo north\n"
+    fake = _FakeLLM(response)
+    p = LLMSubtaskPlanner(fake, replan_every=3)
+    # First call hits LLM (step 1, 1%3=1 → not replan trigger; but cached is None so falls through)
+    p.plan(goal="g", observation="o")
+    # Subsequent calls should reuse cache, not invoke LLM
+    p.plan(goal="g", observation="o")
+    p.plan(goal="g", observation="o")
+    # Step 4 wraps around (4%3=1, not replan; uses cache)
+    assert fake.invoke_count == 1
+
+
+def test_subtask_planner_falls_back_on_invoke_failure():
+    from agents._cognitive import LLMSubtaskPlanner
+
+    class _FailingLLM:
+        def invoke(self, messages):
+            raise RuntimeError("network error")
+
+    p = LLMSubtaskPlanner(_FailingLLM())
+    out = p.plan(goal="g", observation="o")
+    assert "Continue" in out  # generic fallback string
+    assert p.stats()["parse_failures"] == 1
+
+
+def test_subtask_planner_handles_missing_section_header():
+    """LLM forgets the ### Subtask header — planner falls back to first short line."""
+    from agents._cognitive import LLMSubtaskPlanner
+    response = "Walk south to the door"  # bare answer, no section
+    p = LLMSubtaskPlanner(_FakeLLM(response))
+    out = p.plan(goal="g", observation="o")
+    assert out == "Walk south to the door"
+
+
 def test_local_sentence_transformers_backend(monkeypatch):
     """When OPENAI_API_KEY is missing, provider falls through to the local
     sentence-transformers model. Skipped if sentence-transformers is not

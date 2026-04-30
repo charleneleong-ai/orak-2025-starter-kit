@@ -23,7 +23,9 @@ import time
 from typing import Any, Callable, Optional
 
 import numpy as np
+import openai
 from loguru import logger
+from sentence_transformers import SentenceTransformer
 
 from agents._cognitive.memory_provider import MemoryProvider
 
@@ -154,7 +156,6 @@ class VectorMemoryProvider(MemoryProvider):
                 if self._client is None:
                     if not os.environ.get("OPENAI_API_KEY"):
                         raise RuntimeError("OPENAI_API_KEY not set")
-                    import openai
                     self._client = openai.OpenAI()
                 response = self._client.embeddings.create(
                     model=self._embedding_model,
@@ -173,7 +174,6 @@ class VectorMemoryProvider(MemoryProvider):
         if not self._local_model_unavailable:
             try:
                 if self._local_model is None:
-                    from sentence_transformers import SentenceTransformer
                     logger.info(
                         f"[VectorMemory] loading local embedding model "
                         f"{self._local_model_name!r} (first call only)"

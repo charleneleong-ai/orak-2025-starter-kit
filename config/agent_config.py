@@ -180,6 +180,15 @@ class LocalConfig(AgentConfig):
     vector_memory_top_k: int = 3
     vector_memory_threshold: float = 0.5
 
+    # Optional subtask planner (Stage D). When True, UnifiedMaclaAgent calls
+    # an LLM-backed SubtaskPlanner before each LLM-fallback step and injects
+    # the produced sub-goal into the prompt. Helps long-horizon planning
+    # games where the agent gets stuck on the top-level objective (pokemon).
+    # Cost: 1 extra LLM call per replan_every steps.
+    use_subtask_planning: bool = False
+    subtask_replan_every: int = 1
+    subtask_observation_chars: int = 600
+
     def __post_init__(self):
         # Env var overrides for easy CLI switching
         self.base_url = os.environ.get("LOCAL_BASE_URL", self.base_url)

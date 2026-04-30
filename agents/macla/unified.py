@@ -21,7 +21,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from agents.base import BaseOrakAgent
-from agents._cognitive import VectorMemoryProvider
+from agents._cognitive import LLMSubtaskPlanner, VectorMemoryProvider
 from agents._harness import with_retries
 from agents.macla.base import BaseMaclaAgent
 from agents.macla.context_extractors import build_context_extractor
@@ -130,6 +130,31 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
 
         self._init_macla_agent()
         self._memory_provider = self._maybe_init_memory_provider(config)
+        self._subtask_planner = self._maybe_init_subtask_planner(config)
+
+    def _build_subtask_history(self) -> str:
+        """Build a compact history string for the subtask planner."""
+        last_action = getattr(self, "_last_action", "none")
+        prev_state = getattr(self, "_prev_state_str", "") or ""
+        prev_summary = prev_state[:200] if prev_state else "(no prior state)"
+        return f"Last action: {last_action}\nPrior state snippet: {prev_summary}"
+
+    def _maybe_init_subtask_planner(self, config: Any):
+        """Stage D: optional subtask planner for long-horizon games (pokemon).
+        Adds 1 LLM call per replan_every steps. Default off."""
+        if not getattr(config, "use_subtask_planning", False):
+            return None
+        planner = LLMSubtaskPlanner(
+            llm=self._llm,  # reuse the same vLLM-backed LLM
+            replan_every=getattr(config, "subtask_replan_every", 1),
+            observation_chars=getattr(config, "subtask_observation_chars", 600),
+        )
+        logger.info(
+            f"[MACLA] subtask planner enabled "
+            f"(replan_every={planner._replan_every}, "
+            f"observation_chars={planner._observation_chars})"
+        )
+        return planner
 
     def _maybe_init_memory_provider(self, config: Any):
         """Stage C: optional vector-memory provider. Activated by
@@ -306,6 +331,26 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                     f"{user_text}"
                 )
 
+        # Stage D: ask the subtask planner for a near-term sub-goal and
+        # prepend it. For long-horizon games (pokemon) this is the missing
+        # decomposition between the overall goal and the per-step action.
+        if self._subtask_planner is not None:
+            try:
+                history_str = self._build_subtask_history()
+                subtask = self._subtask_planner.plan(
+                    goal=goal,
+                    observation=observation,
+                    history=history_str,
+                )
+                if subtask:
+                    user_text = (
+                        f"[Current sub-goal — focus on this for the next few steps]\n"
+                        f"{subtask}\n\n"
+                        f"{user_text}"
+                    )
+            except Exception as e:
+                logger.warning(f"[MACLA] subtask planner failed; continuing without: {e}")
+
         # Text-only models (most local models): pass plain string content.
         # Vision models (Gemini, OpenAI gpt-4o, Llama-4-Scout): pass list with image.
         supports_vision = getattr(self, "_supports_vision", True)
@@ -360,3 +405,6 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             stats = self._memory_provider.stats()
             logger.info(f"[MACLA] vector memory ep={episode} stats: {stats}")
             self._memory_provider.on_session_end()
+        if self._subtask_planner is not None:
+            stats = self._subtask_planner.stats()
+            logger.info(f"[MACLA] subtask planner ep={episode} stats: {stats}")
