@@ -255,7 +255,12 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                 )
             self._prev_score_for_memory = self._last_score or 0
 
-        return action, reasoning, output_text, memory_stats, f"Goal: {goal}\nObs: {cur_state_str}", game_phase, self._last_update_type, update_info
+        # Use the actual injected prompt if _base_fallback was called this
+        # step; otherwise fall back to the synthetic stub.
+        prompt_for_log = getattr(self, "_last_llm_user_text", None) or f"Goal: {goal}\nObs: {cur_state_str}"
+        # Reset so a step that hits procedure cache (no LLM) shows the stub
+        self._last_llm_user_text = None
+        return action, reasoning, output_text, memory_stats, prompt_for_log, game_phase, self._last_update_type, update_info
 
     # ── Abstract method implementations ──────────────────────────────
 
@@ -371,6 +376,11 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             SystemMessage(content=self._adapter.SYSTEM_PROMPT),
             HumanMessage(content=human_content),
         ]
+
+        # Save the actual injected prompt for telemetry — without this the
+        # logger sees the stub prompt from _get_action and we can't verify
+        # whether vmem/subtask injections actually fire.
+        self._last_llm_user_text = user_text
 
         try:
             result = with_retries(
