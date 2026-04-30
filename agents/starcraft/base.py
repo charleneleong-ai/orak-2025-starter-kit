@@ -9,6 +9,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
 
 from agents.base import BaseOrakAgent
+from agents._harness import structured_invoke_with_usage, with_retries
 import weave
 
 GAME_RULES = """
@@ -196,14 +197,14 @@ class StarCraftAgent(BaseOrakAgent):
 
         messages.append(HumanMessage(content=user_content))
 
-        structured_llm = self._llm.with_structured_output(StarCraftAction)
-
         usage = None
         output_text = ""
 
         try:
-            # Invoke LLM with structured output
-            response = structured_llm.invoke(messages)
+            response, usage = with_retries(
+                lambda: structured_invoke_with_usage(self._llm, messages, StarCraftAction),
+                label="starcraft.llm",
+            )
 
             reasoning = response.reasoning
             current_goal = response.current_goal
@@ -224,7 +225,8 @@ class StarCraftAgent(BaseOrakAgent):
             output_text = f"Goal: {current_goal}\n\nReasoning: {reasoning}\n\nActions:\n{action}"
 
         except Exception as e:
-            logger.error(f"Error invoking LLM: {traceback.format_exc()}")
+            logger.error(f"Error invoking LLM after retries: {traceback.format_exc()}")
+            self._mark_fallback(f"llm_error: {type(e).__name__}: {str(e)[:200]}")
             # Fallback actions
             action = "\n".join(
                 [

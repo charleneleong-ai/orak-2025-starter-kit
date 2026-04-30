@@ -579,7 +579,14 @@ class BaseMaclaAgent(BaseModel):
                 for key in ["procedures_refined_this_cycle", "avg_procedure_success_rate"]:
                     if key in opt_stats:
                         log_extras[f"optimisation/{key}"] = opt_stats[key]
-        
+
+        # Surface harness fields (cache stats from any captured usage,
+        # plus the per-step _pending_fallback flag) so MACLA agents land in
+        # the same trajectory split files as non-MACLA ones. usage is
+        # extracted from memory_stats if MACLA tucked it there.
+        usage = memory_stats.get("usage") if isinstance(memory_stats, dict) else None
+        self._postprocess_log_extras(log_extras, usage)
+
         return action, log_extras
     
     def get_state(self) -> dict[str, Any]:

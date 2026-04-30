@@ -9,6 +9,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
 
 from agents.base import BaseOrakAgent
+from agents._harness import structured_invoke_with_usage, with_retries
 import weave
 
 GAME_RULES = """
@@ -141,32 +142,31 @@ class SuperMarioAgent(BaseOrakAgent):
 
         messages.append(HumanMessage(content=user_content))
         
-        structured_llm = self._llm.with_structured_output(GameAction)
-        
         usage = None
         output_text = ""
-        
+
         try:
-            # Note: with_structured_output returns the data model directly
-            response = structured_llm.invoke(messages)
-            
+            response, usage = with_retries(
+                lambda: structured_invoke_with_usage(self._llm, messages, GameAction),
+                label="super_mario.llm",
+            )
+
             jump_level = response.jump_level
             reasoning = response.reasoning
-            
+
             # Track jump level usage
             self._jump_level_counts[jump_level] += 1
-            
+
             action = f"Jump Level: {jump_level}"
-            
+
             output_text = f"Action: {action}\nReasoning: {reasoning}"
-            
+
         except Exception as e:
-            logger.error(f"Error invoking LLM: {traceback.format_exc()}")
+            logger.error(f"Error invoking LLM after retries: {traceback.format_exc()}")
+            self._mark_fallback(f"llm_error: {type(e).__name__}: {str(e)[:200]}")
             # Default fallback action
             action = "Jump Level: 0"
             reasoning = f"Error: {e}"
             output_text = str(e)
-            # We don't necessarily want to raise here, better to return a fallback so the game continues
-            # raise ValueError(f"LLM invocation failed: {traceback.format_exc()}")
             
         return action, reasoning, output_text, usage, prompt_text

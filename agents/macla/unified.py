@@ -21,6 +21,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from agents.base import BaseOrakAgent
+from agents._harness import with_retries
 from agents.macla.base import BaseMaclaAgent
 from agents.macla.context_extractors import build_context_extractor
 from agents.macla.structured_output import safe_structured_invoke
@@ -259,13 +260,17 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         ]
 
         try:
-            result = safe_structured_invoke(self._llm, messages, self._action_schema)
+            result = with_retries(
+                lambda: safe_structured_invoke(self._llm, messages, self._action_schema),
+                label="macla_unified.llm",
+            )
             reasoning = getattr(result, "reasoning", "")
             action = self._adapter.extract_action(result)
             self._llm_reasoning = reasoning
             return [action], reasoning
         except Exception as e:
-            logger.error(f"Unified fallback failed: {e}")
+            logger.error(f"Unified fallback failed after retries: {e}")
+            self._mark_fallback(f"llm_error: {type(e).__name__}: {str(e)[:200]}")
             return [self._adapter.DEFAULT_ACTION], f"Fallback error: {e}"
 
     def calculate_metrics(self, game_info: dict[str, Any]) -> dict[str, Any]:

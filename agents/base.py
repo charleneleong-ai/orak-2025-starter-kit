@@ -8,6 +8,11 @@ import json
 from loguru import logger
 from config.agent_config import AgentConfig
 from config.base import WandbConfig
+from agents._harness import (
+    StepRecord,
+    TrajectoryWriter,
+    extract_cache_stats,
+)
 
 try:
     from PIL import Image as PILImage
@@ -33,6 +38,9 @@ class BaseOrakAgent(weave.Model):
         "total_tokens": 0
     })
     _requests_log_path: Optional[str] = PrivateAttr(default=None)
+    _trajectory_writer: Optional[TrajectoryWriter] = PrivateAttr(default=None)
+    _cached_tokens_total: int = PrivateAttr(default=0)
+    _pending_fallback: Optional[dict[str, Any]] = PrivateAttr(default=None)
 
     # Per-episode stats
     _episode_stats: list[dict[str, Any]] = PrivateAttr(default_factory=list)
@@ -86,9 +94,11 @@ class BaseOrakAgent(weave.Model):
                 self._weave_client = None
 
     def set_log_dir(self, log_dir: str):
-        """Set directory for logging raw requests."""
+        """Set directory for logging raw requests + structured trajectory."""
         os.makedirs(log_dir, exist_ok=True)
         self._requests_log_path = os.path.join(log_dir, "raw_requests.jsonl")
+        model_name = getattr(self.config, "model", "unknown") if self.config else "unknown"
+        self._trajectory_writer = TrajectoryWriter(log_dir, model=model_name)
 
     def get_model_declaration(self) -> dict[str, Any]:
         """Return model declaration."""
@@ -112,6 +122,17 @@ class BaseOrakAgent(weave.Model):
 
     def record_episode_end(self, episode_id: int, game_name: str, seed: Any, final_score: float):
         """Record stats for a completed episode."""
+        if self._trajectory_writer is not None:
+            try:
+                self._trajectory_writer.flush_episode(
+                    episode_id=episode_id,
+                    completed=True,
+                    final_score=float(final_score),
+                    game_name=game_name,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to flush trajectory at episode end: {e}")
+
         self._episode_stats.append({
             "episode_id": episode_id,
             "game_name": game_name,
@@ -207,13 +228,33 @@ class BaseOrakAgent(weave.Model):
                         "tokens": {
                             "prompt": log_extras.get("tokens_prompt", 0),
                             "completion": log_extras.get("tokens_completion", 0),
-                            "total": log_extras.get("tokens_total", 0)
+                            "total": log_extras.get("tokens_total", 0),
+                            "cached": log_extras.get("tokens_cached", 0),
                         }
                     }
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
             except Exception as e:
                 logger.error(f"Failed to log raw request: {e}")
                 raise ValueError(f"Failed to log raw request: {traceback.format_exc()}")
+
+        if self._trajectory_writer is not None and log_extras and "user_prompt" in log_extras:
+            try:
+                self._trajectory_writer.add_step(StepRecord(
+                    step=self._step_count,
+                    system_prompt=log_extras.get("system_prompt"),
+                    user_prompt=log_extras.get("user_prompt", ""),
+                    assistant_output=log_extras.get("output_text", ""),
+                    action=action,
+                    reasoning=log_extras.get("reasoning", "") or "",
+                    tokens_prompt=log_extras.get("tokens_prompt", 0),
+                    tokens_completion=log_extras.get("tokens_completion", 0),
+                    tokens_total=log_extras.get("tokens_total", 0),
+                    cached_tokens=log_extras.get("tokens_cached", 0),
+                    is_fallback=bool(log_extras.get("is_fallback", False)),
+                    fallback_reason=log_extras.get("fallback_reason"),
+                ))
+            except Exception as e:
+                logger.warning(f"Failed to record trajectory step: {e}")
 
         if self.wandb_config and self.wandb_config.enabled:
             log_data = {
@@ -324,6 +365,43 @@ class BaseOrakAgent(weave.Model):
 
         return result
 
+    # Schema map for variable-length _get_action() tuples across game agents.
+    # The harness parser uses this so subclasses can keep their existing
+    # tuple shape without breaking cache-stats / fallback / trajectory plumbing.
+    _GET_ACTION_TUPLE_SCHEMAS: ClassVar[dict[int, list[str]]] = {
+        # SuperMarioAgent — historical 5-tuple (no current_goal)
+        5: ["action", "reasoning", "output_text", "usage", "prompt"],
+        # PokemonRedAgent / StarCraftAgent / BaseOrakAgent — canonical 6-tuple
+        6: ["action", "reasoning", "current_goal", "output_text", "usage", "prompt"],
+        # TwentyFourtyEightAgent — 7-tuple with phase + update_type
+        7: ["action", "reasoning", "output_text", "usage", "prompt", "game_phase", "update_type"],
+        # UnifiedMaclaAgent — 8-tuple with memory_stats (not usage) + update_info
+        8: ["action", "reasoning", "output_text", "memory_stats", "prompt", "game_phase", "update_type", "update_info"],
+    }
+
+    def _parse_get_action_result(self, result: Any) -> dict[str, Any]:
+        """Map any known _get_action tuple/dict shape to a uniform field dict.
+
+        Lets `BaseOrakAgent.get_action` stay tolerant of the historical
+        per-game tuple variants without each subclass re-implementing
+        cache-stats and fallback plumbing.
+        """
+        if isinstance(result, dict):
+            return result
+        if not isinstance(result, tuple):
+            raise TypeError(f"_get_action must return tuple or dict, got {type(result).__name__}")
+        schema = self._GET_ACTION_TUPLE_SCHEMAS.get(len(result))
+        if schema is None:
+            raise ValueError(
+                f"Unknown _get_action tuple length {len(result)}. "
+                f"Register the shape in BaseOrakAgent._GET_ACTION_TUPLE_SCHEMAS."
+            )
+        parsed = dict(zip(schema, result))
+        # MACLA's 8-tuple replaces `usage` with `memory_stats` — fall back to None
+        # so the cache-stats path no-ops gracefully.
+        parsed.setdefault("usage", None)
+        return parsed
+
     def get_action(self, obs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """
         Get action from LLM.
@@ -332,32 +410,70 @@ class BaseOrakAgent(weave.Model):
         game_info = obs.get("game_info", {})
         cur_state_str = obs.get("obs_str", "")
         obs_image = obs.get("obs_image", None)
-        
+
         task_description = game_info.get("task_description", "")
-        
-        action, reasoning, current_goal, output_text, usage, prompt = self._get_action(
+
+        result = self._get_action(
             task_description=task_description,
             cur_state_str=cur_state_str,
-            obs_image=obs_image
+            obs_image=obs_image,
         )
-        
-        log_extras = {}
-        if prompt:
-            log_extras["user_prompt"] = prompt
-        if output_text:
-            log_extras["output_text"] = output_text
-        if reasoning:
-            log_extras["reasoning"] = f"Action: {action}\n\nGoal: {current_goal}\n\n{reasoning}"
-            log_extras["reasoning_length"] = len(reasoning)
-        if usage:
-             if hasattr(usage, 'prompt_tokens'):
+        parsed = self._parse_get_action_result(result)
+
+        action = parsed["action"]
+        usage = parsed.get("usage")
+
+        log_extras: dict[str, Any] = {}
+        if parsed.get("prompt"):
+            log_extras["user_prompt"] = parsed["prompt"]
+        if parsed.get("output_text"):
+            log_extras["output_text"] = parsed["output_text"]
+        if parsed.get("reasoning"):
+            current_goal = parsed.get("current_goal") or ""
+            log_extras["reasoning"] = (
+                f"Action: {action}\n\nGoal: {current_goal}\n\n{parsed['reasoning']}"
+            )
+            log_extras["reasoning_length"] = len(parsed["reasoning"])
+        if parsed.get("game_phase"):
+            log_extras["game_phase"] = parsed["game_phase"]
+            self._game_phase = parsed["game_phase"]
+        if parsed.get("update_type"):
+            log_extras["update_type"] = parsed["update_type"]
+            self._last_update_type = parsed["update_type"]
+
+        if usage is not None:
+            if hasattr(usage, "prompt_tokens"):
                 log_extras["tokens_prompt"] = usage.prompt_tokens
                 log_extras["tokens_completion"] = usage.completion_tokens
                 log_extras["tokens_total"] = usage.total_tokens
-             elif isinstance(usage, dict):
+            elif isinstance(usage, dict):
                 log_extras.update(usage)
-                
+
+        self._postprocess_log_extras(log_extras, usage)
         return action, log_extras
+
+    def _postprocess_log_extras(self, log_extras: dict[str, Any], usage: Any) -> None:
+        """Add cache stats + fallback flag to log_extras.
+
+        Reusable from `BaseMaclaAgent.get_action` and any other override that
+        builds log_extras manually — keeps cache/fallback plumbing in one place.
+        Mutates `log_extras` in place.
+        """
+        cache_stats = extract_cache_stats(usage)
+        if cache_stats["cached_tokens"]:
+            log_extras["tokens_cached"] = cache_stats["cached_tokens"]
+            self._cached_tokens_total += cache_stats["cached_tokens"]
+            log_extras["cached_tokens_total"] = self._cached_tokens_total
+
+        if self._pending_fallback is not None:
+            log_extras["is_fallback"] = True
+            log_extras["fallback_reason"] = self._pending_fallback.get("reason", "")
+            self._pending_fallback = None
+
+    def _mark_fallback(self, reason: str) -> None:
+        """Subclasses call this when their _get_action falls back to a default
+        action because of an LLM error. Surfaces in trajectory + log_extras."""
+        self._pending_fallback = {"reason": reason}
 
     def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, str, Any, str]:
         """
