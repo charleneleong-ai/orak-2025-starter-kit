@@ -16,3 +16,9 @@ use_vector_memory: true
 vector_memory_max: 100
 vector_memory_top_k: 3
 vector_memory_threshold: 0.5
+# Stage D: subtask planner — task decomposition. Pokemon hit 14.29% / 0.00
+# ceiling without it (agent stuck on top-level "become Pokemon Champion"
+# objective). Replan every 5 steps to keep inference cost ~1.2x.
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600
