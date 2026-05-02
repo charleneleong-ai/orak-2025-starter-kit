@@ -1,0 +1,14 @@
+# Stage A baseline for Pokemon Red — vmem off, planner off. Reproduces the
+# pre-Stage-C config so cross-stage scoreboards have a clean A→C→D triple.
+# Used by experiments/scripts/run_full_baseline_sweep.sh (PR #28 follow-up).
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "unsloth/gemma-4-E4B-it"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: true
+max_tokens: 8192
+max_model_len: 16384
+game_config_path: "pokemon_red"
+track: "TRACK1"
+use_vector_memory: false
+use_subtask_planning: false
