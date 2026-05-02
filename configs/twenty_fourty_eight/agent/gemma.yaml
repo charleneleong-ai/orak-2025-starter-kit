@@ -35,3 +35,6 @@ vector_memory_threshold: 0.5
 use_subtask_planning: true
 subtask_replan_every: 5
 subtask_observation_chars: 600
+macla_n_min_f: 1
+macla_n_min_s: 1
+macla_theta_decay: 0.001
