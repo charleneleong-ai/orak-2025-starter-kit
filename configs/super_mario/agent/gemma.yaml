@@ -16,10 +16,10 @@ use_vector_memory: true
 vector_memory_max: 100
 vector_memory_top_k: 3
 vector_memory_threshold: 0.5
-# Stage D ablation: enable subtask planning to test whether task decomposition
-# helps mario despite its perception/timing-dominated bottleneck. replan_every=5
-# = 1.2x base inference cost. Was previously asserted irrelevant for mario
-# without measurement — this sweep tests that claim.
+# Stage D: enabled. Ablation (PR #28, 2026-05-02) measured Δ = +25% vs Stage C
+# on `mario_check` baseline → HELPS. The "perception/timing only" theory was
+# wrong: sub-goal scaffolding helps the agent persist past death clusters
+# (x=1000-1100). 1.2x inference cost from replan_every=5 is justified.
 use_subtask_planning: true
 subtask_replan_every: 5
 subtask_observation_chars: 600
