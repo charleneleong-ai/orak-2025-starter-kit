@@ -5,3 +5,4 @@ gcp_location: "europe-west1"
 thinking_level: "high"
 game_config_path: "super_mario"
 track: "TRACK2"
+macla_max_theta: 0.1
