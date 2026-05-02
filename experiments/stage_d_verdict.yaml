@@ -1,0 +1,27 @@
+# Stage D cross-game ablation verdict spec.
+# Run after both stage_d_ablation_2048 and stage_d_ablation_mario sweeps:
+#   autoresearch-verdict --spec experiments/stage_d_verdict.yaml \
+#       --wait-iters 2 --post-pr 28 --repo charleneleong-ai/orak-2025-starter-kit
+#
+# See `autoresearch.verdict` (>=0.5.0) for the full schema.
+
+threshold_pct: 10
+config_name: gemma
+
+labels:
+  baseline: "Stage A"
+  comparison: "Stage C (vmem)"
+  treatment: "Stage D (vmem+planner)"
+
+games:
+  - name: twenty_fourty_eight
+    display: "2048"
+    baseline: harness_check
+    comparison: cognitive_check_v2
+    treatment: stage_d_ablation_2048
+
+  - name: super_mario
+    display: mario
+    baseline: harness_check
+    comparison: mario_check
+    treatment: stage_d_ablation_mario
