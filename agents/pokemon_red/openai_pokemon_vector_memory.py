@@ -10,6 +10,7 @@ import numpy as np
 from typing import List, Dict, Optional
 import time
 
+from agents._cognitive import VectorMemoryProvider
 from agents.pokemon_red.openai_pokemon_memory_utils import (
     parse_game_state,
     get_map_memory_dict,
@@ -17,109 +18,17 @@ from agents.pokemon_red.openai_pokemon_memory_utils import (
     replace_filtered_screen_text
 )
 from .pokemon_prompts import (
-    SYSTEM_PROMPT, 
-    USER_PROMPT, 
-    HISTORY_SUMMARY_SYSTEM_PROMPT, 
-    HISTORY_SUMMARY_USER_PROMPT, 
-    SELF_REFLECTION_SYSTEM_PROMPT, 
-    SELF_REFLECTION_USER_PROMPT, 
-    SUBTASK_PLANNING_SYSTEM_PROMPT, 
+    SYSTEM_PROMPT,
+    USER_PROMPT,
+    HISTORY_SUMMARY_SYSTEM_PROMPT,
+    HISTORY_SUMMARY_USER_PROMPT,
+    SELF_REFLECTION_SYSTEM_PROMPT,
+    SELF_REFLECTION_USER_PROMPT,
+    SUBTASK_PLANNING_SYSTEM_PROMPT,
     SUBTASK_PLANNING_USER_PROMPT
 )
 
-MODEL = "gpt-5-nano" 
-
-
-class VectorMemory:
-    """
-    A simple vector database for storing and retrieving memories based on semantic similarity.
-    Uses OpenAI's text-embedding-3-small model for fast, cost-effective embeddings.
-    """
-    
-    def __init__(self, max_memories: int = 100):
-        self.client = openai.OpenAI()
-        self.memories = []
-        self.max_memories = max_memories
-        self.embedding_model = "text-embedding-3-small"
-        
-    def _get_embedding(self, text: str) -> np.ndarray:
-        """Get embedding for a text string"""
-        try:
-            response = self.client.embeddings.create(
-                model=self.embedding_model,
-                input=text
-            )
-            return np.array(response.data[0].embedding)
-        except Exception as e:
-            return np.zeros(1536)
-    
-    def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
-        """Calculate cosine similarity between two vectors"""
-        if np.linalg.norm(vec1) == 0 or np.linalg.norm(vec2) == 0:
-            return 0.0
-        return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
-    
-    def add_memory(self, content: str, metadata: Optional[Dict] = None):
-        """Add a memory to the vector store"""
-        if not content or content.strip() == "":
-            return
-        
-        embedding = self._get_embedding(content)
-        memory = {
-            'content': content,
-            'embedding': embedding,
-            'metadata': metadata or {},
-            'timestamp': time.time()
-        }
-        
-        self.memories.append(memory)
-        if len(self.memories) > self.max_memories:
-            self.memories = self.memories[-self.max_memories:]
-        
-    
-    def retrieve_similar(self, query: str, top_k: int = 3, threshold: float = 0.5) -> List[Dict]:
-        """Retrieve most similar memories to a query"""
-        if not self.memories or not query or query.strip() == "":
-            return []
-        
-        query_embedding = self._get_embedding(query)
-        similarities = []
-        
-        for memory in self.memories:
-            similarity = self._cosine_similarity(query_embedding, memory['embedding'])
-            if similarity >= threshold:
-                similarities.append({
-                    'content': memory['content'],
-                    'metadata': memory['metadata'],
-                    'similarity': similarity
-                })
-        
-        similarities.sort(key=lambda x: x['similarity'], reverse=True)
-        results = similarities[:top_k]
-        
-        
-        return results
-    
-    def format_memories_for_prompt(self, memories: List[Dict]) -> str:
-        """Format retrieved memories for LLM prompts"""
-        if not memories:
-            return "N/A"
-        
-        formatted = []
-        for i, memory in enumerate(memories):
-            meta_str = ""
-            if memory['metadata']:
-                parts = []
-                if 'step' in memory['metadata']:
-                    parts.append(f"Step {memory['metadata']['step']}")
-                if 'map_name' in memory['metadata']:
-                    parts.append(f"Map: {memory['metadata']['map_name']}")
-                if parts:
-                    meta_str = f" ({', '.join(parts)})"
-            
-            formatted.append(f"[Memory {i+1}{meta_str}] {memory['content']}")
-        
-        return "\n".join(formatted)
+MODEL = "gpt-5-nano"
 
 
 def extract_memory_entries(reflection: str) -> list:
@@ -163,7 +72,7 @@ class OpenAIPokemonVectorMemoryAgent:
         self.last_self_reflection = None  # Store last reflection for NewFacts extraction
 
         # Vector memory for long-term semantic retrieval
-        self.vector_memory = VectorMemory(max_memories=100)
+        self.vector_memory = VectorMemoryProvider(max_memories=100)
     
     def _process_observation(self, raw_obs):
         """Process raw observation to add map memory and dialog buffer"""

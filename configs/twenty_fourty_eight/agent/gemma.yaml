@@ -21,3 +21,10 @@ max_tokens: 8192          # No thinking budget needed
 max_model_len: 16384
 game_config_path: "twenty_fourty_eight"
 track: "TRACK1"
+# Stage C: opt-in vector memory via VectorMemoryProvider. When True,
+# UnifiedMaclaAgent prefetches retrieved memories into the LLM prompt and
+# writes events on score increases.
+use_vector_memory: true
+vector_memory_max: 100
+vector_memory_top_k: 3
+vector_memory_threshold: 0.5

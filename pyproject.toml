@@ -30,7 +30,7 @@ dependencies = [
     "imageio[ffmpeg]>=2.37.2",
     "langchain-chroma>=1.0.0",
     "langchain-openai>=1.0.2",
-     "langchain-google-vertexai>=3.2.0",
+    "langchain-google-vertexai>=3.2.0",
     "loguru>=0.7.0",
     "matplotlib>=3.10.7",
     "mss>=10.1.0",
@@ -69,6 +69,7 @@ dependencies = [
     "screeninfo>=0.8.1",
     "wandb>=0.24.0",
     "weave>=0.52.25",
+    "sentence-transformers>=5.4.1",
 ]
 
 [project.optional-dependencies]

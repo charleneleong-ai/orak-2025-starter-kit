@@ -21,6 +21,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from agents.base import BaseOrakAgent
+from agents._cognitive import LLMSubtaskPlanner, VectorMemoryProvider
 from agents._harness import with_retries
 from agents.macla.base import BaseMaclaAgent
 from agents.macla.context_extractors import build_context_extractor
@@ -128,6 +129,54 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         )
 
         self._init_macla_agent()
+        self._memory_provider = self._maybe_init_memory_provider(config)
+        self._subtask_planner = self._maybe_init_subtask_planner(config)
+
+    def _build_subtask_history(self) -> str:
+        """Build a compact history string for the subtask planner."""
+        last_action = getattr(self, "_last_action", "none")
+        prev_state = getattr(self, "_prev_state_str", "") or ""
+        prev_summary = prev_state[:200] if prev_state else "(no prior state)"
+        return f"Last action: {last_action}\nPrior state snippet: {prev_summary}"
+
+    def _maybe_init_subtask_planner(self, config: Any):
+        """Stage D: optional subtask planner for long-horizon games (pokemon).
+        Adds 1 LLM call per replan_every steps. Default off."""
+        if not getattr(config, "use_subtask_planning", False):
+            return None
+        planner = LLMSubtaskPlanner(
+            llm=self._llm,  # reuse the same vLLM-backed LLM
+            replan_every=getattr(config, "subtask_replan_every", 1),
+            observation_chars=getattr(config, "subtask_observation_chars", 600),
+        )
+        logger.info(
+            f"[MACLA] subtask planner enabled "
+            f"(replan_every={planner._replan_every}, "
+            f"observation_chars={planner._observation_chars})"
+        )
+        return planner
+
+    def _maybe_init_memory_provider(self, config: Any):
+        """Stage C: optional vector-memory provider. Activated by
+        ``config.use_vector_memory``; default off so existing runs are
+        unchanged. Provider has its own observability surface via stats()."""
+        if not getattr(config, "use_vector_memory", False):
+            return None
+        provider = VectorMemoryProvider(
+            max_memories=getattr(config, "vector_memory_max", 100),
+            default_top_k=getattr(config, "vector_memory_top_k", 3),
+            default_threshold=getattr(config, "vector_memory_threshold", 0.5),
+        )
+        provider.initialize(
+            session_id=str(getattr(self.wandb_config, "run_id", "") or ""),
+            game_name=self._game_name,
+        )
+        logger.info(
+            f"[MACLA] vector memory provider enabled "
+            f"(max={provider._max_memories}, top_k={provider._default_top_k}, "
+            f"threshold={provider._default_threshold})"
+        )
+        return provider
 
     def _determine_game_phase(self, observation: str) -> tuple[str, float]:
         """Game phase based on evaluation score (0-100 scale)."""
@@ -175,7 +224,43 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         goal = self._get_task_description({"task_description": task_description})
         game_phase, _ = self._determine_game_phase(cur_state_str)
 
-        return action, reasoning, output_text, memory_stats, f"Goal: {goal}\nObs: {cur_state_str}", game_phase, self._last_update_type, update_info
+        # Stage C: write a memory whenever score increased — that's the
+        # signal worth recalling later. Skip the cold start (first few steps
+        # are noisy) and the trivial no-change case.
+        #
+        # Event template includes the observation snippet + procedure name so
+        # each memory has unique semantic content. Earlier template ("Action X
+        # method Y delta N") was too uniform and got collapsed into 2 dedup
+        # buckets per episode by the cosine-similarity dedup. Richer text means
+        # the embedder produces distinct vectors → memory bank actually grows
+        # → retrieval has more signal to work with.
+        if self._memory_provider is not None and self._step_count > 3:
+            score_delta = (self._last_score or 0) - getattr(self, "_prev_score_for_memory", 0) or 0
+            if score_delta > 0:
+                # Trim observation to ~200 chars — enough to identify game
+                # state (board layout for 2048, position for mario, map for
+                # pokemon) without blowing up embedding length.
+                obs_snippet = (cur_state_str or "").strip().replace("\n", " ")[:200]
+                self._memory_provider.add_event(
+                    f"step={self._step_count} action={action} method={method} "
+                    f"procedure={selected_proc or 'none'} conf={confidence:.2f} "
+                    f"score_delta={score_delta} obs={obs_snippet}",
+                    metadata={
+                        "step": self._step_count,
+                        "method": method,
+                        "procedure": selected_proc or "",
+                        "score_delta": score_delta,
+                        "game_phase": game_phase,
+                    },
+                )
+            self._prev_score_for_memory = self._last_score or 0
+
+        # Use the actual injected prompt if _base_fallback was called this
+        # step; otherwise fall back to the synthetic stub.
+        prompt_for_log = getattr(self, "_last_llm_user_text", None) or f"Goal: {goal}\nObs: {cur_state_str}"
+        # Reset so a step that hits procedure cache (no LLM) shows the stub
+        self._last_llm_user_text = None
+        return action, reasoning, output_text, memory_stats, prompt_for_log, game_phase, self._last_update_type, update_info
 
     # ── Abstract method implementations ──────────────────────────────
 
@@ -238,6 +323,39 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             prev_state_str=getattr(self, "_prev_state_str", ""),
         ))
 
+        # Stage C: prepend retrieved memories to the user prompt when the
+        # vector-memory provider is active. Query is the goal + a slice of
+        # the current observation — enough signal for cosine retrieval.
+        if self._memory_provider is not None:
+            query = f"{goal} | {observation[:300]}"
+            recalled = self._memory_provider.prefetch(query)
+            if recalled:
+                user_text = (
+                    "[Recalled memories from prior steps]\n"
+                    f"{recalled}\n\n"
+                    f"{user_text}"
+                )
+
+        # Stage D: ask the subtask planner for a near-term sub-goal and
+        # prepend it. For long-horizon games (pokemon) this is the missing
+        # decomposition between the overall goal and the per-step action.
+        if self._subtask_planner is not None:
+            try:
+                history_str = self._build_subtask_history()
+                subtask = self._subtask_planner.plan(
+                    goal=goal,
+                    observation=observation,
+                    history=history_str,
+                )
+                if subtask:
+                    user_text = (
+                        f"[Current sub-goal — focus on this for the next few steps]\n"
+                        f"{subtask}\n\n"
+                        f"{user_text}"
+                    )
+            except Exception as e:
+                logger.warning(f"[MACLA] subtask planner failed; continuing without: {e}")
+
         # Text-only models (most local models): pass plain string content.
         # Vision models (Gemini, OpenAI gpt-4o, Llama-4-Scout): pass list with image.
         supports_vision = getattr(self, "_supports_vision", True)
@@ -258,6 +376,11 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             SystemMessage(content=self._adapter.SYSTEM_PROMPT),
             HumanMessage(content=human_content),
         ]
+
+        # Save the actual injected prompt for telemetry — without this the
+        # logger sees the stub prompt from _get_action and we can't verify
+        # whether vmem/subtask injections actually fire.
+        self._last_llm_user_text = user_text
 
         try:
             result = with_retries(
@@ -288,3 +411,10 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
     def record_episode_end(self, episode, game_name, seed, score):
         BaseOrakAgent.record_episode_end(self, episode, game_name, seed, score)
         self._record_episode_end(episode, score)
+        if self._memory_provider is not None:
+            stats = self._memory_provider.stats()
+            logger.info(f"[MACLA] vector memory ep={episode} stats: {stats}")
+            self._memory_provider.on_session_end()
+        if self._subtask_planner is not None:
+            stats = self._subtask_planner.stats()
+            logger.info(f"[MACLA] subtask planner ep={episode} stats: {stats}")
