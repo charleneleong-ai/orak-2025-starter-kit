@@ -16,3 +16,10 @@ use_vector_memory: true
 vector_memory_max: 100
 vector_memory_top_k: 3
 vector_memory_threshold: 0.5
+# Stage D ablation: enable subtask planning to test whether task decomposition
+# helps mario despite its perception/timing-dominated bottleneck. replan_every=5
+# = 1.2x base inference cost. Was previously asserted irrelevant for mario
+# without measurement — this sweep tests that claim.
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600
