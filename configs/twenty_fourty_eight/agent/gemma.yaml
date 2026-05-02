@@ -28,3 +28,10 @@ use_vector_memory: true
 vector_memory_max: 100
 vector_memory_top_k: 3
 vector_memory_threshold: 0.5
+# Stage D ablation: enable subtask planning to test whether task decomposition
+# adds anything on top of vmem (which already gave +58%). 2048's bottleneck was
+# asserted to be lookahead-search, not decomposition — this sweep tests that
+# claim. replan_every=5 = 1.2x base inference cost.
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600
