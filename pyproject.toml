@@ -31,9 +31,10 @@ dependencies = [
     "langchain-chroma>=1.0.0",
     "langchain-openai>=1.0.2",
     "langchain-google-vertexai>=3.2.0",
-    # autoresearch isn't on PyPI yet; pin to the v0.5.0 GitHub release tag.
+    # autoresearch isn't on PyPI yet; pin to a GitHub release tag.
     # Bump the @vX.Y.Z when newer features are needed.
-    "autoresearch @ git+https://github.com/charleneleong-ai/autoresearch.git@v0.5.0",
+    # v0.6.0 adds plot_milestone_progression; v0.7.0 adds multi-metric compare axes.
+    "autoresearch @ git+https://github.com/charleneleong-ai/autoresearch.git@v0.7.0",
     "loguru>=0.7.0",
     "matplotlib>=3.10.7",
     "mss>=10.1.0",
