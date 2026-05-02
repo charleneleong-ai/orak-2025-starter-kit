@@ -324,17 +324,35 @@ class Runner:
                         checkpoint_data = checkpoint_manager.load_latest_agent_checkpoint(agent)
                         if checkpoint_data:
                             game_state = checkpoint_data.get('game_state', {})
-                            episode = game_state.get('episode', episode)
-                            iteration = game_state.get('iteration', iteration)
-                            total_steps = game_state.get('total_steps', 0)
-                            current_score = game_state.get('score', 0)
-                            evaluation_score = game_state.get('evaluation_score', 0)
-                            game_score = game_state.get('game_score', 0)
-                            ## Sync agent step count with game state
-                            if hasattr(agent, '_step_count'):
-                                agent._step_count = total_steps
-                                logger.info(f'Synced agent step count to: {total_steps}')
-                            self.renderer.event(f"{game_display_name}: Resuming from checkpoint at episode {episode + 1}, step {total_steps}")
+                            if self.prev_run_id:
+                                # Cross-iter load: keep MACLA learned state (already
+                                # restored by agent.load_state above) but reset
+                                # transient per-game counters/scores so the new iter
+                                # starts fresh, otherwise we immediately trip the
+                                # max_steps guard and inherit a stale last_score
+                                # that biases the first reward delta.
+                                for attr, val in (
+                                    ('_step_count', 0),
+                                    ('_episode_stats', []),
+                                    ('_last_score', 0),
+                                    ('_prev_state_str', 'N/A'),
+                                    ('_last_action', 'No action yet'),
+                                    ('_current_episode_stats', {'inference_calls': 0, 'input_tokens': 0, 'output_tokens': 0, 'tokens': 0}),
+                                ):
+                                    if hasattr(agent, attr):
+                                        setattr(agent, attr, val)
+                                self.renderer.event(f"{game_display_name}: Inherited MACLA state from prev run, starting fresh episode")
+                            else:
+                                episode = game_state.get('episode', episode)
+                                iteration = game_state.get('iteration', iteration)
+                                total_steps = game_state.get('total_steps', 0)
+                                current_score = game_state.get('score', 0)
+                                evaluation_score = game_state.get('evaluation_score', 0)
+                                game_score = game_state.get('game_score', 0)
+                                if hasattr(agent, '_step_count'):
+                                    agent._step_count = total_steps
+                                    logger.info(f'Synced agent step count to: {total_steps}')
+                                self.renderer.event(f"{game_display_name}: Resuming from checkpoint at episode {episode + 1}, step {total_steps}")
                         else:
                             self.renderer.event(f"{game_display_name}: No checkpoint found, starting fresh")
                     except Exception as e:
