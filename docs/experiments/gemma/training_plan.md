@@ -4,6 +4,22 @@ How to turn the harness + cognitive infra (PRs [#25](https://github.com/charlene
 
 > **Status: planning doc.** No training runs yet. Numbers below are estimates from public Unsloth/TRL benchmarks + our observed inference throughput; treat as ±50%.
 
+## Picked path (2026-05-02)
+
+**Cognitive substrate (shipped):** Stage A harness + Stage B/C VectorMemoryProvider + **Stage D SubtaskPlanner** — already merged via PRs #25 + #26.
+
+**Training (this doc):** **Phase 1 → Phase 2 → Phase 3** in order, gated by signal from each step.
+
+| Phase | What | Why picked | Gate to next |
+|---|---|---|---|
+| 1 | RFT — top-K trajectory filter → LoRA-SFT | Cheapest training signal; uses data we already have | Phase 1 lifts mean score ≥ +10% on at least one game |
+| **2** | **GRPO with shaped rewards** | **Option #2 in [`agentic_rl_options.md`](agentic_rl_options.md). Fixes credit assignment — the bottleneck once SFT exhausts top-K signal.** | GRPO sweep beats Phase 1 LoRA on the same eval harness |
+| **3** | **Self-improvement loop (recurring rollout → filter → SFT/GRPO)** | **Option #3 in `agentic_rl_options.md`. Compounds Phase 1+2 gains over time; autoresearch already runs 80% of this.** | Two consecutive loops show non-trivial uplift over the previous |
+
+**Explicitly deferred:** Phase 4 procedure distillation (Stage D's SubtaskPlanner now occupies that role), the inference-time RLM family (#14/#17), and architectural swaps (#11 reasoning model, #18 Fastino MoE) — see [`agentic_rl_options.md`](agentic_rl_options.md) for the full menu and the branch-points that would re-open these.
+
+**Fallback if Phase 1 fails the gate:** drop to option #11 (reasoning model swap) to test the "model too small" hypothesis before spending more on training compute.
+
 ## What we have
 
 | Piece | Source | Status |
@@ -63,9 +79,11 @@ Weekly cron: rollout → filter → SFT → redeploy. Curriculum: mario (highest
 
 The autoresearch loop (`experiments/autoresearch.py`) is already 80% of this. What's needed: a wrapper script that runs `[autoresearch sweep, filter, SFT, deploy]` end-to-end.
 
-### Phase 4 — Procedure distillation
+### Phase 4 — Procedure distillation *(deferred)*
 
-Convert MACLA's `Procedure` objects to `(precondition_obs, action, postcondition_obs)` SFT triples, augment Phase 1 data. Goal: model internalizes procedures, MACLA selector can be ablated. Cleanest deployment: pure-LLM agent, no procedure runtime.
+> **Deferred** in the 2026-05-02 pick. Stage D's [SubtaskPlanner](../../../agents/_cognitive/) now occupies the "model internalizes structured task decomposition" slot at inference time, without the SFT data-conversion overhead. Re-open this phase if Phase 2 GRPO plateaus and we want to bake procedure-style structure directly into the weights.
+
+Original sketch (kept for reference): convert MACLA's `Procedure` objects to `(precondition_obs, action, postcondition_obs)` SFT triples, augment Phase 1 data. Goal: model internalizes procedures, MACLA selector can be ablated.
 
 ---
 
@@ -150,13 +168,18 @@ If the model is the bottleneck, no amount of training compute helps — pick a b
 
 ## What I'd recommend doing next
 
-In order:
+In order, gated by signal at each step:
 
-1. **Finish the cross-game eval** on 2048/mario/pokemon (PR #26, in progress) — establishes the no-training-yet baseline.
-2. **Build `experiments/training/filter_top_k.py`** — 50 LOC, no GPU needed. Filters trajectories. Output stats: how many tokens, how many distinct games, score distribution.
-3. **Build `experiments/training/sft_unsloth.py`** — runs the actual SFT. ~150 LOC.
-4. **Run Phase 1 on A100-40GB** with autoresearch paused. Total cost: $0, ~3 hours of inference downtime.
-5. **Re-run autoresearch with the LoRA adapter loaded** — same configs, just `--lora` flag. Compare scores.
-6. **Decide on Phase 2 GPU upgrade** based on whether Phase 1 moved the needle.
+1. **Build `experiments/training/filter_top_k.py`** — 50 LOC, no GPU needed. Filters trajectories. Output stats: how many tokens, how many distinct games, score distribution.
+2. **Build `experiments/training/sft_unsloth.py`** — runs the actual SFT (Phase 1 RFT). ~150 LOC.
+3. **Run Phase 1 on A100-40GB** with autoresearch paused. Total cost: $0, ~3 hours of inference downtime.
+4. **Re-run autoresearch with the LoRA adapter loaded** — same configs, just `--lora` flag. Compare scores.
+5. **Phase 1 gating decision:**
+   - **Pass** (≥ +10% on at least one game) → proceed to step 6.
+   - **Fail** → fall back to option #11 (reasoning model swap) per [`agentic_rl_options.md`](agentic_rl_options.md); do **not** burn compute on Phase 2 if the base model is the bottleneck.
+6. **Build `experiments/training/grpo_trl.py`** — Phase 2 GRPO trainer (TRL). ~250 LOC. Reuses the filtered top-K dataset as warm-start; reward function = `OnlineAgentEvaluator.evaluate_step` shaped reward + final-score bonus; `is_fallback=True` steps → −1.0 reward (silent fallbacks become training signal).
+7. **Run Phase 2 GRPO** on H100-80GB cloud spot — one weekend, ~$25-50. Re-run autoresearch with the GRPO LoRA.
+8. **Phase 2 gating decision:** GRPO checkpoint must beat Phase 1 LoRA on the eval harness. If yes → step 9. If no → review reward shaping before scaling.
+9. **Wire Phase 3 self-improvement loop** — cron on top of `experiments/autoresearch.py`: rollout → filter → SFT/GRPO → redeploy. Curriculum: mario (highest historical baseline) → 2048 → pokemon.
 
-This keeps the spend at $0 incremental until we have evidence the approach works.
+This keeps spend at $0 incremental through step 5, ~$50 through step 7, and amortizes Phase 3's recurring cost based on the cadence (~$30/quarter weekly RFT, ~$150/quarter monthly GRPO — see cost matrix above).

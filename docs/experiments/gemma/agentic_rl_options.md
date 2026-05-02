@@ -59,18 +59,17 @@ After dropping game-specific options (#7, #10, #16) and partial-fit ones (#8 Voy
 
 ## Recommendation
 
-**If goal is biggest lift fast** → **#11 (reasoning model swap)** then **#14 (recursive subtask)**. Tests the "model too small" hypothesis directly + extends Stage D.
+> **Picked path (2026-05-02):** **Stage D substrate (already shipped) + #2 GRPO + #3 Self-improvement loop.** See [`training_plan.md`](training_plan.md) for the implementation roadmap.
+>
+> Reasoning: the Stage A→D ladder (harness + vmem + SubtaskPlanner) gave the headline +58% on 2048 already; the next axis to push on is *credit assignment + drift control*, which is what GRPO + the recurring self-improvement loop deliver. Both generalise across games. We are explicitly **deferring** the inference-time RLM family (#14/#17) and architectural rewrites (#11, #18) until after we have a Phase-1/2 lift signal — no point investing in recursive decomposition or model swaps before we've squeezed the gradient updates.
 
-**If goal is most novel single move** → **#17 (Full RLM)**. Open-ended recursive decomposition is the most architecturally interesting thing in the table. Builds toward #18.
+The other recommendations below are kept as a record of paths considered + as branch-points if the picked path stalls (e.g. Phase 1 doesn't move scores → fall back to **#11 reasoning model swap** to test the "model too small" hypothesis before scaling training compute).
 
-**If goal is incremental win on the existing data we already have** → **#5 (self-rewarding DPO)**. Uses `trajectory_samples.jsonl` + `failed_trajectories.jsonl` as preference pairs, no new data collection.
+**If goal is biggest lift fast** → **#11 (reasoning model swap)** then **#14 (recursive subtask)**. Tests the "model too small" hypothesis directly + extends Stage D. *Branch-point if Phase 1 RFT fails the gating signal in `training_plan.md`.*
 
-**Single-pick for "one arch direction"**: **#17 (Full RLM)**. Reasons:
-- Generalises across games (no game-specific code)
-- Inference-only — no training infra needed
-- Composes with vmem + planner + harness (extends rather than replaces)
-- Maps cleanly to Fastino MoE direction later (#18 = #17 with TLMs as recursion targets)
-- Most directly translates the published RLM paper into actionable code
+**If goal is most novel single move** → **#17 (Full RLM)**. Open-ended recursive decomposition is the most architecturally interesting thing in the table. Builds toward #18. *Reserved for after Phase 2 lands — RLM at inference on a GRPO-tuned policy is the strongest stack.*
+
+**If goal is incremental win on the existing data we already have** → **#5 (self-rewarding DPO)**. Uses `trajectory_samples.jsonl` + `failed_trajectories.jsonl` as preference pairs, no new data collection. *Cheap stepping-stone — could slot in between Phase 1 (RFT) and Phase 2 (GRPO) if RFT alone underdelivers.*
 
 ---
 
