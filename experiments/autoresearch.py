@@ -893,13 +893,13 @@ def run_experiment(
 
     if kill_reason:
         print(f"\n  EARLY KILL after {elapsed:.1f}min — {kill_reason}")
-        return run_id, elapsed
+        return run_id, elapsed, kill_reason
     elif proc.returncode and proc.returncode != 0:
         print(f"  Run failed with exit code {proc.returncode}")
-        return "", 0.0
+        return "", 0.0, None
     else:
         print(f"\n  Run completed in {elapsed:.1f}min — run_id: {run_id}")
-        return run_id, elapsed
+        return run_id, elapsed, None
 
 
 def log_run_results(
@@ -1140,7 +1140,14 @@ def run(
             config, games, baseline_scores=best, tag=tag,
             description=description, prev_run_id=prev_run_id,
         )
-        run_id, elapsed_min = result if isinstance(result, tuple) else (result, 0.0)
+        # run_experiment now returns a 3-tuple (run_id, elapsed_min, kill_reason).
+        # Tolerate older 2-tuple returns from any third-party fork.
+        if isinstance(result, tuple):
+            run_id = result[0]
+            elapsed_min = result[1] if len(result) > 1 else 0.0
+            run_kill_reason = result[2] if len(result) > 2 else None
+        else:
+            run_id, elapsed_min, run_kill_reason = result, 0.0, None
         if not run_id:
             print("Run failed, stopping loop")
             break
@@ -1175,10 +1182,21 @@ def run(
         # Log results
         run_results = log_run_results(run_id, games, description, tag, best, runtime_min=elapsed_min, config_name=cfg)
 
-        # If triage killed the run, relabel the logged entries
-        kill_reason = _triage_check(run_id, games, best) if run_id else None
+        # Relabel the iter as EARLY_KILL when either:
+        #  1. Triage check (plateau / no_learn / baseline_gate) flagged a game, OR
+        #  2. The wall-clock iter timeout fired (run_kill_reason from run_experiment).
+        # Without (2) the row stays as DISCARD and the silent_kill retrospective
+        # detector can't tell a timeout from an honest low score.
+        triage_reason = _triage_check(run_id, games, best) if run_id else None
+        kill_reason = triage_reason or run_kill_reason
         if kill_reason:
-            _relabel_last_as_early_kill(tag, kill_reason, games, triggered_game=kill_reason.split(':')[0].strip())
+            # Triage reasons are formatted as "<game>: <why>" — split out the game
+            # so we only relabel the offender. Wall-clock timeouts aren't game-
+            # specific, so relabel all games for that iter.
+            triggered_game = (
+                kill_reason.split(":")[0].strip() if triage_reason else None
+            )
+            _relabel_last_as_early_kill(tag, kill_reason, games, triggered_game=triggered_game)
 
         # Post-iter retrospective: run failure-mode detectors against the row
         # we just logged. Warn-level findings get prepended to next iter's
