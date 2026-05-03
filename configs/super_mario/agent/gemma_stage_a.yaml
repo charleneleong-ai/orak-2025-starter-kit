@@ -1,0 +1,10 @@
+# Stage A baseline for Super Mario — inherits gemma.yaml and only flips off
+# the Stage C/D switches. Reproduces the pre-Stage-C config (35.18 on
+# harness_check_mario, 2026-05-03) so cross-stage scoreboards have a clean
+# A→C→D triple.
+defaults:
+  - gemma
+  - _self_
+
+use_vector_memory: false
+use_subtask_planning: false

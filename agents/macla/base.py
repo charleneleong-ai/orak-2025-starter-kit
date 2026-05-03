@@ -57,9 +57,16 @@ class BaseMaclaAgent(BaseModel):
             logger.warning(f"Unsupported config type: {type(self.config)}. Defaulting to Gemini initialisation.")
             self._init_gemini_macla()
 
-        # Online evaluator for per-step reward shaping
+        # Online evaluator for per-step reward shaping. Optional `reward_shaping`
+        # block on the agent config overrides DEFAULT_SHAPING values per-game,
+        # so ablations can sweep over shaping params (e.g. repeat_visit_bonus)
+        # without editing source. See PR #28 v6.
         game_name = getattr(self, '_game_name', 'unknown')
-        self._online_evaluator = OnlineAgentEvaluator(game_name=game_name)
+        shaping_overrides = getattr(self.config, 'reward_shaping', None)
+        self._online_evaluator = OnlineAgentEvaluator(
+            game_name=game_name,
+            shaping_overrides=shaping_overrides,
+        )
     
     def _init_gemini_macla(self):
         """Initialize MACLA with Gemini/Vertex AI."""

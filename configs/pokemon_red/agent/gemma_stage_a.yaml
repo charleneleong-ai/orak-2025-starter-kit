@@ -1,0 +1,10 @@
+# Stage A baseline for Pokemon Red — inherits gemma.yaml and only flips off
+# the Stage C/D switches. harness_check_pokemon (2026-05-02) scored 0.00 — the
+# base model is below the capability floor for pokemon, so vmem/planner can't
+# help (Stage C 14.29 fluke and Stage D 0.00 confirm).
+defaults:
+  - gemma
+  - _self_
+
+use_vector_memory: false
+use_subtask_planning: false

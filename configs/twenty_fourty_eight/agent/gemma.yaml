@@ -28,3 +28,11 @@ use_vector_memory: true
 vector_memory_max: 100
 vector_memory_top_k: 3
 vector_memory_threshold: 0.5
+# Stage D: disabled. Ablation (PR #28, 2026-05-02) measured Δ = −23% vs Stage C
+# on `cognitive_check_v2` baseline → REGRESSES. Confirms the lookahead-search
+# theory: 2048's bottleneck is forward search, not task decomposition. The
+# 1.2x inference cost from replan_every=5 isn't justified by lift here.
+use_subtask_planning: false
+macla_n_min_f: 1
+macla_n_min_s: 1
+macla_theta_decay: 0.001

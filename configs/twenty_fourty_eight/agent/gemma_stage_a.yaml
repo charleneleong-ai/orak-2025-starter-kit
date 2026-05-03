@@ -1,0 +1,9 @@
+# Stage A baseline for 2048 — inherits gemma.yaml and only flips off the
+# Stage C/D switches. Reproduces the pre-Stage-C config (4.36 on harness_check,
+# 2026-04-28) so cross-stage scoreboards have a clean A→C→D triple.
+defaults:
+  - gemma
+  - _self_
+
+use_vector_memory: false
+use_subtask_planning: false

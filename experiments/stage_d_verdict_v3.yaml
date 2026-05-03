@@ -1,0 +1,22 @@
+# Stage D mario re-run verdict spec (v3).
+# v1 + v2 both crashed at iter 2 due to runner.py prev_run_id loop-counter bug
+# (commit 624c782 fixes it). v3 is the first re-run with the fix in place.
+#
+# Run:
+#   autoresearch-verdict --spec experiments/stage_d_verdict_v3.yaml \
+#       --wait-iters 2 --post-pr 28 --repo charleneleong-ai/orak-2025-starter-kit
+
+threshold_pct: 10
+config_name: gemma
+
+labels:
+  baseline: "Stage A"
+  comparison: "Stage C (vmem)"
+  treatment: "Stage D (vmem+planner)"
+
+games:
+  - name: super_mario
+    display: mario
+    baseline: harness_check
+    comparison: mario_check
+    treatment: stage_d_ablation_mario_v3

@@ -34,6 +34,18 @@ if str(SCRIPT_DIR) in sys.path:
     sys.path.remove(str(SCRIPT_DIR))
 
 from autoresearch import IterPlan, SweepRunner  # noqa: E402
+# Post-iter retrospective hook (autoresearch >= 0.8.0). Detectors run after each
+# iter writes its results.jsonl row and surface failure-mode findings into the
+# next iter's description (warn) or stop the sweep (block). See PR #28 v6 audit
+# for the orak-side findings that motivated the package detectors.
+from autoresearch.retrospective import (  # noqa: E402
+    BUILTIN_DETECTORS,
+    Finding,
+    attach_findings_to_row,
+    audit_iter,
+    filter_by_severity,
+    format_markdown,
+)
 
 # Allow running as both `python experiments/autoresearch.py` and `python -m experiments.autoresearch`
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -50,6 +62,22 @@ from experiments.experiment_progress import (
 ROOT = Path(__file__).parent.parent
 CONFIGS_DIR = ROOT / "configs"
 AGENTS_DIR = ROOT / "agents"
+
+# Detectors relevant to orak's game-agent sweep loop. Skipped from the
+# package's BUILTIN_DETECTORS:
+#   - bucketed_failure: orak doesn't emit per-row JSONL rubric dumps
+#   - gradient_collapse: orak doesn't run an RL training loop (LLM is frozen)
+ORAK_RETROSPECTIVE_DETECTORS = [
+    BUILTIN_DETECTORS["silent_kill"],
+    BUILTIN_DETECTORS["triage_threshold_mismatch"],
+    BUILTIN_DETECTORS["eval_score_plateau"],
+]
+# Per-game tuning of detector thresholds. Pokemon's first scoring event lands
+# at step 100-150 so the global plateau-at-80 default would false-positive
+# every iter; bump it to 200 for pokemon. Other games keep the defaults.
+ORAK_RETROSPECTIVE_KWARGS = {
+    "triage_threshold_mismatch": {"min_first_score_step": 150},
+}
 
 # Marker to track auto-appended prompt hints (avoid duplication)
 AUTORESEARCH_MARKER = "# [autoresearch]"
@@ -557,7 +585,14 @@ def propose_next_params(game: str, results: list[dict], config_type: str = "unif
 
 # ── Triage Thresholds ──────────────────────────────────────────────
 
-TRIAGE_SCORE_PLATEAU_STEPS = 80    # Kill if max eval unchanged for N steps
+# Per-game plateau threshold. Pokemon's first scoring event (1st flag) lands
+# around step 100-150 in successful runs (`pokemon_check` 2026-04-30 sweep),
+# so the global 80 was killing Stage A and D before they had a chance to score
+# (PR #28 v6 audit). Other games hit their first score in <20 steps so 80 is
+# fine. Default applies to games not explicitly listed.
+TRIAGE_SCORE_PLATEAU_STEPS_PER_GAME = {"pokemon_red": 200}
+TRIAGE_SCORE_PLATEAU_STEPS_DEFAULT = 80
+TRIAGE_SCORE_PLATEAU_STEPS = 80    # Kept as fallback for code paths that don't pass game
 TRIAGE_NO_LEARN_EPISODES = 8       # Kill if no episode score improvement for N episodes.
                                    # Bumped 5 -> 8 after iter 4 of PR #20 sweep
                                    # (wandb run https://wandb.ai/chaleong/orak-super-mario/runs/20260427_174648_orak-super-mario):
@@ -572,11 +607,22 @@ ITER_TIMEOUT_MIN = 30              # Hard wall-clock cap per iteration; SIGINT s
 
 
 def _find_run_id(games: list[str]) -> str:
-    """Find the latest run_id from game_logs."""
+    """Find the latest run_id from game_logs by mtime.
+
+    Lexicographic sort would pick e.g. `pokemon_stage_a_direct_*` over a fresh
+    timestamp-named dir like `20260503_093804`, since 'p' (0x70) > '2' (0x30).
+    Old / abandoned runs would then bleed stale game_states.jsonl entries
+    into the new sweep's triage check. Sort by mtime to always pick the
+    actually-most-recent dir regardless of naming scheme.
+    """
     game_log_dir = GAME_LOG_DIR / games[0]
     if not game_log_dir.exists():
         return ""
-    run_dirs = sorted(game_log_dir.iterdir(), key=lambda p: p.name, reverse=True)
+    run_dirs = sorted(
+        (p for p in game_log_dir.iterdir() if p.is_dir()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
     return run_dirs[0].name if run_dirs else ""
 
 
@@ -627,11 +673,12 @@ def _triage_check(
         if cur_max > 0:
             episode_scores.append(cur_max)
 
-        # Triage 1: Score plateau — max eval unchanged for N steps
-        if total >= TRIAGE_SCORE_PLATEAU_STEPS:
-            recent = evals[-TRIAGE_SCORE_PLATEAU_STEPS:]
+        # Triage 1: Score plateau — max eval unchanged for N steps (per-game)
+        plateau_steps = TRIAGE_SCORE_PLATEAU_STEPS_PER_GAME.get(game, TRIAGE_SCORE_PLATEAU_STEPS_DEFAULT)
+        if total >= plateau_steps:
+            recent = evals[-plateau_steps:]
             if max(recent) == min(recent):
-                return f"{game}: score plateau ({max_eval:.2f}%) for {TRIAGE_SCORE_PLATEAU_STEPS} steps"
+                return f"{game}: score plateau ({max_eval:.2f}%) for {plateau_steps} steps"
 
         # Triage 2: No episode improvement for N episodes
         if len(episode_scores) >= TRIAGE_NO_LEARN_EPISODES:
@@ -727,6 +774,75 @@ def _cleanup_threads():
     if killed:
         print(f"  Cleaned up {killed} leaked processes")
         time.sleep(2)  # Give OS time to reclaim threads
+
+
+def _run_post_iter_retrospective(
+    *,
+    tag: str,
+    iteration: int,
+    games: list[str],
+    config_name: str | None,
+    log_path: Path | None,
+) -> list[Finding]:
+    """Run autoresearch retrospective detectors against the iter we just logged.
+
+    Per-game: load the row we just appended (last entry filtered by game) and
+    its prior history, run the orak-tuned detector panel, write findings into
+    `experiments/<tag>[/<config>]/retrospective_E<iter>_<game>.md`, mutate the
+    row in `results.jsonl` to attach summaries.
+
+    Returns the union of findings across all games so the caller can decide
+    whether to fold warns into the next iter's description (self-correcting
+    loop) or stop the sweep on a `block`.
+    """
+    findings_all: list[Finding] = []
+    rows = load_results(tag=tag, config_name=config_name)
+    out_dir = ROOT / "experiments" / tag
+    if config_name:
+        out_dir = out_dir / config_name
+
+    for game in games:
+        # Latest row for this game = the one we just logged.
+        per_game = [r for r in rows if r.get("game") == game]
+        if not per_game:
+            continue
+        cur_row = per_game[-1]
+        history = per_game[:-1]
+
+        findings = audit_iter(
+            results_row=cur_row,
+            log_path=log_path,
+            per_row_jsonl_path=None,  # orak doesn't emit per-row rubric dumps
+            history=history,
+            detectors=ORAK_RETROSPECTIVE_DETECTORS,
+            detector_kwargs=ORAK_RETROSPECTIVE_KWARGS,
+        )
+        if not findings:
+            continue
+
+        findings_all.extend(findings)
+        attach_findings_to_row(cur_row, findings)
+
+        # Write the markdown sibling for human review.
+        md_path = out_dir / f"retrospective_E{iteration}_{game}.md"
+        md_path.parent.mkdir(parents=True, exist_ok=True)
+        md_path.write_text(format_markdown(findings, iter_id=iteration))
+
+        # Re-write the row in results.jsonl with the attached findings. We
+        # have to rewrite the whole file since results are append-only JSONL.
+        results_file = out_dir / "results.jsonl"
+        if results_file.exists():
+            all_rows = [
+                json.loads(line) for line in results_file.read_text().splitlines() if line.strip()
+            ]
+            target_iter = cur_row.get("experiment")
+            for i, r in enumerate(all_rows):
+                if r.get("game") == game and r.get("experiment") == target_iter:
+                    all_rows[i] = cur_row
+                    break
+            results_file.write_text("\n".join(json.dumps(r) for r in all_rows) + "\n")
+
+    return findings_all
 
 
 def _wandb_project_for(game: str) -> str:
@@ -830,6 +946,14 @@ class OrakSweepState:
         self.last_kill_reason: str | None = None
         self.last_triggered_game: str | None = None
         self.last_runtime_min = 0.0
+        # Self-correcting loop: warn-level findings from the previous iter's
+        # retrospective. Prepended to the next iter's `description` so the
+        # autoresearch param proposer (and any chart / PR reader) sees them.
+        self.pending_warns: list[str] = []
+        # Set by the retrospective hook when a `block`-severity finding fires.
+        self.stop_after_iter = False
+        # 1-based iteration index, set by the planner each loop.
+        self.iteration = 0
 
 
 class OrakPlanner:
@@ -846,6 +970,7 @@ class OrakPlanner:
         patience: int,
         time_budget_min: float,
         config_name: str | None,
+        log_path: Path | None = None,
     ) -> None:
         self.state = state
         self.config = config
@@ -857,6 +982,7 @@ class OrakPlanner:
         self.patience = patience
         self.time_budget_min = time_budget_min
         self.config_name = config_name
+        self.log_path = log_path
         self.sweep_start = time.time()
         self.no_improve_streak = 0
 
@@ -890,6 +1016,33 @@ class OrakPlanner:
 
         plot_progress(tag=self.tag, config_type=self.config_type, config_name=self.config_name)
 
+        # Post-iter retrospective: detectors run against the row we just
+        # logged. Warn-level findings get prepended to the next iter's
+        # description (self-correcting loop); block-level stops the sweep.
+        findings = _run_post_iter_retrospective(
+            tag=self.tag,
+            iteration=self.state.iteration,
+            games=self.games,
+            config_name=self.config_name,
+            log_path=self.log_path,
+        )
+        if findings:
+            print(f"\n--- Retrospective ({len(findings)} finding(s)) ---")
+            for f in findings:
+                print(f"  [{f.severity.upper()}] [{f.detector}] {f.summary}")
+            blocks = filter_by_severity(findings, "block")
+            if blocks:
+                print(
+                    f"\nEarly stop: retrospective produced {len(blocks)} "
+                    f"block-level finding(s)."
+                )
+                self.state.stop_after_iter = True
+                return False
+            for f in filter_by_severity(findings, "warn"):
+                self.state.pending_warns.append(
+                    f"{f.detector}={f.suggested_action}"
+                )
+
         if any_improved:
             self.no_improve_streak = 0
         else:
@@ -910,6 +1063,11 @@ class OrakPlanner:
         del history
         for iteration in range(self.max_iterations):
             if iteration > 0 and not self._print_post_iter_summary():
+                break
+
+            # block-severity retrospective finding stops the sweep entirely.
+            if self.state.stop_after_iter:
+                print("\nEarly stop: retrospective produced block-level finding(s).")
                 break
 
             if self.time_budget_min > 0:
@@ -955,9 +1113,17 @@ class OrakPlanner:
                 desc_parts.append("; ".join(param_summaries))
             else:
                 desc_parts.append("no param changes")
+            if self.state.pending_warns:
+                # Surface previous iter's retrospective warnings into this iter's
+                # description so reviewers see them inline on the chart / PR.
+                desc_parts.append(
+                    "retrospective: " + "; ".join(self.state.pending_warns[:3])
+                )
+                self.state.pending_warns = []
             description = " | ".join(desc_parts)
             print(f"\nDescription: {description}")
 
+            self.state.iteration = iteration + 1
             self.state.last_best_before = best
             self.state.last_run_results = {}
             self.state.last_run_failed = False
@@ -969,7 +1135,8 @@ class OrakPlanner:
             print(f"\n{'=' * 60}")
             print(f"Running: {' '.join(cmd)}")
             print(
-                f"Triage: plateau={TRIAGE_SCORE_PLATEAU_STEPS}steps, "
+                f"Triage: plateau_default={TRIAGE_SCORE_PLATEAU_STEPS_DEFAULT}steps "
+                f"overrides={TRIAGE_SCORE_PLATEAU_STEPS_PER_GAME}, "
                 f"no_learn={TRIAGE_NO_LEARN_EPISODES}eps, "
                 f"baseline_gate={TRIAGE_BASELINE_FACTOR}"
             )
@@ -1070,9 +1237,27 @@ class OrakResultExtractor:
         actual_run_id = self.monitor.run_id or run_id or _find_run_id(self.games)
         self.state.last_runtime_min = self.monitor.state.last_runtime_min
 
+        # Detect wall-clock iter timeout: subprocess exited non-zero AND no
+        # triage kill fired AND we ran near the timeout cap. Without this the
+        # row stays as DISCARD and the silent_kill retrospective detector can't
+        # tell a timeout from an honest low score.
+        if (
+            exit_code not in (0, None)
+            and self.state.last_kill_reason is None
+            and self.state.last_runtime_min >= ITER_TIMEOUT_MIN * 0.95
+        ):
+            self.state.last_kill_reason = (
+                f"iteration timeout ({ITER_TIMEOUT_MIN}min wall-clock)"
+            )
+            # Wall-clock timeouts aren't game-specific; leave triggered_game
+            # None so all games in the iter get relabelled as EARLY_KILL.
+            self.state.last_triggered_game = None
+
         if not actual_run_id:
             self.state.last_run_results = {}
-            self.state.last_run_failed = exit_code not in (0, None)
+            self.state.last_run_failed = (
+                exit_code not in (0, None) and self.state.last_kill_reason is None
+            )
             return []
 
         self.state.prev_run_id = actual_run_id
@@ -1121,9 +1306,11 @@ class OrakResultExtractor:
         row_games = {row["game"] for row in rows}
         for row in rows:
             row["description"] = final_description
-            if (
-                self.state.last_kill_reason
-                and row["game"] == self.state.last_triggered_game
+            if self.state.last_kill_reason and (
+                # Triage-killed iter: relabel only the offending game.
+                row["game"] == self.state.last_triggered_game
+                # Wall-clock timeout: triggered_game is None, relabel all games.
+                or self.state.last_triggered_game is None
             ):
                 row["_relabel_target"] = True
 
@@ -1192,14 +1379,24 @@ def run(
         "",
         help="Per-config sub-dir (e.g. 'gemma' or 'qwen'). Empty = flat experiments/<TAG>/. Set to isolate parallel sweeps in experiments/<TAG>/<CONFIG_NAME>/.",
     ),
+    log_path: str = typer.Option(
+        "",
+        "--log-path",
+        help="Path to the sweep's stdout log file. Enables silent_kill / triage_threshold_mismatch retrospective detectors that need to grep log lines.",
+    ),
 ):
     """Run the autoresearch optimisation loop."""
     cfg = config_name or None
+    log_path_obj = Path(log_path) if log_path else None
     print(f"Autoresearch loop: config={config}, tag={tag}, max_iterations={max_iterations}")
     print(f"Games: {games}")
     if cfg:
         print(f"Per-config sub-dir: experiments/{tag}/{cfg}/")
-    print(f"Early stopping: patience={patience} iters, time_budget={time_budget_min}min\n")
+    print(f"Early stopping: patience={patience} iters, time_budget={time_budget_min}min")
+    print(
+        f"Retrospective: detectors={[d.name for d in ORAK_RETROSPECTIVE_DETECTORS]}, "
+        f"log_path={log_path_obj}\n"
+    )
 
     if dry_run:
         all_results = load_results(tag=tag, config_name=cfg)
@@ -1239,6 +1436,7 @@ def run(
         patience=patience,
         time_budget_min=time_budget_min,
         config_name=cfg,
+        log_path=log_path_obj,
     )
     monitor = OrakTriageMonitor(state=state, games=games, tag=tag, config_name=cfg)
     extractor = OrakResultExtractor(
