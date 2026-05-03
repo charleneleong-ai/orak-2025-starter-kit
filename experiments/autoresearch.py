@@ -575,11 +575,22 @@ ITER_TIMEOUT_MIN = 30              # Hard wall-clock cap per iteration; SIGINT s
 
 
 def _find_run_id(games: list[str]) -> str:
-    """Find the latest run_id from game_logs."""
+    """Find the latest run_id from game_logs by mtime.
+
+    Lexicographic sort would pick e.g. `pokemon_stage_a_direct_*` over a fresh
+    timestamp-named dir like `20260503_093804`, since 'p' (0x70) > '2' (0x30).
+    Old / abandoned runs would then bleed stale game_states.jsonl entries
+    into the new sweep's triage check. Sort by mtime to always pick the
+    actually-most-recent dir regardless of naming scheme.
+    """
     game_log_dir = GAME_LOG_DIR / games[0]
     if not game_log_dir.exists():
         return ""
-    run_dirs = sorted(game_log_dir.iterdir(), key=lambda p: p.name, reverse=True)
+    run_dirs = sorted(
+        (p for p in game_log_dir.iterdir() if p.is_dir()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
     return run_dirs[0].name if run_dirs else ""
 
 
@@ -775,11 +786,14 @@ def run_experiment(
     env.setdefault("WEAVE_DISABLED", "true")
     baseline_scores = baseline_scores or {}
 
-    # Capture full timestamp BEFORE Popen so we only accept run_ids created
-    # AFTER this iteration started. Comparing against just YYYYMMDD lets old
-    # iterations' run_ids (same day) leak through and confuses triage.
-    start_run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    start = time.time()
+    # Mark the wall-clock instant just before Popen so we only accept run dirs
+    # created AFTER this iteration started. Comparing run_id strings (e.g.
+    # `candidate >= "20260503_095500"`) breaks for non-timestamp dir names
+    # (e.g. `pokemon_stage_a_direct_*`) where the lexicographic order doesn't
+    # match creation order — fall through to the most-recent-by-mtime dir
+    # from a previous run instead.
+    start_mtime = time.time()
+    start = start_mtime
     iter_timeout_s = ITER_TIMEOUT_MIN * 60
     proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
     kill_reason = None
@@ -789,7 +803,10 @@ def run_experiment(
     for _ in range(60):
         time.sleep(2)
         candidate = _find_run_id(games)
-        if candidate and candidate >= start_run_id:
+        if not candidate:
+            continue
+        candidate_dir = GAME_LOG_DIR / games[0] / candidate
+        if candidate_dir.stat().st_mtime >= start_mtime:
             run_id = candidate
             break
 
@@ -818,9 +835,11 @@ def run_experiment(
 
         if not run_id:
             candidate = _find_run_id(games)
-            if candidate and candidate >= start_run_id:
-                run_id = candidate
-                _write_sidecar(tag, run_id, description, games)
+            if candidate:
+                candidate_dir = GAME_LOG_DIR / games[0] / candidate
+                if candidate_dir.stat().st_mtime >= start_mtime:
+                    run_id = candidate
+                    _write_sidecar(tag, run_id, description, games)
             continue
 
         kill_reason = _triage_check(run_id, games, baseline_scores)
