@@ -141,18 +141,26 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
 
     def _maybe_init_subtask_planner(self, config: Any):
         """Stage D: optional subtask planner for long-horizon games (pokemon).
-        Adds 1 LLM call per replan_every steps. Default off."""
+        Adds 1 LLM call per replan_every steps. Default off.
+
+        Game adapters can override the planner's system prompt by exporting a
+        module-level ``SUBTASK_PLANNER_SYSTEM`` constant — used to bake game-
+        specific waypoint chains into the planner (see pokemon_red.game_adapter)."""
         if not getattr(config, "use_subtask_planning", False):
             return None
-        planner = LLMSubtaskPlanner(
-            llm=self._llm,  # reuse the same vLLM-backed LLM
+        kwargs: dict[str, Any] = dict(
             replan_every=getattr(config, "subtask_replan_every", 1),
             observation_chars=getattr(config, "subtask_observation_chars", 600),
         )
+        adapter_system = getattr(self._adapter, "SUBTASK_PLANNER_SYSTEM", None)
+        if adapter_system:
+            kwargs["system_prompt"] = adapter_system
+        planner = LLMSubtaskPlanner(llm=self._llm, **kwargs)
         logger.info(
             f"[MACLA] subtask planner enabled "
             f"(replan_every={planner._replan_every}, "
-            f"observation_chars={planner._observation_chars})"
+            f"observation_chars={planner._observation_chars}, "
+            f"adapter_system_prompt={'yes' if adapter_system else 'no'})"
         )
         return planner
 

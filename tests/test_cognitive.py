@@ -250,6 +250,64 @@ def test_subtask_planner_handles_missing_section_header():
     assert out == "Walk south to the door"
 
 
+def test_default_planner_prompt_is_game_agnostic():
+    """The default planner system prompt must teach inference of sub-goals
+    via general exploration/progress heuristics — not bake any specific
+    game's content. This is what lets it generalize across long-horizon
+    games. Per-adapter overrides remain available for crisp domain
+    knowledge (see test_subtask_planner_uses_custom_system_prompt_when_provided)."""
+    from agents._cognitive.subtask_planner import DEFAULT_SYSTEM_PROMPT
+    sp = DEFAULT_SYSTEM_PROMPT
+    # Must reference the heuristic categories.
+    for heuristic in ("loop", "exit", "score"):
+        assert heuristic.lower() in sp.lower(), f"default planner prompt missing heuristic: {heuristic}"
+    # Must keep the parser contract.
+    assert "### Subtask" in sp
+    # Must NOT bake any single game's specifics — the prompt is shared across
+    # all games via LLMSubtaskPlanner's default. (Per-adapter overrides exist
+    # for games that genuinely need them; pokemon does not.)
+    for game_specific in ("RedsHouse", "PalletTown", "OaksLab", "Pokémon", "mario", "tile"):
+        assert game_specific not in sp, (
+            f"default planner prompt contains game-specific token: {game_specific!r}"
+        )
+
+
+def test_pokemon_adapter_does_not_export_planner_system_prompt():
+    """Pokemon should not need a per-adapter override — the abstract default
+    prompt covers it. If pokemon ever needs one again (e.g. domain-specific
+    edge case), the override mechanism is still there; this test exists only
+    to lock in the design choice that pokemon stays on the default."""
+    from agents.pokemon_red import game_adapter
+    assert not hasattr(game_adapter, "SUBTASK_PLANNER_SYSTEM"), (
+        "pokemon adapter should not override the planner system prompt — the "
+        "abstract default in subtask_planner.py is intended to handle it. If "
+        "this test fails, decide deliberately whether pokemon needs an override."
+    )
+
+
+def test_subtask_planner_uses_custom_system_prompt_when_provided():
+    """LLMSubtaskPlanner.__init__ accepts system_prompt=; the messages it
+    sends to the LLM must include that custom prompt rather than the default.
+    This is the per-adapter override mechanism — kept for future games that
+    have crisp domain knowledge worth baking in."""
+    from agents._cognitive import LLMSubtaskPlanner
+
+    captured = {}
+
+    class _CapturingLLM:
+        def invoke(self, messages):
+            captured["messages"] = messages
+            return _FakeMsg("### Subtask\nGo south\n")
+
+    custom = "ADAPTER_OVERRIDE_SENTINEL custom planner prompt for this game."
+    p = LLMSubtaskPlanner(_CapturingLLM(), system_prompt=custom)
+    p.plan(goal="champion", observation="some observation")
+    system_msg = captured["messages"][0]
+    assert "ADAPTER_OVERRIDE_SENTINEL" in system_msg.content
+    # And the default heuristics text must NOT leak through.
+    assert "Anti-loop" not in system_msg.content
+
+
 def test_local_sentence_transformers_backend(monkeypatch):
     """When OPENAI_API_KEY is missing, provider falls through to the local
     sentence-transformers model. Skipped if sentence-transformers is not

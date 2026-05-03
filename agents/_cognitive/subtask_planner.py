@@ -32,25 +32,69 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
 
-# Generic prompts — game-specific overrides go via the game adapter (see
-# ``LLMSubtaskPlanner.from_adapter`` below).
+# Default system prompt — game-agnostic exploration & progress heuristics.
+#
+# The agent's overall goal is usually too abstract for the LLM to act on
+# directly ("become Pokémon Champion", "win the game"). Rather than baking
+# game-specific waypoints in here, this prompt teaches the planner to
+# *infer* the next sub-goal from the trajectory using general principles:
+# exploration when stuck, continuation when score is rising, redirection
+# when looping. Works on any long-horizon game with observable scores,
+# regions, or exits.
+#
+# Per-adapter overrides remain available — a game adapter can export
+# ``SUBTASK_PLANNER_SYSTEM`` if it has crisp domain knowledge worth
+# baking in. See ``UnifiedMaclaAgent._maybe_init_subtask_planner``.
 DEFAULT_SYSTEM_PROMPT = """You are a sub-goal planner for an agent playing a game.
 
-Given the current observation, the agent's overall goal, and the recent step
-history, produce a concrete near-term subtask the agent should focus on next.
+The agent's overall goal is usually abstract ("complete the game", "achieve
+high score"). Your job is to *infer* the right concrete near-term sub-goal
+from the current observation and recent history, using general heuristics
+about exploration and progress.
 
-Output format (use exactly these section headers):
+## Heuristics (in priority order)
+
+1. **Anti-loop.** If recent history shows the agent oscillating between the
+   same 2-3 states/locations, the sub-goal must redirect — explicitly propose
+   a new direction or an unvisited region. Never re-emit the sub-goal that
+   produced the loop.
+
+2. **Continue what's working.** If the recent history shows the score
+   increased or a new region/level was reached, propose a sub-goal that
+   continues that activity class (e.g. "keep exploring this new area",
+   "perform another action of the same type").
+
+3. **Exit-seeking when stuck.** If the agent has been in the same scene/
+   region/screen for many steps without score change, propose a concrete
+   exit-seeking sub-goal grounded in observable features: edges of the
+   current view, doorway-like markers (warp points, door icons, level
+   boundaries), or unvisited connected regions.
+
+4. **Engage unfamiliar features.** If the current scene contains
+   interactive elements the agent has not yet engaged with (NPCs,
+   doors, items, distinct objects), propose engaging with one — prefer
+   ones near map edges or exits over decorative ones.
+
+5. **Concreteness.** Never emit abstract goals like "make progress" or
+   "play better". Always ground the sub-goal in something the agent
+   can observe right now: a coordinate, an object type, a visible NPC,
+   a directional movement.
+
+6. **Reuse when stable.** If the prior sub-goal still matches heuristics
+   1–5 and the agent is making forward progress on it, restate the same
+   sub-goal rather than switching.
+
+## Output format (use exactly these section headers)
 
 ### Subtask_reasoning
-<2-3 sentences explaining why this subtask is the right immediate focus>
+<2-3 sentences identifying which heuristic(s) above apply given the
+trajectory, and what observable feature the next sub-goal targets>
 
 ### Subtask
-<a single concrete sub-goal in plain language, no more than one sentence>
+<a single concrete sub-goal in plain language, no more than one sentence,
+grounded in the current observation>
 
-The subtask should be achievable in 5-30 game steps. Avoid abstract subgoals
-like "make progress" — instead pick something concrete like "exit the
-starting room through the door" or "merge two 64 tiles in the bottom-left
-corner". Reuse the prior subtask if it's still the right focus."""
+The sub-goal should be achievable in 5-30 game steps."""
 
 DEFAULT_USER_PROMPT_TEMPLATE = """### Overall goal
 {goal}
