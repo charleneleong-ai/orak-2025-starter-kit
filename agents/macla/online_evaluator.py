@@ -6,12 +6,11 @@ game-specific score deltas, position progress, and metric changes.
 
 Shaping params per game live in DEFAULT_SHAPING below and can be overridden
 via the agent yaml (block: `reward_shaping:`). This lets ablations sweep over
-shaping values without editing source. See PR #28 v6 for context.
+shaping values without editing source.
 
 TODO(refactor, post-PR-#28): pull each `_reward_<game>` into its own
 `RewardShaper` strategy class with a registry, mirroring how UnifiedMaclaAgent
-dispatches by game. The current single-class dict-dispatch is workable but
-will become unwieldy as shaping grows.
+dispatches by game. Current single-class dict-dispatch will get unwieldy.
 """
 import re
 from collections import deque
@@ -21,6 +20,11 @@ from loguru import logger
 
 # Per-game default shaping params. Override via agent yaml `reward_shaping:`
 # block; missing keys fall back to these defaults.
+#
+# Pokemon note: `repeat_visit_bonus` defaults to 0 because rewarding every
+# map transition (the pre-PR-#28-v6 behavior) creates a warp-loop reward hack
+# — RedsHouse1f↔RedsHouse2f staircase warps gave +1.5/step indefinitely and
+# the agent never explored. Set > 0 only if you specifically want that.
 DEFAULT_SHAPING: dict[str, dict[str, float]] = {
     "super_mario": {
         "fatal_penalty": -2.0,
@@ -48,14 +52,9 @@ DEFAULT_SHAPING: dict[str, dict[str, float]] = {
     },
     "pokemon_red": {
         "fatal_penalty": -1.5,
-        # PR #28 v6 fix: only the FIRST visit to a new map is rewarded
-        # (`map_discovery_bonus`); re-entering an already-visited map gives
-        # `repeat_visit_bonus` (default 0). Set repeat_visit_bonus > 0 only
-        # if you specifically want to reward back-and-forth movement (the old
-        # behavior that caused the warp-loop reward hack).
         "map_discovery_bonus": 1.5,
         "repeat_visit_bonus": 0.0,
-        "flag_bonus": 3.0,            # per flag delta
+        "flag_bonus": 3.0,
         "score_delta_divisor": 2.0,
         "stagnation_threshold_steps": 3,
         "stagnation_penalty": -0.4,
@@ -73,12 +72,7 @@ class OnlineAgentEvaluator:
         self._prev_metrics: dict = {}
         self._step_rewards: deque = deque(maxlen=100)
         self._stagnation_count: int = 0
-        # Per-episode visited-map set for pokemon. Without this, the warp tile
-        # between RedsHouse1f ↔ RedsHouse2f becomes an infinite +1.5/step reward
-        # loop and the agent never explores the world (PR #28 v6 diagnosis).
         self._visited_maps: set[str] = set()
-        # Shaping = defaults overlaid with per-agent overrides. Unknown game
-        # name yields {} defaults; reward methods then use .get(key, fallback).
         self._shaping: dict[str, float] = {
             **DEFAULT_SHAPING.get(game_name, {}),
             **(shaping_overrides or {}),
@@ -143,21 +137,17 @@ class OnlineAgentEvaluator:
             return s["fatal_penalty"]
 
         reward = 0.0
-        # Position progress (main signal)
         x_delta = cur.get("x_pos", 0) - prev.get("x_pos", 0)
         reward += x_delta / s["x_progress_divisor"]
 
-        # Score delta
         score_delta = cur.get("score", 0) - prev.get("score", 0)
         if score_delta > 0:
             reward += score_delta / s["score_delta_divisor"]
 
-        # Lives lost
         if prev.get("lives") is not None and cur.get("lives") is not None:
             if cur["lives"] < prev["lives"]:
                 reward += s["lives_lost_penalty"]
 
-        # Stagnation penalty
         if abs(x_delta) < s["stagnation_x_threshold"]:
             self._stagnation_count += 1
             if self._stagnation_count >= s["stagnation_threshold_steps"]:
@@ -172,24 +162,14 @@ class OnlineAgentEvaluator:
     def _extract_2048(self, state: str) -> dict:
         score = self._find_float(r"[Ss]core:?\s*(\d+\.?\d*)", state) or 0
         max_tile = self._find_int(r"[Mm]ax.?[Tt]ile:?\s*(\d+)", state) or 0
-        # Count empty cells from board representation
         empty_cells = state.count(", 0,") + state.count("[0,") + state.count(", 0]") + state.count("[0]")
-        # Locate max-tile position (corner / edge / center) — corner-anchoring
-        # is the dominant 2048 strategy, so densifying its signal helps the
-        # agent learn it from procedure feedback rather than from terminal
-        # game-over reward alone.
         max_pos = self._extract_2048_max_position(state, max_tile)
         return {"score": score, "max_tile": max_tile, "empty_cells": empty_cells, "max_pos": max_pos}
 
     def _extract_2048_max_position(self, state: str, max_tile: int) -> str:
-        """Return 'corner' / 'edge' / 'center' / 'unknown' for the max tile.
-
-        Parses the 4×4 board from the state string. The board is typically
-        rendered as nested lists, e.g. '[[0, 2, 4, 0], [0, 0, 8, 0], ...]'.
-        """
+        """Return 'corner' / 'edge' / 'center' / 'unknown' for the max tile."""
         if max_tile <= 0:
             return "unknown"
-        # Match 4 consecutive rows of 4 numbers each
         m = re.search(
             r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]"
             r"\s*,\s*"
@@ -203,7 +183,6 @@ class OnlineAgentEvaluator:
         if not m:
             return "unknown"
         cells = [int(x) for x in m.groups()]
-        # Find max-tile cell index (0-15, row-major)
         try:
             idx = cells.index(max_tile)
         except ValueError:
@@ -221,17 +200,14 @@ class OnlineAgentEvaluator:
             return s["fatal_penalty"]
 
         reward = 0.0
-        # Score delta (main signal — reward merges proportionally)
         score_delta = cur.get("score", 0) - prev.get("score", 0)
         reward += score_delta / s["score_delta_divisor"]
 
-        # Max tile increase (big bonus for doubling)
         prev_tile = prev.get("max_tile", 0)
         cur_tile = cur.get("max_tile", 0)
         if cur_tile > prev_tile and prev_tile > 0:
             reward += s["tile_double_bonus"]
 
-        # Empty cells: reward freeing space, penalize filling board
         prev_empty = prev.get("empty_cells", 0)
         cur_empty = cur.get("empty_cells", 0)
         if cur_empty > prev_empty:
@@ -239,11 +215,9 @@ class OnlineAgentEvaluator:
         elif cur_empty < prev_empty - 1:
             reward += s["crowding_penalty"]
 
-        # Corner-anchoring (the dominant 2048 strategy). Densifies the strategic
-        # signal so procedures get update events for "max-tile in corner →
-        # GOOD" and "anchor disturbed → BAD" without needing terminal game-over
-        # feedback. Doesn't bias toward any specific corner (all 4 are
-        # symmetric); it's the *invariant* that's rewarded.
+        # Corner-anchoring is the dominant 2048 strategy — densify the signal so
+        # MACLA procedures get update events for "max-tile in corner → GOOD" and
+        # "anchor disturbed → BAD" without waiting for terminal game-over reward.
         prev_pos = prev.get("max_pos")
         cur_pos = cur.get("max_pos")
         if cur_pos == "corner":
@@ -251,7 +225,6 @@ class OnlineAgentEvaluator:
         if prev_pos == "corner" and cur_pos in ("edge", "center"):
             reward += s["anchor_disturbed_penalty"]
 
-        # Board stuck (no score change = no merges happened)
         if score_delta == 0 and not is_fatal:
             self._stagnation_count += 1
             if self._stagnation_count >= s["stagnation_threshold_steps"]:
@@ -275,11 +248,6 @@ class OnlineAgentEvaluator:
             return s["fatal_penalty"]
 
         reward = 0.0
-        # Map transition reward — first visit gets `map_discovery_bonus`,
-        # subsequent re-entries get `repeat_visit_bonus` (default 0).
-        # PR #28 v6 fix: prior code always rewarded transitions, which the
-        # agent exploited via the RedsHouse1f↔2f warp loop. Visited set
-        # is reset per episode in reset_episode().
         prev_map = prev.get("map_name", "")
         cur_map = cur.get("map_name", "")
         map_changed = bool(cur_map and prev_map and cur_map != prev_map)
@@ -291,17 +259,14 @@ class OnlineAgentEvaluator:
         if cur_map:
             self._visited_maps.add(cur_map)
 
-        # Flag collected (big bonus — these are the actual eval scoring units)
         flag_delta = cur.get("flags", 0) - prev.get("flags", 0)
         if flag_delta > 0:
             reward += s["flag_bonus"] * flag_delta
 
-        # Score increase (intermediate)
         score_delta = cur.get("score", 0) - prev.get("score", 0)
         if score_delta > 0:
             reward += score_delta / s["score_delta_divisor"]
 
-        # Stuck in same area with no progress
         if score_delta == 0 and flag_delta == 0 and not map_changed:
             self._stagnation_count += 1
             if self._stagnation_count >= s["stagnation_threshold_steps"]:
