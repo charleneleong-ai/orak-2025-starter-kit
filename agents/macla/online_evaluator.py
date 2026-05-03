@@ -4,13 +4,20 @@ OnlineAgentEvaluator: per-step reward shaping for MACLA.
 Replaces binary success/fail with continuous rewards based on
 game-specific score deltas, position progress, and metric changes.
 
-Shaping params per game live in DEFAULT_SHAPING below and can be overridden
-via the agent yaml (block: `reward_shaping:`). This lets ablations sweep over
-shaping values without editing source.
+Shaping params per game live in DEFAULT_SHAPING below. Override per-agent via
+the agent yaml `reward_shaping:` block, e.g.:
 
-TODO(refactor, post-PR-#28): pull each `_reward_<game>` into its own
-`RewardShaper` strategy class with a registry, mirroring how UnifiedMaclaAgent
-dispatches by game. Current single-class dict-dispatch will get unwieldy.
+    # configs/<game>/agent/<variant>.yaml
+    reward_shaping:
+      repeat_visit_bonus: 0.5
+      flag_bonus: 5.0
+
+Missing keys fall back to the per-game DEFAULT_SHAPING entry. Useful for
+ablation sweeps over shaping values without editing source.
+
+TODO(refactor): consider splitting each `_reward_<game>` into a
+`RewardShaper` strategy class with a registry; current dict-dispatch will
+become unwieldy as more games are added.
 """
 import re
 from collections import deque
@@ -18,13 +25,9 @@ from collections import deque
 from loguru import logger
 
 
-# Per-game default shaping params. Override via agent yaml `reward_shaping:`
-# block; missing keys fall back to these defaults.
-#
-# Pokemon note: `repeat_visit_bonus` defaults to 0 because rewarding every
-# map transition (the pre-PR-#28-v6 behavior) creates a warp-loop reward hack
-# — RedsHouse1f↔RedsHouse2f staircase warps gave +1.5/step indefinitely and
-# the agent never explored. Set > 0 only if you specifically want that.
+# Per-game default shaping params. See module docstring for override syntax.
+# Game-specific rationale lives next to the parameters that encode it, so the
+# `_reward_<game>` methods stay mechanical.
 DEFAULT_SHAPING: dict[str, dict[str, float]] = {
     "super_mario": {
         "fatal_penalty": -2.0,
@@ -43,6 +46,9 @@ DEFAULT_SHAPING: dict[str, dict[str, float]] = {
         "tile_double_bonus": 1.5,
         "free_cell_bonus": 0.3,
         "crowding_penalty": -0.2,
+        # Corner-anchoring is the dominant 2048 strategy. Densifying its signal
+        # gives MACLA procedure-update events for "max-tile in corner → GOOD"
+        # and "anchor disturbed → BAD" without waiting for terminal reward.
         "corner_anchor_bonus": 0.4,
         "anchor_disturbed_penalty": -0.5,
         "stagnation_threshold_steps": 3,
@@ -52,6 +58,11 @@ DEFAULT_SHAPING: dict[str, dict[str, float]] = {
     },
     "pokemon_red": {
         "fatal_penalty": -1.5,
+        # Reward only the *discovery* of a new map; default 0 for re-entries.
+        # Rewarding every transition unconditionally (repeat_visit_bonus > 0)
+        # creates a known reward-hack: a 2-map loop (e.g. a staircase) becomes
+        # infinite reward and the agent oscillates instead of exploring. Set
+        # > 0 only when back-and-forth motion is genuinely desirable.
         "map_discovery_bonus": 1.5,
         "repeat_visit_bonus": 0.0,
         "flag_bonus": 3.0,
@@ -215,9 +226,6 @@ class OnlineAgentEvaluator:
         elif cur_empty < prev_empty - 1:
             reward += s["crowding_penalty"]
 
-        # Corner-anchoring is the dominant 2048 strategy — densify the signal so
-        # MACLA procedures get update events for "max-tile in corner → GOOD" and
-        # "anchor disturbed → BAD" without waiting for terminal game-over reward.
         prev_pos = prev.get("max_pos")
         cur_pos = cur.get("max_pos")
         if cur_pos == "corner":
