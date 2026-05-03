@@ -39,8 +39,12 @@ dependencies = [
     # v0.9.1 broadens gradient_collapse exception handler (silent skip on
     #        wandb auth / network errors instead of crashing the sweep);
     # v0.10.0 adds the value_transform_mismatch detector + sign_flip_in_rubric
-    #         alias for rubric-eval sweeps (unused on orak: no per-row JSONL).
-    "autoresearch @ git+https://github.com/charleneleong-ai/autoresearch.git@v0.10.0",
+    #         alias for rubric-eval sweeps (unused on orak: no per-row JSONL);
+    # v0.11.0 extracts sweep-loop helpers (relabel_last_as_early_kill,
+    #         kill_gracefully, wait_with_timeout, sidecar context manager)
+    #         that orak's experiments/autoresearch.py now imports instead of
+    #         maintaining its own copies.
+    "autoresearch @ git+https://github.com/charleneleong-ai/autoresearch.git@v0.11.0",
     "loguru>=0.7.0",
     "matplotlib>=3.10.7",
     "mss>=10.1.0",

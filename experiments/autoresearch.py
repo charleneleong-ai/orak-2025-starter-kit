@@ -55,6 +55,13 @@ from autoresearch.retrospective import (
     filter_by_severity,
     format_markdown,
 )
+# Sweep-loop helpers extracted into the package in v0.11.0 (autoresearch#20 PR 1).
+# These wrap the package APIs to preserve orak's existing call-site signatures.
+from autoresearch import (
+    clear_sidecar as _ar_clear_sidecar,
+    relabel_last_as_early_kill as _ar_relabel_last_as_early_kill,
+    write_sidecar as _ar_write_sidecar,
+)
 
 ROOT = Path(__file__).parent.parent
 CONFIGS_DIR = ROOT / "configs"
@@ -692,51 +699,53 @@ def _triage_check(
     return None
 
 
-def _relabel_last_as_early_kill(tag: str, kill_reason: str, games: list[str], triggered_game: str | None = None):
-    """Patch the triggering game's result row to EARLY_KILL.
+def _relabel_last_as_early_kill(
+    tag: str, kill_reason: str, games: list[str], triggered_game: str | None = None
+):
+    """Patch the triggering game's result row to EARLY_KILL (orak signature).
 
-    Only relabels the game that triggered the triage kill, NOT all games.
-    This prevents a single stuck game (e.g. pokemon_red at 0) from
-    invalidating good results from other games in the same iteration.
+    Thin wrapper over `autoresearch.relabel_last_as_early_kill` (v0.11.0+).
+    Preserves the orak call-site shape: a filter on `game` field restricts
+    relabelling to the triggered game, leaving other games' rows in the
+    same iter untouched. Pass `triggered_game=None` to relabel all games.
     """
-    results_file = ROOT / "experiments" / tag / "results.jsonl"
-    if not results_file.exists():
-        return
-    lines = results_file.read_text().strip().split("\n")
-    # Determine which games to relabel: only the triggered game if specified
     games_to_kill = [triggered_game] if triggered_game else games
-    patched = 0
-    for i in range(len(games)):
-        idx = len(lines) - 1 - i
-        if idx < 0:
-            break
-        entry = json.loads(lines[idx])
-        if entry.get("game") in games_to_kill:
-            entry["status"] = "EARLY_KILL"
-            entry["notes"] = f"KILLED: {kill_reason}. " + entry.get("notes", "")
-            lines[idx] = json.dumps(entry)
-            patched += 1
-    results_file.write_text("\n".join(lines) + "\n")
-    print(f"  Relabelled {patched} entr{'y' if patched==1 else 'ies'} as EARLY_KILL ({', '.join(games_to_kill)}): {kill_reason}")
+    n = _ar_relabel_last_as_early_kill(
+        experiments_dir=ROOT / "experiments",
+        tag=tag,
+        kill_reason=kill_reason,
+        filter_field="game",
+        filter_values=games_to_kill,
+        last_n=len(games),
+    )
+    print(
+        f"  Relabelled {n} entr{'y' if n == 1 else 'ies'} as EARLY_KILL "
+        f"({', '.join(games_to_kill)}): {kill_reason}"
+    )
 
 
 def _write_sidecar(tag: str, run_id: str, description: str, games: list[str]):
-    """Write current_run.json sidecar for live chart updates."""
-    sidecar_dir = ROOT / "experiments" / tag
-    sidecar_dir.mkdir(parents=True, exist_ok=True)
-    (sidecar_dir / "current_run.json").write_text(json.dumps({
-        "run_id": run_id,
-        "started_at": datetime.now().isoformat(),
-        "games": games,
-        "description": description,
-    }))
+    """Write current_run.json sidecar for live chart updates (orak schema).
+
+    Thin wrapper over `autoresearch.write_sidecar` (v0.11.0+). Keeps orak's
+    historic payload schema (run_id / games array, no log_path / wandb_url
+    fields) so existing chart renderers see the same JSON keys.
+    """
+    _ar_write_sidecar(
+        {
+            "run_id": run_id,
+            "started_at": datetime.now().isoformat(),
+            "games": games,
+            "description": description,
+        },
+        tag=tag,
+        experiments_dir=ROOT / "experiments",
+    )
 
 
 def _clear_sidecar(tag: str):
-    """Remove current_run.json after run completes."""
-    sidecar = ROOT / "experiments" / tag / "current_run.json"
-    if sidecar.exists():
-        sidecar.unlink()
+    """Remove current_run.json after run completes (thin wrapper, v0.11.0+)."""
+    _ar_clear_sidecar(tag=tag, experiments_dir=ROOT / "experiments")
 
 
 def _cleanup_threads():
