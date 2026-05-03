@@ -9,16 +9,10 @@ max_tokens: 8192
 max_model_len: 16384
 game_config_path: "pokemon_red"
 track: "TRACK1"
-# Stage C: opt-in vector memory via VectorMemoryProvider. When True,
-# UnifiedMaclaAgent prefetches retrieved memories into the LLM prompt and
-# writes events on score increases.
-use_vector_memory: true
-vector_memory_max: 100
-vector_memory_top_k: 3
-vector_memory_threshold: 0.5
-# Stage D: subtask planner — task decomposition. Pokemon hit 14.29% / 0.00
-# ceiling without it (agent stuck on top-level "become Pokemon Champion"
-# objective). Replan every 5 steps to keep inference cost ~1.2x.
-use_subtask_planning: true
-subtask_replan_every: 5
-subtask_observation_chars: 600
+# Pokemon ships Stage A: vmem off, planner off. PR #28 cross-game ablation
+# (n=2 every cell) shows Stage A=14.29, Stage C=14.29, Stage D=0.00 — vmem
+# is dead-weight on pokemon (no lift over A) and the planner regresses by
+# −100% because per-step latency leaves too few steps in the 30-min budget
+# to reach Oak's Lab. Per-game verdict: pokemon→A, mario→D, 2048→C.
+use_vector_memory: false
+use_subtask_planning: false
