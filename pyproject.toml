@@ -37,8 +37,10 @@ dependencies = [
     # v0.8.0 adds the post-iter retrospective module + 4 builtin detectors;
     # v0.9.0 adds the gradient_collapse detector + [wandb] extra (unused here);
     # v0.9.1 broadens gradient_collapse exception handler (silent skip on
-    #        wandb auth / network errors instead of crashing the sweep).
-    "autoresearch @ git+https://github.com/charleneleong-ai/autoresearch.git@v0.9.1",
+    #        wandb auth / network errors instead of crashing the sweep);
+    # v0.10.0 adds the value_transform_mismatch detector + sign_flip_in_rubric
+    #         alias for rubric-eval sweeps (unused on orak: no per-row JSONL).
+    "autoresearch @ git+https://github.com/charleneleong-ai/autoresearch.git@v0.10.0",
     "loguru>=0.7.0",
     "matplotlib>=3.10.7",
     "mss>=10.1.0",
