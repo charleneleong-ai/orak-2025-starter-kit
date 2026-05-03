@@ -270,6 +270,32 @@ without strong grounds to prefer one over another:
 
 No recommendation is encoded in this report.
 
+## Postscript — PR #28 cross-game ablation (May 2026)
+
+After this report was written, [PR #28](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/28) ran a 3×3 cross-game Stage A/C/D ablation on the same Gemma 4 E4B baseline to test which cognitive substrate (`vmem` = vector memory, `planner` = LLM subtask planner) helps which game. **n=2 every cell.**
+
+| Game | Stage A baseline | Stage C (vmem) | Stage D (vmem + planner) | Verdict |
+|---|---|---|---|---|
+| 2048 | 15.91 | **23.50** ✅ | 18.09 (−23% vs C) | **Stage C** — vmem helps, planner hurts |
+| mario | 35.18 | 35.18 (+0%) | **43.90** ✅ (+25% vs A) | **Stage D** — planner helps, vmem null |
+| pokemon | **14.29** ✅ | 14.29 _(n=2 fresh, confirms historical baseline)_ | 0.00 _(n=2 identical)_ | **Stage A** — both substrates regress |
+
+**Zero overlap across games.** Each game wants a different stack. The "unified-arch" claim from this report holds for *the agent's core* (memory + Bayesian selector + meta-learner) but extends a layer further than originally stated: the *substrate choice itself* (which cognitive add-ons are enabled) is also per-game. There is no single Stage X that wins on all three.
+
+**Pokemon Stage D — what the planner does on its own:** the failure mode for Stage D pokemon (0.00 vs Stage A's 14.29) is *not* step-budget exhaustion. Per-game `game_states.jsonl` audit shows Stage A escapes the starter house (`RedsHouse2f → 1f → PalletTown → BluesHouse`) and triggers the Oak's-Lab starter scoring event in 168 steps. **Both Stage D iters never escape the house** — they reach only 2 maps because the generic LLM planner (`agents/_cognitive/subtask_planner.py`) generates subgoals like _"explore upstairs"_ / _"check items"_ from pokemon's abstract `DEFAULT_GOAL = "Become Pokémon Champion"`, which override the agent's prompt-level exit-vs-staircase hint.
+
+This validates the original report's option 3 hypothesis ("address the pokemon class of game directly… build subgoal decomposition / curriculum / task-aware prompting") — pokemon really does need task decomposition, but the *generic* planner without per-game waypoint anchors makes things worse than no planner at all.
+
+**Follow-up PR exploring the fix:**
+
+[PR #31](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/31) adds a per-adapter `SUBTASK_PLANNER_SYSTEM` override and a pokemon-specific system prompt that bakes the early-game waypoint chain (`RedsHouse → PalletTown → OaksLab → starter → rival → Route 1`) plus the `WarpPoint` exit-vs-staircase disambiguation into the planner. The validation sweep is the Stage D pokemon re-run with this prompt — pass criterion is score ≥ 14.29 (matches Stage A baseline). If it fails, the fallback is to flip pokemon's shipped `gemma.yaml` to `use_subtask_planning: false` (one-line config change; deliberately *not* opened as a stacked PR until B's outcome is known, to avoid premature commitment).
+
+**Updated honest options going forward (May 2026):**
+
+1. **Ship per-game configs from PR #28.** mario locked to Stage D, 2048 locked to Stage C, pokemon to Stage D-with-prompt-fix (PR #31) if its validation re-run beats Stage A, otherwise pokemon falls back to Stage A. The "rename the claim, ship what works" option from the original report compounds to "ship *three* claims, one per game."
+2. **Goal-aware planner (waypoint curriculum) — option A.** A `WaypointGoalProvider` that programmatically tracks game state and emits the *current* milestone as the planner's `goal=` argument, so the planner gets a concrete state-aware goal instead of an abstract one. More general than the per-adapter system prompt (PR #31 = option B); will run after PR #31's outcome is known either as the fallback if B fails or as further generalization if B succeeds.
+3. **Cross-game generalization is a research hypothesis, not a default.** Future games (Zelda, Final Fantasy, RPG-style) will need their own ablation; assume Stage A as a safe baseline and add substrate components empirically.
+
 ## Reproducibility
 
 All sweep results live under `experiments/unified_macla/<config>/results.jsonl`.
