@@ -61,3 +61,12 @@ logs/
 
 # Wandb
 wandb/
+
+# autoresearch sweep dashboards — regenerable from results.jsonl via
+# experiments.experiment_progress.plot_progress() and from cross-sweep
+# results via experiments.plot_comparisons. Each progress.html is ~4.7 MB
+# (Plotly+CDN inlined); committing them bloats the repo with derived data.
+# The .jsonl files alone are sufficient for plot reproducibility.
+experiments/**/progress.html
+experiments/**/progress.png
+experiments/**/progress_static.png
