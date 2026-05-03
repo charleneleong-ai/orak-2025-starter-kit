@@ -1,0 +1,21 @@
+# @package _global_
+#
+# Stage C variant — vmem ON, planner OFF across all games.
+# For pokemon, this fills the missing post-fix Stage C cell in the
+# cross-game scoreboard (PR #28). Previous pokemon_check data was pre-fix.
+#
+# Usage:
+#   python run.py -c gemma_stage_c --local --games pokemon_red
+
+ENV: ${oc.env:ENV, "dev"}
+CWD: ${hydra:runtime.cwd}
+LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
+
+defaults:
+  - _self_
+  - twenty_fourty_eight: base
+  - super_mario: base
+  - pokemon_red: base
+  - override twenty_fourty_eight/agent: gemma_stage_c
+  - override super_mario/agent: gemma_stage_c
+  - override pokemon_red/agent: gemma_stage_c

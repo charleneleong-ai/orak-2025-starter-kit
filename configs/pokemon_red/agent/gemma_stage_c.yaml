@@ -1,0 +1,9 @@
+# Stage C for Pokemon Red — vmem ON, planner OFF.
+# Post-fix re-run to fill the missing cell in the cross-game scoreboard.
+# Previous Stage C data (pokemon_check) was pre-fix (warp-loop reward hack,
+# early-kill triage, obs-ambiguity) and not a fair comparison.
+defaults:
+  - gemma
+  - _self_
+
+use_subtask_planning: false

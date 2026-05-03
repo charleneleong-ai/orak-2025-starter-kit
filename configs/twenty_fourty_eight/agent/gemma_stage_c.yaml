@@ -1,0 +1,6 @@
+# Stage C — vmem ON, planner OFF.
+defaults:
+  - gemma
+  - _self_
+
+use_subtask_planning: false
