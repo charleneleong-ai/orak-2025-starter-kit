@@ -43,9 +43,38 @@ from experiments.experiment_progress import (
     plot_progress,
 )
 
+# Post-iter retrospective hook (autoresearch >= 0.8.0). Detectors run after each
+# iter writes its results.jsonl row and surface failure-mode findings into the
+# next iter's description (warn) or stop the sweep (block). See PR #28 v6 audit
+# for the orak-side findings that motivated the package detectors.
+from autoresearch.retrospective import (
+    BUILTIN_DETECTORS,
+    Finding,
+    attach_findings_to_row,
+    audit_iter,
+    filter_by_severity,
+    format_markdown,
+)
+
 ROOT = Path(__file__).parent.parent
 CONFIGS_DIR = ROOT / "configs"
 AGENTS_DIR = ROOT / "agents"
+
+# Detectors relevant to orak's game-agent sweep loop. Skipped from the
+# package's BUILTIN_DETECTORS:
+#   - bucketed_failure: orak doesn't emit per-row JSONL rubric dumps
+#   - gradient_collapse: orak doesn't run an RL training loop (LLM is frozen)
+ORAK_RETROSPECTIVE_DETECTORS = [
+    BUILTIN_DETECTORS["silent_kill"],
+    BUILTIN_DETECTORS["triage_threshold_mismatch"],
+    BUILTIN_DETECTORS["eval_score_plateau"],
+]
+# Per-game tuning of detector thresholds. Pokemon's first scoring event lands
+# at step 100-150 so the global plateau-at-80 default would false-positive
+# every iter; bump it to 200 for pokemon. Other games keep the defaults.
+ORAK_RETROSPECTIVE_KWARGS = {
+    "triage_threshold_mismatch": {"min_first_score_step": 150},
+}
 
 # Marker to track auto-appended prompt hints (avoid duplication)
 AUTORESEARCH_MARKER = "# [autoresearch]"
@@ -928,6 +957,77 @@ def log_run_results(
     return results
 
 
+def _run_post_iter_retrospective(
+    *,
+    tag: str,
+    iteration: int,
+    games: list[str],
+    config_name: str | None,
+    log_path: Path | None,
+) -> list[Finding]:
+    """Run autoresearch retrospective detectors against the iter we just logged.
+
+    Per-game: load the row we just appended (last entry filtered by game) and
+    its prior history, run the orak-tuned detector panel, write findings into
+    `experiments/<tag>[/<config>]/retrospective_E<iter>_<game>.md`, mutate the
+    row in `results.jsonl` to attach summaries.
+
+    Returns the union of findings across all games so the caller can decide
+    whether to fold warns into the next iter's description (self-correcting
+    loop) or stop the sweep on a `block`.
+    """
+    findings_all: list[Finding] = []
+    rows = load_results(tag=tag, config_name=config_name)
+    out_dir = ROOT / "experiments" / tag
+    if config_name:
+        out_dir = out_dir / config_name
+
+    for game in games:
+        # Latest row for this game = the one we just logged.
+        per_game = [r for r in rows if r.get("game") == game]
+        if not per_game:
+            continue
+        cur_row = per_game[-1]
+        history = per_game[:-1]
+
+        findings = audit_iter(
+            results_row=cur_row,
+            log_path=log_path,
+            per_row_jsonl_path=None,  # orak doesn't emit per-row rubric dumps
+            history=history,
+            detectors=ORAK_RETROSPECTIVE_DETECTORS,
+            detector_kwargs=ORAK_RETROSPECTIVE_KWARGS,
+        )
+        if not findings:
+            continue
+
+        findings_all.extend(findings)
+        attach_findings_to_row(cur_row, findings)
+
+        # Write the markdown sibling for human review.
+        md_path = out_dir / f"retrospective_E{iteration}_{game}.md"
+        md_path.parent.mkdir(parents=True, exist_ok=True)
+        md_path.write_text(format_markdown(findings, iter_id=iteration))
+
+        # Re-write the row in results.jsonl with the attached findings. We
+        # have to rewrite the whole file since results are append-only JSONL.
+        results_file = out_dir / "results.jsonl"
+        if results_file.exists():
+            all_rows = [
+                json.loads(line) for line in results_file.read_text().splitlines() if line.strip()
+            ]
+            # Match by (game, experiment) — the most recent row for this game
+            # was just appended by log_experiment.
+            target_iter = cur_row.get("experiment")
+            for i, r in enumerate(all_rows):
+                if r.get("game") == game and r.get("experiment") == target_iter:
+                    all_rows[i] = cur_row
+                    break
+            results_file.write_text("\n".join(json.dumps(r) for r in all_rows) + "\n")
+
+    return findings_all
+
+
 @app.command()
 def log_run(
     run_id: str = typer.Option(..., help="Run ID from game_logs (e.g. 20260422_213143)"),
@@ -953,6 +1053,7 @@ def run(
     patience: int = typer.Option(5, help="Stop sweep if no game improves over best-so-far for N consecutive iterations (0 = disable)"),
     time_budget_min: float = typer.Option(0.0, help="Stop sweep after this many wall-clock minutes (0 = disable)"),
     config_name: str = typer.Option("", help="Per-config sub-dir (e.g. 'gemma' or 'qwen'). Empty = flat experiments/<TAG>/. Set to isolate parallel sweeps in experiments/<TAG>/<CONFIG_NAME>/."),
+    log_path: str = typer.Option("", "--log-path", help="Path to the sweep's stdout log file. Enables silent_kill / triage_threshold_mismatch retrospective detectors that need to grep log lines."),
 ):
     """Run the autoresearch optimisation loop."""
     cfg = config_name or None
@@ -960,7 +1061,9 @@ def run(
     print(f"Games: {games}")
     if cfg:
         print(f"Per-config sub-dir: experiments/{tag}/{cfg}/")
-    print(f"Early stopping: patience={patience} iters, time_budget={time_budget_min}min\n")
+    print(f"Early stopping: patience={patience} iters, time_budget={time_budget_min}min")
+    log_path_obj = Path(log_path) if log_path else None
+    print(f"Retrospective: detectors={[d.name for d in ORAK_RETROSPECTIVE_DETECTORS]}, log_path={log_path_obj}\n")
 
     all_results = load_results(tag=tag, config_name=cfg)
     sweep_start = time.time()
@@ -969,6 +1072,10 @@ def run(
     # checkpoint and carry procedures/meta-procedures forward — biggest lever
     # for cross-iter consistency.
     prev_run_id: str | None = None
+    # Warn-level findings from the previous iter; prepended to this iter's
+    # description so the autoresearch parameter proposer (and any downstream
+    # plot reader) sees the context. Self-correcting loop pattern.
+    pending_warns: list[str] = []
 
     for iteration in range(max_iterations):
         # Budget stop: hit the wall-clock cap
@@ -1015,6 +1122,11 @@ def run(
             desc_parts.append("; ".join(param_summaries))
         else:
             desc_parts.append("no param changes")
+        if pending_warns:
+            # Surface previous iter's retrospective warnings into this iter's
+            # description so reviewers see them inline on the chart / PR.
+            desc_parts.append("retrospective: " + "; ".join(pending_warns[:3]))
+            pending_warns = []
         description = " | ".join(desc_parts)
         print(f"\nDescription: {description}")
 
@@ -1067,6 +1179,27 @@ def run(
         kill_reason = _triage_check(run_id, games, best) if run_id else None
         if kill_reason:
             _relabel_last_as_early_kill(tag, kill_reason, games, triggered_game=kill_reason.split(':')[0].strip())
+
+        # Post-iter retrospective: run failure-mode detectors against the row
+        # we just logged. Warn-level findings get prepended to next iter's
+        # description; block-level stops the sweep entirely.
+        findings = _run_post_iter_retrospective(
+            tag=tag,
+            iteration=iteration + 1,
+            games=games,
+            config_name=cfg,
+            log_path=log_path_obj,
+        )
+        if findings:
+            print(f"\n--- Retrospective ({len(findings)} finding(s)) ---")
+            for f in findings:
+                print(f"  [{f.severity.upper()}] [{f.detector}] {f.summary}")
+            blocks = filter_by_severity(findings, "block")
+            if blocks:
+                print(f"\nEarly stop: retrospective produced {len(blocks)} block-level finding(s).")
+                break
+            for f in filter_by_severity(findings, "warn"):
+                pending_warns.append(f"{f.detector}={f.suggested_action}")
 
         # Reload results for next iteration
         all_results = load_results(tag=tag, config_name=cfg)
