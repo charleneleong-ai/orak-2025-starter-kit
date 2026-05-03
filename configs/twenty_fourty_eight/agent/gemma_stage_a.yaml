@@ -1,14 +1,9 @@
-# Stage A baseline for 2048 — vmem off, planner off. Mirrors the original
-# config that produced `experiments/harness_check/gemma` (4.36) on 2026-04-28,
-# so the baseline can be reproduced if needed.
-class_name: "agents.macla.unified.UnifiedMaclaAgent"
-model: "unsloth/gemma-4-E4B-it"
-temperature: 0.7
-server_type: "vllm"
-supports_vision: true
-max_tokens: 8192
-max_model_len: 16384
-game_config_path: "twenty_fourty_eight"
-track: "TRACK1"
+# Stage A baseline for 2048 — inherits gemma.yaml and only flips off the
+# Stage C/D switches. Reproduces the pre-Stage-C config (4.36 on harness_check,
+# 2026-04-28) so cross-stage scoreboards have a clean A→C→D triple.
+defaults:
+  - gemma
+  - _self_
+
 use_vector_memory: false
 use_subtask_planning: false

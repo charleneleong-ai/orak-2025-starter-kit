@@ -1,14 +1,10 @@
-# Stage A baseline for Super Mario — vmem off, planner off. Reproduces the
-# pre-Stage-C config so cross-stage scoreboards have a clean A→C→D triple.
-# Used by experiments/scripts/run_full_baseline_sweep.sh (PR #28 follow-up).
-class_name: "agents.macla.unified.UnifiedMaclaAgent"
-model: "unsloth/gemma-4-E4B-it"
-temperature: 0.7
-server_type: "vllm"
-supports_vision: true
-max_tokens: 8192
-max_model_len: 16384
-game_config_path: "super_mario"
-track: "TRACK1"
+# Stage A baseline for Super Mario — inherits gemma.yaml and only flips off
+# the Stage C/D switches. Reproduces the pre-Stage-C config (35.18 on
+# harness_check_mario, 2026-05-03) so cross-stage scoreboards have a clean
+# A→C→D triple.
+defaults:
+  - gemma
+  - _self_
+
 use_vector_memory: false
 use_subtask_planning: false
