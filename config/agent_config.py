@@ -189,6 +189,14 @@ class LocalConfig(AgentConfig):
     subtask_replan_every: int = 1
     subtask_observation_chars: int = 600
 
+    # Optional shaped-reward overrides. Keys are merged on top of
+    # `agents.macla.online_evaluator.DEFAULT_SHAPING[<game>]`. Useful for
+    # ablation sweeps over shaping params without editing source. Example:
+    #   reward_shaping:
+    #     repeat_visit_bonus: 0.0   # 0 = require map discovery, no warp-loop
+    # Leave empty / None to use the per-game defaults.
+    reward_shaping: dict = field(default_factory=dict)
+
     def __post_init__(self):
         # Env var overrides for easy CLI switching
         self.base_url = os.environ.get("LOCAL_BASE_URL", self.base_url)
