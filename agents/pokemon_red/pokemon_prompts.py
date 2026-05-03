@@ -118,7 +118,12 @@ quit
 
 ### Exploration Strategy ###
 - **Explore First**: If the 'Full Map' shows unexplored areas ('?'), prioritize actions that explore these areas. Think, plan and reason about the the ideal next location to maximise the unexplored areas ("?") in the map before exploring unexplored warp points.
-- **Avoid Loops**: Do not repeatedly enter and exit the same warp point/door without exploring the new room.
+- **Avoid Loops**: Do not repeatedly enter and exit the same warp point/door without exploring the new room. If you have entered a 'WarpPoint' and the resulting `[Map Info]` `Map Name` is the same map you were on before warping (modulo case/floor suffix like `1f`/`2f`), or matches a map you have already visited recently, that warp is a STAIRCASE/loop — do not re-enter it. Pick a different `WarpPoint` instead.
+- **Identifying Exits vs Staircases (CRITICAL for indoor maps)**: Most pokemon indoor maps (houses, labs, gyms, shops) follow a layout convention:
+  - The **exit door** to the outside world is typically a `WarpPoint` on the **bottom edge** of the map (largest `y` coordinate, often `y == y_max - 1`). It is usually centered horizontally.
+  - **Staircases** between floors are `WarpPoint`s in the **interior** of the map (smaller `y`, often near corners or against an internal wall). The starter house has its staircase at `(7, 1)` and its exit at `(2, 7)`/`(3, 7)`.
+  - When you start a new game, your goal is to LEAVE the starter house: prefer `WarpPoint`s near the bottom row over those on the top/right edges.
+  - If unsure, the heuristic is: **bottom-edge `WarpPoint` ≈ exit; interior `WarpPoint` ≈ staircase**.
 """
 
 USER_PROMPT = """
