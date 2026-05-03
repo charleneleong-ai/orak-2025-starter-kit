@@ -553,7 +553,14 @@ def propose_next_params(game: str, results: list[dict], config_type: str = "unif
 
 # ── Triage Thresholds ──────────────────────────────────────────────
 
-TRIAGE_SCORE_PLATEAU_STEPS = 80    # Kill if max eval unchanged for N steps
+# Per-game plateau threshold. Pokemon's first scoring event (1st flag) lands
+# around step 100-150 in successful runs (`pokemon_check` 2026-04-30 sweep),
+# so the global 80 was killing Stage A and D before they had a chance to score
+# (PR #28 v6 audit). Other games hit their first score in <20 steps so 80 is
+# fine. Default applies to games not explicitly listed.
+TRIAGE_SCORE_PLATEAU_STEPS_PER_GAME = {"pokemon_red": 200}
+TRIAGE_SCORE_PLATEAU_STEPS_DEFAULT = 80
+TRIAGE_SCORE_PLATEAU_STEPS = 80    # Kept as fallback for code paths that don't pass game
 TRIAGE_NO_LEARN_EPISODES = 8       # Kill if no episode score improvement for N episodes.
                                    # Bumped 5 -> 8 after iter 4 of PR #20 sweep
                                    # (wandb run https://wandb.ai/chaleong/orak-super-mario/runs/20260427_174648_orak-super-mario):
@@ -623,11 +630,12 @@ def _triage_check(
         if cur_max > 0:
             episode_scores.append(cur_max)
 
-        # Triage 1: Score plateau — max eval unchanged for N steps
-        if total >= TRIAGE_SCORE_PLATEAU_STEPS:
-            recent = evals[-TRIAGE_SCORE_PLATEAU_STEPS:]
+        # Triage 1: Score plateau — max eval unchanged for N steps (per-game)
+        plateau_steps = TRIAGE_SCORE_PLATEAU_STEPS_PER_GAME.get(game, TRIAGE_SCORE_PLATEAU_STEPS_DEFAULT)
+        if total >= plateau_steps:
+            recent = evals[-plateau_steps:]
             if max(recent) == min(recent):
-                return f"{game}: score plateau ({max_eval:.2f}%) for {TRIAGE_SCORE_PLATEAU_STEPS} steps"
+                return f"{game}: score plateau ({max_eval:.2f}%) for {plateau_steps} steps"
 
         # Triage 2: No episode improvement for N episodes
         if len(episode_scores) >= TRIAGE_NO_LEARN_EPISODES:
@@ -756,7 +764,7 @@ def run_experiment(
 
     print(f"\n{'='*60}")
     print(f"Running: {' '.join(cmd)}")
-    print(f"Triage: plateau={TRIAGE_SCORE_PLATEAU_STEPS}steps, no_learn={TRIAGE_NO_LEARN_EPISODES}eps, baseline_gate={TRIAGE_BASELINE_FACTOR}")
+    print(f"Triage: plateau_default={TRIAGE_SCORE_PLATEAU_STEPS_DEFAULT}steps overrides={TRIAGE_SCORE_PLATEAU_STEPS_PER_GAME}, no_learn={TRIAGE_NO_LEARN_EPISODES}eps, baseline_gate={TRIAGE_BASELINE_FACTOR}")
     print(f"{'='*60}\n")
 
     env = os.environ.copy()

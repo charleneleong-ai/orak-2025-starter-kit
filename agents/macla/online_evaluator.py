@@ -3,6 +3,15 @@ OnlineAgentEvaluator: per-step reward shaping for MACLA.
 
 Replaces binary success/fail with continuous rewards based on
 game-specific score deltas, position progress, and metric changes.
+
+Shaping params per game live in DEFAULT_SHAPING below and can be overridden
+via the agent yaml (block: `reward_shaping:`). This lets ablations sweep over
+shaping values without editing source. See PR #28 v6 for context.
+
+TODO(refactor, post-PR-#28): pull each `_reward_<game>` into its own
+`RewardShaper` strategy class with a registry, mirroring how UnifiedMaclaAgent
+dispatches by game. The current single-class dict-dispatch is workable but
+will become unwieldy as shaping grows.
 """
 import re
 from collections import deque
@@ -10,14 +19,70 @@ from collections import deque
 from loguru import logger
 
 
+# Per-game default shaping params. Override via agent yaml `reward_shaping:`
+# block; missing keys fall back to these defaults.
+DEFAULT_SHAPING: dict[str, dict[str, float]] = {
+    "super_mario": {
+        "fatal_penalty": -2.0,
+        "x_progress_divisor": 100.0,
+        "score_delta_divisor": 200.0,
+        "lives_lost_penalty": -1.5,
+        "stagnation_threshold_steps": 3,
+        "stagnation_penalty": -0.3,
+        "stagnation_x_threshold": 3.0,
+        "reward_min": -2.0,
+        "reward_max": 3.0,
+    },
+    "twenty_fourty_eight": {
+        "fatal_penalty": -1.5,
+        "score_delta_divisor": 200.0,
+        "tile_double_bonus": 1.5,
+        "free_cell_bonus": 0.3,
+        "crowding_penalty": -0.2,
+        "corner_anchor_bonus": 0.4,
+        "anchor_disturbed_penalty": -0.5,
+        "stagnation_threshold_steps": 3,
+        "stagnation_penalty": -0.5,
+        "reward_min": -2.0,
+        "reward_max": 3.0,
+    },
+    "pokemon_red": {
+        "fatal_penalty": -1.5,
+        # PR #28 v6 fix: only the FIRST visit to a new map is rewarded
+        # (`map_discovery_bonus`); re-entering an already-visited map gives
+        # `repeat_visit_bonus` (default 0). Set repeat_visit_bonus > 0 only
+        # if you specifically want to reward back-and-forth movement (the old
+        # behavior that caused the warp-loop reward hack).
+        "map_discovery_bonus": 1.5,
+        "repeat_visit_bonus": 0.0,
+        "flag_bonus": 3.0,            # per flag delta
+        "score_delta_divisor": 2.0,
+        "stagnation_threshold_steps": 3,
+        "stagnation_penalty": -0.4,
+        "reward_min": -2.0,
+        "reward_max": 3.0,
+    },
+}
+
+
 class OnlineAgentEvaluator:
     """Computes continuous per-step rewards from game state deltas."""
 
-    def __init__(self, game_name: str):
+    def __init__(self, game_name: str, shaping_overrides: dict | None = None):
         self._game_name = game_name
         self._prev_metrics: dict = {}
         self._step_rewards: deque = deque(maxlen=100)
         self._stagnation_count: int = 0
+        # Per-episode visited-map set for pokemon. Without this, the warp tile
+        # between RedsHouse1f ↔ RedsHouse2f becomes an infinite +1.5/step reward
+        # loop and the agent never explores the world (PR #28 v6 diagnosis).
+        self._visited_maps: set[str] = set()
+        # Shaping = defaults overlaid with per-agent overrides. Unknown game
+        # name yields {} defaults; reward methods then use .get(key, fallback).
+        self._shaping: dict[str, float] = {
+            **DEFAULT_SHAPING.get(game_name, {}),
+            **(shaping_overrides or {}),
+        }
 
     def evaluate_step(
         self, prev_state: str, cur_state: str, success: bool, is_fatal: bool
@@ -42,6 +107,7 @@ class OnlineAgentEvaluator:
     def reset_episode(self):
         self._prev_metrics = {}
         self._stagnation_count = 0
+        self._visited_maps = set()
 
     def _extract_metrics(self, state: str) -> dict:
         extractors = {
@@ -72,33 +138,34 @@ class OnlineAgentEvaluator:
         return {"x_pos": x, "score": score, "lives": lives}
 
     def _reward_mario(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
+        s = self._shaping
         if is_fatal:
-            return -2.0
+            return s["fatal_penalty"]
 
         reward = 0.0
         # Position progress (main signal)
         x_delta = cur.get("x_pos", 0) - prev.get("x_pos", 0)
-        reward += x_delta / 100.0  # ~0.0 to 2.0 for good progress
+        reward += x_delta / s["x_progress_divisor"]
 
         # Score delta
         score_delta = cur.get("score", 0) - prev.get("score", 0)
         if score_delta > 0:
-            reward += score_delta / 200.0
+            reward += score_delta / s["score_delta_divisor"]
 
         # Lives lost
         if prev.get("lives") is not None and cur.get("lives") is not None:
             if cur["lives"] < prev["lives"]:
-                reward -= 1.5
+                reward += s["lives_lost_penalty"]
 
         # Stagnation penalty
-        if abs(x_delta) < 3:
+        if abs(x_delta) < s["stagnation_x_threshold"]:
             self._stagnation_count += 1
-            if self._stagnation_count >= 3:
-                reward -= 0.3
+            if self._stagnation_count >= s["stagnation_threshold_steps"]:
+                reward += s["stagnation_penalty"]
         else:
             self._stagnation_count = 0
 
-        return max(-2.0, min(3.0, reward))
+        return max(s["reward_min"], min(s["reward_max"], reward))
 
     # ── 2048 ────────────────────────────────────────────────
 
@@ -149,27 +216,28 @@ class OnlineAgentEvaluator:
         return "center"
 
     def _reward_2048(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
+        s = self._shaping
         if is_fatal:
-            return -1.5
+            return s["fatal_penalty"]
 
         reward = 0.0
         # Score delta (main signal — reward merges proportionally)
         score_delta = cur.get("score", 0) - prev.get("score", 0)
-        reward += score_delta / 200.0  # More sensitive (was /500)
+        reward += score_delta / s["score_delta_divisor"]
 
         # Max tile increase (big bonus for doubling)
         prev_tile = prev.get("max_tile", 0)
         cur_tile = cur.get("max_tile", 0)
         if cur_tile > prev_tile and prev_tile > 0:
-            reward += 1.5  # Strong signal for tile doubling
+            reward += s["tile_double_bonus"]
 
         # Empty cells: reward freeing space, penalize filling board
         prev_empty = prev.get("empty_cells", 0)
         cur_empty = cur.get("empty_cells", 0)
         if cur_empty > prev_empty:
-            reward += 0.3  # Freed a cell via merge
+            reward += s["free_cell_bonus"]
         elif cur_empty < prev_empty - 1:
-            reward -= 0.2  # Board getting crowded
+            reward += s["crowding_penalty"]
 
         # Corner-anchoring (the dominant 2048 strategy). Densifies the strategic
         # signal so procedures get update events for "max-tile in corner →
@@ -179,19 +247,19 @@ class OnlineAgentEvaluator:
         prev_pos = prev.get("max_pos")
         cur_pos = cur.get("max_pos")
         if cur_pos == "corner":
-            reward += 0.4  # max-tile is anchored — keep it there
+            reward += s["corner_anchor_bonus"]
         if prev_pos == "corner" and cur_pos in ("edge", "center"):
-            reward -= 0.5  # anchor was disturbed — strong negative signal
+            reward += s["anchor_disturbed_penalty"]
 
         # Board stuck (no score change = no merges happened)
         if score_delta == 0 and not is_fatal:
             self._stagnation_count += 1
-            if self._stagnation_count >= 3:
-                reward -= 0.5  # Stronger stagnation penalty
+            if self._stagnation_count >= s["stagnation_threshold_steps"]:
+                reward += s["stagnation_penalty"]
         else:
             self._stagnation_count = 0
 
-        return max(-2.0, min(3.0, reward))
+        return max(s["reward_min"], min(s["reward_max"], reward))
 
     # ── Pokemon Red ─────────────────────────────────────────
 
@@ -202,42 +270,46 @@ class OnlineAgentEvaluator:
         return {"score": score, "flags": flags, "map_name": map_name}
 
     def _reward_pokemon(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
+        s = self._shaping
         if is_fatal:
-            return -1.5
+            return s["fatal_penalty"]
 
         reward = 0.0
-        # Map transition bonus — reward moving between rooms/maps. This is the
-        # primary navigation signal before any flags are earned. Pokemon's main
-        # blocker in the PR #20 / #22 sweeps was getting stuck on the starting
-        # map, so the map-change reward is the densest progress signal we have.
+        # Map transition reward — first visit gets `map_discovery_bonus`,
+        # subsequent re-entries get `repeat_visit_bonus` (default 0).
+        # PR #28 v6 fix: prior code always rewarded transitions, which the
+        # agent exploited via the RedsHouse1f↔2f warp loop. Visited set
+        # is reset per episode in reset_episode().
         prev_map = prev.get("map_name", "")
         cur_map = cur.get("map_name", "")
         map_changed = bool(cur_map and prev_map and cur_map != prev_map)
         if map_changed:
-            reward += 1.5  # consolidated (was +0.8 + duplicate +1.0 below)
+            if cur_map not in self._visited_maps:
+                reward += s["map_discovery_bonus"]
+            else:
+                reward += s["repeat_visit_bonus"]
+        if cur_map:
+            self._visited_maps.add(cur_map)
 
         # Flag collected (big bonus — these are the actual eval scoring units)
         flag_delta = cur.get("flags", 0) - prev.get("flags", 0)
         if flag_delta > 0:
-            reward += 3.0 * flag_delta
+            reward += s["flag_bonus"] * flag_delta
 
         # Score increase (intermediate)
         score_delta = cur.get("score", 0) - prev.get("score", 0)
         if score_delta > 0:
-            reward += score_delta / 2.0
+            reward += score_delta / s["score_delta_divisor"]
 
-        # Stuck in same area with no progress — tightened from 5 → 3 turns and
-        # penalty from -0.2 → -0.4. Pokemon iters in the prior sweep showed
-        # 50+ steps with the agent mashing the same direction without leaving
-        # the starting map; the prior penalty was too weak to discourage it.
+        # Stuck in same area with no progress
         if score_delta == 0 and flag_delta == 0 and not map_changed:
             self._stagnation_count += 1
-            if self._stagnation_count >= 3:
-                reward -= 0.4
+            if self._stagnation_count >= s["stagnation_threshold_steps"]:
+                reward += s["stagnation_penalty"]
         else:
             self._stagnation_count = 0
 
-        return max(-2.0, min(3.0, reward))
+        return max(s["reward_min"], min(s["reward_max"], reward))
 
     # ── Generic fallback ────────────────────────────────────
 
