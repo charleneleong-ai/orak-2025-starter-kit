@@ -21,7 +21,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from agents.base import BaseOrakAgent
-from agents._cognitive import LLMSubtaskPlanner, VectorMemoryProvider
+from agents._cognitive import LLMSubtaskPlanner, VectorMemoryProvider, WaypointGoalProvider
 from agents._harness import with_retries
 from agents.macla.base import BaseMaclaAgent
 from agents.macla.context_extractors import build_context_extractor
@@ -131,6 +131,7 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         self._init_macla_agent()
         self._memory_provider = self._maybe_init_memory_provider(config)
         self._subtask_planner = self._maybe_init_subtask_planner(config)
+        self._goal_provider = self._maybe_init_goal_provider(config)
 
     def _build_subtask_history(self) -> str:
         """Build a compact history string for the subtask planner."""
@@ -155,6 +156,24 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             f"observation_chars={planner._observation_chars})"
         )
         return planner
+
+    def _maybe_init_goal_provider(self, config: Any):
+        """Optional state-aware goal provider — picks the current
+        milestone from a per-adapter ``WAYPOINTS`` list and overrides the
+        planner's ``goal=`` argument. Active only when (a) the adapter
+        exports WAYPOINTS and (b) the planner is enabled. Mario / 2048
+        adapters don't define WAYPOINTS, so the original DEFAULT_GOAL
+        path is preserved."""
+        waypoints = getattr(self._adapter, "WAYPOINTS", None)
+        if not waypoints or self._subtask_planner is None:
+            return None
+        fallback = getattr(self._adapter, "DEFAULT_GOAL", "Continue making progress.")
+        provider = WaypointGoalProvider(milestones=list(waypoints), fallback=fallback)
+        logger.info(
+            f"[MACLA] waypoint goal provider enabled "
+            f"({len(waypoints)} milestones for {self._game_name})"
+        )
+        return provider
 
     def _maybe_init_memory_provider(self, config: Any):
         """Stage C: optional vector-memory provider. Activated by
@@ -342,8 +361,15 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         if self._subtask_planner is not None:
             try:
                 history_str = self._build_subtask_history()
+                # If a waypoint goal provider is configured, override the
+                # abstract DEFAULT_GOAL with the current milestone — gives
+                # the planner a concrete state-aware sub-goal instead of
+                # making it re-derive one from the observation each step.
+                plan_goal = goal
+                if self._goal_provider is not None:
+                    plan_goal = self._goal_provider.next_goal(observation) or goal
                 subtask = self._subtask_planner.plan(
-                    goal=goal,
+                    goal=plan_goal,
                     observation=observation,
                     history=history_str,
                 )

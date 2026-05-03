@@ -250,6 +250,108 @@ def test_subtask_planner_handles_missing_section_header():
     assert out == "Walk south to the door"
 
 
+# ── WaypointGoalProvider ───────────────────────────────────────────────
+
+
+def _obs_with_map(map_name: str, party_empty: bool = True) -> str:
+    party = "No more Pokemons" if party_empty else "Pikachu HP: 20/20"
+    return f"State: Field\nMap Name: {map_name},\nYour position (x, y): (5, 4)\n{party}"
+
+
+def test_waypoint_provider_picks_first_unmet_milestone():
+    """First milestone whose precondition fires gets selected."""
+    from agents._cognitive import Milestone, WaypointGoalProvider
+    milestones = [
+        Milestone("a", "goal-a", precondition=lambda obs: "alpha" in obs),
+        Milestone("b", "goal-b", precondition=lambda obs: "beta" in obs),
+        Milestone("c", "goal-c", precondition=lambda obs: "gamma" in obs),
+    ]
+    p = WaypointGoalProvider(milestones, fallback="all-done")
+    assert p.next_goal("alpha") == "goal-a"
+    assert p.next_goal("beta") == "goal-b"
+    assert p.next_goal("gamma") == "goal-c"
+
+
+def test_waypoint_provider_skips_satisfied_milestones():
+    """Earlier milestones whose precondition is False are skipped."""
+    from agents._cognitive import Milestone, WaypointGoalProvider
+    milestones = [
+        Milestone("a", "goal-a", precondition=lambda obs: False),  # always satisfied
+        Milestone("b", "goal-b", precondition=lambda obs: True),   # current
+    ]
+    p = WaypointGoalProvider(milestones, fallback="all-done")
+    assert p.next_goal("anything") == "goal-b"
+    assert p.stats()["last_milestone"] == "b"
+
+
+def test_waypoint_provider_falls_through_to_fallback():
+    """When every milestone reports as satisfied, fallback is returned."""
+    from agents._cognitive import Milestone, WaypointGoalProvider
+    milestones = [
+        Milestone("a", "goal-a", precondition=lambda obs: False),
+        Milestone("b", "goal-b", precondition=lambda obs: False),
+    ]
+    p = WaypointGoalProvider(milestones, fallback="endgame")
+    assert p.next_goal("anything") == "endgame"
+    assert p.stats()["last_milestone"] == "(all-milestones-met)"
+
+
+def test_waypoint_provider_empty_list_raises():
+    """Empty milestone list is a misconfiguration — must error early."""
+    from agents._cognitive import WaypointGoalProvider
+    with pytest.raises(ValueError):
+        WaypointGoalProvider([], fallback="x")
+
+
+def test_waypoint_provider_stats_track_calls():
+    """Call count and last milestone surface for observability."""
+    from agents._cognitive import Milestone, WaypointGoalProvider
+    milestones = [Milestone("only", "go", precondition=lambda obs: True)]
+    p = WaypointGoalProvider(milestones, fallback="x")
+    p.next_goal("o1")
+    p.next_goal("o2")
+    s = p.stats()
+    assert s["calls"] == 2
+    assert s["last_milestone"] == "only"
+    assert s["milestone_count"] == 1
+
+
+def test_pokemon_adapter_exports_waypoints():
+    """Pokemon adapter must expose WAYPOINTS — that's how
+    UnifiedMaclaAgent decides whether to enable the goal provider."""
+    from agents.pokemon_red import game_adapter
+    waypoints = getattr(game_adapter, "WAYPOINTS", None)
+    assert waypoints, "pokemon adapter missing WAYPOINTS"
+    # The early-game milestones must cover the path Stage A traverses
+    # successfully (RedsHouse -> PalletTown -> OaksLab) so the planner
+    # under Stage D can emit the same trajectory as a sequence of goals.
+    names = [m.name for m in waypoints]
+    for must_have in ("exit_starter_house", "reach_oaks_lab", "get_starter_pokemon"):
+        assert must_have in names, f"WAYPOINTS missing milestone: {must_have}"
+
+
+def test_pokemon_waypoints_select_correct_milestone_per_map():
+    """Concrete state→milestone routing works on representative observations."""
+    from agents._cognitive import WaypointGoalProvider
+    from agents.pokemon_red.game_adapter import WAYPOINTS, DEFAULT_GOAL
+    p = WaypointGoalProvider(WAYPOINTS, fallback=DEFAULT_GOAL)
+    # Starter-house observation (party empty) → exit_starter_house
+    p.next_goal(_obs_with_map("RedsHouse2f", party_empty=True))
+    assert p.stats()["last_milestone"] == "exit_starter_house"
+    # PalletTown with empty party → reach_oaks_lab
+    p.next_goal(_obs_with_map("PalletTown", party_empty=True))
+    assert p.stats()["last_milestone"] == "reach_oaks_lab"
+    # OaksLab with empty party → get_starter_pokemon
+    p.next_goal(_obs_with_map("OaksLab", party_empty=True))
+    assert p.stats()["last_milestone"] == "get_starter_pokemon"
+    # OaksLab with party → defeat_rival
+    p.next_goal(_obs_with_map("OaksLab", party_empty=False))
+    assert p.stats()["last_milestone"] == "defeat_rival"
+    # PalletTown with party → enter_route_1
+    p.next_goal(_obs_with_map("PalletTown", party_empty=False))
+    assert p.stats()["last_milestone"] == "enter_route_1"
+
+
 def test_local_sentence_transformers_backend(monkeypatch):
     """When OPENAI_API_KEY is missing, provider falls through to the local
     sentence-transformers model. Skipped if sentence-transformers is not
