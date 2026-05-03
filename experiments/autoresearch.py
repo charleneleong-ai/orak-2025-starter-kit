@@ -20,16 +20,20 @@ import os
 import re
 import signal
 import subprocess
-import threading
+import sys
 import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-import sys
-
 import typer
 import yaml
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) in sys.path:
+    sys.path.remove(str(SCRIPT_DIR))
+
+from autoresearch import IterPlan, SweepRunner  # noqa: E402
 
 # Allow running as both `python experiments/autoresearch.py` and `python -m experiments.autoresearch`
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -258,7 +262,7 @@ def propose_changes(analysis: dict) -> list[dict]:
             "action": "increase",
             "step": 0.001,
             "max": 0.01,
-            "reason": f"Stagnation — decay theta faster for exploration",
+            "reason": "Stagnation — decay theta faster for exploration",
         })
 
     # ── Temperature ────────────────────────────────────────────────
@@ -725,125 +729,60 @@ def _cleanup_threads():
         time.sleep(2)  # Give OS time to reclaim threads
 
 
-def run_experiment(
-    config_name: str,
+def _wandb_project_for(game: str) -> str:
+    return {
+        "super_mario": "orak-super-mario",
+        "twenty_fourty_eight": "orak-2048",
+        "pokemon_red": "orak-pokemon-red",
+    }.get(game, game)
+
+
+def _build_run_rows(
+    run_id: str,
     games: list[str],
-    baseline_scores: dict[str, float] | None = None,
+    description: str,
+    *,
     tag: str = "macla",
-    description: str = "",
-    prev_run_id: str | None = None,
-) -> tuple[str, float]:
-    """Run an experiment with live triage monitoring. Returns (run_id, elapsed_min).
+    best_scores: dict[str, float] | None = None,
+    runtime_min: float = 0.0,
+    config_name: str | None = None,
+) -> tuple[dict[str, dict], list[dict]]:
+    """Return `(run_results, row_dicts)` for one run without writing anything."""
+    results = extract_run_results(run_id, games)
+    best_scores = best_scores or {}
+    rows: list[dict] = []
 
-    When prev_run_id is set, the subprocess is launched with --load-checkpoint
-    --prev-run-id <prev_run_id> so MACLA's learned procedures from the previous
-    iter are restored at agent init. Without this, every iter starts from
-    procedures=0 and re-learns from scratch — root cause of the inconsistency
-    where one-shot bests (mario 77.83%, pokemon 14.29%, 2048 6.02%) couldn't
-    be reproduced in subsequent iters.
-    """
-    cmd = [
-        str(ROOT / ".venv" / "bin" / "python"),
-        str(ROOT / "run.py"),
-        f"--config-name={config_name}",
-        "--local",
-    ]
-    for g in games:
-        cmd.extend(["--games", g])
-    if prev_run_id:
-        cmd.extend(["--load-checkpoint", "--prev-run-id", prev_run_id])
-        print(f"  Loading MACLA checkpoint from prev run: {prev_run_id}")
+    for game, data in results.items():
+        eval_score = data["max_eval"]
+        game_score = data["game_score"]
+        steps = data["steps"]
+        best = best_scores.get(game, 0)
+        status = "KEEP" if eval_score > best else "DISCARD"
+        wandb_project = _wandb_project_for(game)
+        wandb_url = f"https://wandb.ai/chaleong/{wandb_project}/runs/{run_id}_{wandb_project}"
 
-    print(f"\n{'='*60}")
-    print(f"Running: {' '.join(cmd)}")
-    print(f"Triage: plateau={TRIAGE_SCORE_PLATEAU_STEPS}steps, no_learn={TRIAGE_NO_LEARN_EPISODES}eps, baseline_gate={TRIAGE_BASELINE_FACTOR}")
-    print(f"{'='*60}\n")
+        notes = f"max_eval={eval_score:.2f}, {data['episodes']} episodes, {steps} steps"
+        if status == "KEEP":
+            notes += f". Improved from {best:.2f}"
+        else:
+            notes += f". Below best {best:.2f}"
 
-    env = os.environ.copy()
-    # Disable Weave tracing in subprocess: project doesn't exist on wandb,
-    # every trace upload returns 403, httpx retries forever, leaks CLOSE-WAIT
-    # sockets, eventually run.py deadlocks.
-    env["WEAVE_ENABLED"] = "false"
-    env.setdefault("WEAVE_DISABLED", "true")
-    baseline_scores = baseline_scores or {}
+        row = {
+            "game": game,
+            "evaluation_score": eval_score,
+            "game_score": game_score,
+            "steps": steps,
+            "status": status,
+            "description": description,
+            "wandb_url": wandb_url,
+            "notes": notes,
+            "runtime_min": runtime_min,
+        }
+        if config_name:
+            row["config_name"] = config_name
+        rows.append(row)
 
-    # Capture full timestamp BEFORE Popen so we only accept run_ids created
-    # AFTER this iteration started. Comparing against just YYYYMMDD lets old
-    # iterations' run_ids (same day) leak through and confuses triage.
-    start_run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    start = time.time()
-    iter_timeout_s = ITER_TIMEOUT_MIN * 60
-    proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
-    kill_reason = None
-
-    # Wait for run_id to appear in game_logs
-    run_id = ""
-    for _ in range(60):
-        time.sleep(2)
-        candidate = _find_run_id(games)
-        if candidate and candidate >= start_run_id:
-            run_id = candidate
-            break
-
-    if run_id:
-        _write_sidecar(tag, run_id, description, games)
-        print(f"  Run ID: {run_id} — triage monitoring active")
-
-    # Monitor loop: poll game_states.jsonl for triage signals
-    while proc.poll() is None:
-        time.sleep(TRIAGE_POLL_INTERVAL)
-
-        # Wall-clock timeout: a single iteration must not stall the whole sweep
-        if (time.time() - start) > iter_timeout_s:
-            kill_reason = f"iteration timeout ({ITER_TIMEOUT_MIN}min wall-clock)"
-            print(f"\n  TIMEOUT KILL: {kill_reason}")
-            proc.send_signal(signal.SIGINT)
-            try:
-                proc.wait(timeout=60)
-            except subprocess.TimeoutExpired:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-            break
-
-        if not run_id:
-            candidate = _find_run_id(games)
-            if candidate and candidate >= start_run_id:
-                run_id = candidate
-                _write_sidecar(tag, run_id, description, games)
-            continue
-
-        kill_reason = _triage_check(run_id, games, baseline_scores)
-        if kill_reason:
-            print(f"\n  TRIAGE KILL: {kill_reason}")
-            proc.send_signal(signal.SIGINT)
-            try:
-                proc.wait(timeout=120)
-            except subprocess.TimeoutExpired:
-                proc.terminate()
-                proc.wait(timeout=30)
-            break
-
-    elapsed = (time.time() - start) / 60
-    _clear_sidecar(tag)
-
-    # Clean up wandb-core / game-server processes that hold OS threads
-    _cleanup_threads()
-
-    if not run_id:
-        run_id = _find_run_id(games)
-
-    if kill_reason:
-        print(f"\n  EARLY KILL after {elapsed:.1f}min — {kill_reason}")
-        return run_id, elapsed
-    elif proc.returncode and proc.returncode != 0:
-        print(f"  Run failed with exit code {proc.returncode}")
-        return "", 0.0
-    else:
-        print(f"\n  Run completed in {elapsed:.1f}min — run_id: {run_id}")
-        return run_id, elapsed
+    return results, rows
 
 
 def log_run_results(
@@ -855,50 +794,365 @@ def log_run_results(
     runtime_min: float = 0.0,
     config_name: str | None = None,
 ):
-    """Extract results from a run and log to experiment tracker.
-
-    When config_name is set, results are written to
-    experiments/<tag>/<config_name>/results.jsonl so multiple parallel sweeps
-    don't trample each other.
-    """
-    results = extract_run_results(run_id, games)
-    best_scores = best_scores or {}
-
-    for game, data in results.items():
-        eval_score = data["max_eval"]
-        game_score = data["game_score"]
-        steps = data["steps"]
-        best = best_scores.get(game, 0)
-        status = "KEEP" if eval_score > best else "DISCARD"
-
-        wandb_project = {
-            "super_mario": "orak-super-mario",
-            "twenty_fourty_eight": "orak-2048",
-            "pokemon_red": "orak-pokemon-red",
-        }.get(game, game)
-        wandb_url = f"https://wandb.ai/chaleong/{wandb_project}/runs/{run_id}_{wandb_project}"
-
-        notes = f"max_eval={eval_score:.2f}, {data['episodes']} episodes, {steps} steps"
-        if status == "KEEP":
-            notes += f". Improved from {best:.2f}"
-        else:
-            notes += f". Below best {best:.2f}"
-
+    """Extract results from a run and log to experiment tracker."""
+    results, rows = _build_run_rows(
+        run_id,
+        games,
+        description,
+        tag=tag,
+        best_scores=best_scores,
+        runtime_min=runtime_min,
+        config_name=config_name,
+    )
+    for row in rows:
         log_experiment(
-            game=game,
-            score=eval_score,
-            steps=steps,
-            status=status,
-            description=description,
-            wandb_url=wandb_url,
-            notes=notes,
-            game_score=game_score,
-            runtime_min=runtime_min,
+            game=row["game"],
+            score=row["evaluation_score"],
+            steps=row["steps"],
+            status=row["status"],
+            description=row["description"],
+            wandb_url=row["wandb_url"],
+            notes=row["notes"],
+            game_score=row["game_score"],
+            runtime_min=row["runtime_min"],
             tags=[tag],
-            config_name=config_name,
+            config_name=row.get("config_name"),
         )
-
     return results
+
+
+class OrakSweepState:
+    def __init__(self) -> None:
+        self.prev_run_id: str | None = None
+        self.last_best_before: dict[str, float] = {}
+        self.last_run_results: dict[str, dict] = {}
+        self.last_run_failed = False
+        self.last_kill_reason: str | None = None
+        self.last_triggered_game: str | None = None
+        self.last_runtime_min = 0.0
+
+
+class OrakPlanner:
+    def __init__(
+        self,
+        *,
+        state: OrakSweepState,
+        config: str,
+        tag: str,
+        max_iterations: int,
+        games: list[str],
+        config_type: str,
+        note: str,
+        patience: int,
+        time_budget_min: float,
+        config_name: str | None,
+    ) -> None:
+        self.state = state
+        self.config = config
+        self.tag = tag
+        self.max_iterations = max_iterations
+        self.games = games
+        self.config_type = config_type
+        self.note = note
+        self.patience = patience
+        self.time_budget_min = time_budget_min
+        self.config_name = config_name
+        self.sweep_start = time.time()
+        self.no_improve_streak = 0
+
+    def _build_command(self) -> list[str]:
+        cmd = [
+            str(ROOT / ".venv" / "bin" / "python"),
+            str(ROOT / "run.py"),
+            f"--config-name={self.config}",
+            "--local",
+        ]
+        for game in self.games:
+            cmd.extend(["--games", game])
+        if self.state.prev_run_id:
+            cmd.extend(["--load-checkpoint", "--prev-run-id", self.state.prev_run_id])
+            print(f"  Loading MACLA checkpoint from prev run: {self.state.prev_run_id}")
+        return cmd
+
+    def _print_post_iter_summary(self) -> bool:
+        if self.state.last_run_failed:
+            print("Run failed, stopping loop")
+            return False
+
+        any_improved = False
+        for game, data in self.state.last_run_results.items():
+            prev = self.state.last_best_before.get(game, 0)
+            if data["max_eval"] > prev:
+                any_improved = True
+                print(f"  {game}: IMPROVED {prev:.2f} → {data['max_eval']:.2f}")
+            else:
+                print(f"  {game}: no improvement (best={prev:.2f})")
+
+        plot_progress(tag=self.tag, config_type=self.config_type, config_name=self.config_name)
+
+        if any_improved:
+            self.no_improve_streak = 0
+        else:
+            self.no_improve_streak += 1
+            print(
+                f"\nNo improvements in latest iteration "
+                f"(streak={self.no_improve_streak}/{self.patience})."
+            )
+            if self.patience > 0 and self.no_improve_streak >= self.patience:
+                print(
+                    f"\nEarly stop: no improvement for "
+                    f"{self.patience} consecutive iterations."
+                )
+                return False
+        return True
+
+    def plan_iters(self, history: list[dict]):
+        del history
+        for iteration in range(self.max_iterations):
+            if iteration > 0 and not self._print_post_iter_summary():
+                break
+
+            if self.time_budget_min > 0:
+                elapsed = (time.time() - self.sweep_start) / 60
+                if elapsed >= self.time_budget_min:
+                    print(
+                        f"\nEarly stop: wall-clock budget reached "
+                        f"({elapsed:.1f}min >= {self.time_budget_min}min)"
+                    )
+                    break
+
+            print(f"\n{'#' * 60}")
+            print(f"# Iteration {iteration + 1}/{self.max_iterations}")
+            print(f"{'#' * 60}")
+
+            best = get_best_scores(self.tag, config_name=self.config_name)
+            print(f"\nCurrent best scores: {best}")
+
+            all_results = load_results(tag=self.tag, config_name=self.config_name)
+            param_summaries = []
+            for game in self.games:
+                new_params = propose_next_params(game, all_results, self.config_type)
+                current = get_current_params(game, self.config_type)
+                changed = {k: v for k, v in new_params.items() if current.get(k) != v}
+                if changed:
+                    print(f"\n  {game}: {changed}")
+                    short = ", ".join(
+                        f"{k.replace('macla_', '').replace('theta_', 'θ_')}={v}"
+                        for k, v in sorted(changed.items())
+                    )
+                    param_summaries.append(f"{game.split('_')[0]}: {short}")
+                    full_config = read_yaml_config(game, self.config_type)
+                    full_config.update(new_params)
+                    write_yaml_config(game, full_config, self.config_type)
+                else:
+                    print(f"\n  {game}: no changes (at boundary)")
+
+            desc_parts = []
+            if self.note:
+                desc_parts.append(self.note)
+            desc_parts.append(f"iter {iteration + 1}")
+            if param_summaries:
+                desc_parts.append("; ".join(param_summaries))
+            else:
+                desc_parts.append("no param changes")
+            description = " | ".join(desc_parts)
+            print(f"\nDescription: {description}")
+
+            self.state.last_best_before = best
+            self.state.last_run_results = {}
+            self.state.last_run_failed = False
+            self.state.last_kill_reason = None
+            self.state.last_triggered_game = None
+            self.state.last_runtime_min = 0.0
+
+            cmd = self._build_command()
+            print(f"\n{'=' * 60}")
+            print(f"Running: {' '.join(cmd)}")
+            print(
+                f"Triage: plateau={TRIAGE_SCORE_PLATEAU_STEPS}steps, "
+                f"no_learn={TRIAGE_NO_LEARN_EPISODES}eps, "
+                f"baseline_gate={TRIAGE_BASELINE_FACTOR}"
+            )
+            print(f"{'=' * 60}\n")
+
+            env = {
+                "WEAVE_ENABLED": "false",
+                "WEAVE_DISABLED": "true",
+            }
+            yield IterPlan(
+                cmd=cmd,
+                description=description,
+                notes=description,
+                env=env,
+                cwd=ROOT,
+                timeout_min=ITER_TIMEOUT_MIN,
+                sidecar_payload={"games": self.games},
+            )
+
+
+class OrakTriageMonitor:
+    def __init__(
+        self,
+        *,
+        state: OrakSweepState,
+        games: list[str],
+        tag: str,
+        config_name: str | None,
+    ) -> None:
+        self.state = state
+        self.games = games
+        self.tag = tag
+        self.config_name = config_name
+        self.run_id = ""
+        self.start_run_id = ""
+        self.started_at = 0.0
+
+    def setup(self, plan: IterPlan, proc: subprocess.Popen[bytes], baseline: float) -> str | None:
+        del plan, baseline
+        self.state.last_kill_reason = None
+        self.state.last_triggered_game = None
+        self.run_id = ""
+        self.start_run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.started_at = time.time()
+
+        for _ in range(60):
+            time.sleep(2)
+            candidate = _find_run_id(self.games)
+            if candidate and candidate >= self.start_run_id:
+                self.run_id = candidate
+                print(f"  Run ID: {self.run_id} — triage monitoring active")
+                break
+            if proc.poll() is not None:
+                break
+        return self.run_id or None
+
+    def check(self, elapsed_s: float) -> str | None:
+        del elapsed_s
+        if not self.run_id:
+            candidate = _find_run_id(self.games)
+            if candidate and candidate >= self.start_run_id:
+                self.run_id = candidate
+                print(f"  Run ID: {self.run_id} — triage monitoring active")
+            else:
+                return None
+
+        baseline_scores = get_best_scores(self.tag, config_name=self.config_name)
+        kill_reason = _triage_check(self.run_id, self.games, baseline_scores)
+        if kill_reason:
+            self.state.last_kill_reason = kill_reason
+            self.state.last_triggered_game = kill_reason.split(":", 1)[0].strip()
+        return kill_reason
+
+    def teardown(self) -> None:
+        _cleanup_threads()
+        self.state.last_runtime_min = (time.time() - self.started_at) / 60 if self.started_at else 0.0
+
+
+class OrakResultExtractor:
+    def __init__(
+        self,
+        *,
+        state: OrakSweepState,
+        games: list[str],
+        tag: str,
+        config_type: str,
+        config_name: str | None,
+        monitor: OrakTriageMonitor,
+    ) -> None:
+        self.state = state
+        self.games = games
+        self.tag = tag
+        self.config_type = config_type
+        self.config_name = config_name
+        self.monitor = monitor
+
+    def extract(self, plan: IterPlan, run_id: str | None, exit_code: int) -> list[dict]:
+        actual_run_id = self.monitor.run_id or run_id or _find_run_id(self.games)
+        self.state.last_runtime_min = self.monitor.state.last_runtime_min
+
+        if not actual_run_id:
+            self.state.last_run_results = {}
+            self.state.last_run_failed = exit_code not in (0, None)
+            return []
+
+        self.state.prev_run_id = actual_run_id
+        run_results, rows = _build_run_rows(
+            actual_run_id,
+            self.games,
+            plan.description,
+            tag=self.tag,
+            best_scores=self.state.last_best_before,
+            runtime_min=self.state.last_runtime_min,
+            config_name=self.config_name,
+        )
+        self.state.last_run_results = run_results
+        self.state.last_run_failed = exit_code not in (0, None) and self.state.last_kill_reason is None
+
+        print("\n--- Trajectory Analysis ---")
+        change_summaries = []
+        for game in self.games:
+            analysis = analyze_trajectory(actual_run_id, game)
+            print(
+                f"\n  {game}: {analysis.get('total_steps', 0)} steps, "
+                f"{analysis.get('episodes', 0)} episodes, "
+                f"max_eval={analysis.get('max_eval', 0):.2f}"
+            )
+            if analysis.get("failure_zone"):
+                print(
+                    f"    Death cluster: {analysis['failure_zone']} "
+                    f"({analysis.get('failure_zone_deaths', 0)} deaths)"
+                )
+            if analysis.get("repeated_actions"):
+                print(
+                    f"    Action repetition: {analysis.get('top_action', '?')} "
+                    f"at {analysis.get('top_action_pct', 0):.0%}"
+                )
+            if analysis.get("map_stuck"):
+                print(f"    Map stuck: {analysis.get('maps_visited', [])}")
+
+            changes = propose_changes(analysis)
+            if changes:
+                change_summaries.extend(apply_changes(game, changes, self.config_type))
+
+        final_description = plan.description
+        if change_summaries:
+            final_description += " | " + "; ".join(change_summaries[:3])
+
+        row_games = {row["game"] for row in rows}
+        for row in rows:
+            row["description"] = final_description
+            if (
+                self.state.last_kill_reason
+                and row["game"] == self.state.last_triggered_game
+            ):
+                row["_relabel_target"] = True
+
+        if (
+            self.state.last_kill_reason
+            and self.state.last_triggered_game
+            and self.state.last_triggered_game not in row_games
+        ):
+            rows.append(
+                {
+                    "game": self.state.last_triggered_game,
+                    "evaluation_score": 0.0,
+                    "game_score": 0.0,
+                    "steps": 0,
+                    "status": "DISCARD",
+                    "description": final_description,
+                    "notes": f"No game_states.jsonl written before kill: {self.state.last_kill_reason}",
+                    "wandb_url": (
+                        f"https://wandb.ai/chaleong/"
+                        f"{_wandb_project_for(self.state.last_triggered_game)}/runs/"
+                        f"{actual_run_id}_{_wandb_project_for(self.state.last_triggered_game)}"
+                    ),
+                    "runtime_min": self.state.last_runtime_min,
+                    "config_name": self.config_name,
+                    "_relabel_target": True,
+                }
+            )
+
+        return rows
 
 
 @app.command()
@@ -922,10 +1176,22 @@ def run(
     games: list[str] = typer.Option(ALL_GAMES, "--games", help="Games to optimise"),
     dry_run: bool = typer.Option(False, help="Only propose params, don't run"),
     config_type: str = typer.Option("unified_macla", help="YAML config type to modify"),
-    note: str = typer.Option("", help="Extra context to prepend to experiment description (e.g. 'OnlineAgentEvaluator enabled')"),
-    patience: int = typer.Option(5, help="Stop sweep if no game improves over best-so-far for N consecutive iterations (0 = disable)"),
-    time_budget_min: float = typer.Option(0.0, help="Stop sweep after this many wall-clock minutes (0 = disable)"),
-    config_name: str = typer.Option("", help="Per-config sub-dir (e.g. 'gemma' or 'qwen'). Empty = flat experiments/<TAG>/. Set to isolate parallel sweeps in experiments/<TAG>/<CONFIG_NAME>/."),
+    note: str = typer.Option(
+        "",
+        help="Extra context to prepend to experiment description (e.g. 'OnlineAgentEvaluator enabled')",
+    ),
+    patience: int = typer.Option(
+        5,
+        help="Stop sweep if no game improves over best-so-far for N consecutive iterations (0 = disable)",
+    ),
+    time_budget_min: float = typer.Option(
+        0.0,
+        help="Stop sweep after this many wall-clock minutes (0 = disable)",
+    ),
+    config_name: str = typer.Option(
+        "",
+        help="Per-config sub-dir (e.g. 'gemma' or 'qwen'). Empty = flat experiments/<TAG>/. Set to isolate parallel sweeps in experiments/<TAG>/<CONFIG_NAME>/.",
+    ),
 ):
     """Run the autoresearch optimisation loop."""
     cfg = config_name or None
@@ -935,139 +1201,72 @@ def run(
         print(f"Per-config sub-dir: experiments/{tag}/{cfg}/")
     print(f"Early stopping: patience={patience} iters, time_budget={time_budget_min}min\n")
 
-    all_results = load_results(tag=tag, config_name=cfg)
-    sweep_start = time.time()
-    no_improve_streak = 0
-    # Track the last successful run_id so the next iter can load its MACLA
-    # checkpoint and carry procedures/meta-procedures forward — biggest lever
-    # for cross-iter consistency.
-    prev_run_id: str | None = None
-
-    for iteration in range(max_iterations):
-        # Budget stop: hit the wall-clock cap
-        if time_budget_min > 0:
-            elapsed = (time.time() - sweep_start) / 60
-            if elapsed >= time_budget_min:
-                print(f"\nEarly stop: wall-clock budget reached ({elapsed:.1f}min >= {time_budget_min}min)")
-                break
-        print(f"\n{'#'*60}")
-        print(f"# Iteration {iteration + 1}/{max_iterations}")
-        print(f"{'#'*60}")
-
-        best = get_best_scores(tag, config_name=cfg)
-        print(f"\nCurrent best scores: {best}")
-
-        # Propose and apply new params per game
-        param_summaries = []
-        for game in games:
-            new_params = propose_next_params(game, all_results, config_type)
-            current = get_current_params(game, config_type)
-
-            changed = {k: v for k, v in new_params.items() if current.get(k) != v}
-            if changed:
-                print(f"\n  {game}: {changed}")
-                # Short param summary: theta=0.20, warmup=5
-                short = ", ".join(
-                    f"{k.replace('macla_', '').replace('theta_', 'θ_')}={v}"
-                    for k, v in sorted(changed.items())
-                )
-                param_summaries.append(f"{game.split('_')[0]}: {short}")
-
-                if not dry_run:
-                    full_config = read_yaml_config(game, config_type)
-                    full_config.update(new_params)
-                    write_yaml_config(game, full_config, config_type)
-            else:
-                print(f"\n  {game}: no changes (at boundary)")
-
-        desc_parts = []
-        if note:
-            desc_parts.append(note)
-        desc_parts.append(f"iter {iteration + 1}")
-        if param_summaries:
-            desc_parts.append("; ".join(param_summaries))
-        else:
-            desc_parts.append("no param changes")
-        description = " | ".join(desc_parts)
-        print(f"\nDescription: {description}")
-
-        if dry_run:
-            print("\n[DRY RUN] Skipping experiment execution")
-            continue
-
-        # Run experiment with triage monitoring; carry MACLA procedures
-        # forward by loading the previous iter's checkpoint.
-        result = run_experiment(
-            config, games, baseline_scores=best, tag=tag,
-            description=description, prev_run_id=prev_run_id,
-        )
-        run_id, elapsed_min = result if isinstance(result, tuple) else (result, 0.0)
-        if not run_id:
-            print("Run failed, stopping loop")
-            break
-        # This run becomes the source for the next iter's checkpoint load.
-        prev_run_id = run_id
-
-        # Analyze trajectories and apply targeted changes for NEXT iteration
-        print(f"\n--- Trajectory Analysis ---")
-        change_summaries = []
-        for game in games:
-            analysis = analyze_trajectory(run_id, game)
-            print(
-                f"\n  {game}: {analysis.get('total_steps', 0)} steps, "
-                f"{analysis.get('episodes', 0)} episodes, "
-                f"max_eval={analysis.get('max_eval', 0):.2f}"
-            )
-            if analysis.get("failure_zone"):
-                print(f"    Death cluster: {analysis['failure_zone']} ({analysis.get('failure_zone_deaths', 0)} deaths)")
-            if analysis.get("repeated_actions"):
-                print(f"    Action repetition: {analysis.get('top_action', '?')} at {analysis.get('top_action_pct', 0):.0%}")
-            if analysis.get("map_stuck"):
-                print(f"    Map stuck: {analysis.get('maps_visited', [])}")
-
-            changes = propose_changes(analysis)
-            if changes:
-                applied = apply_changes(game, changes, config_type)
-                change_summaries.extend(applied)
-
-        if change_summaries:
-            description += " | " + "; ".join(change_summaries[:3])  # Cap for plot readability
-
-        # Log results
-        run_results = log_run_results(run_id, games, description, tag, best, runtime_min=elapsed_min, config_name=cfg)
-
-        # If triage killed the run, relabel the logged entries
-        kill_reason = _triage_check(run_id, games, best) if run_id else None
-        if kill_reason:
-            _relabel_last_as_early_kill(tag, kill_reason, games, triggered_game=kill_reason.split(':')[0].strip())
-
-        # Reload results for next iteration
+    if dry_run:
         all_results = load_results(tag=tag, config_name=cfg)
+        for iteration in range(max_iterations):
+            print(f"\n{'#' * 60}")
+            print(f"# Iteration {iteration + 1}/{max_iterations}")
+            print(f"{'#' * 60}")
+            param_summaries = []
+            for game in games:
+                new_params = propose_next_params(game, all_results, config_type)
+                current = get_current_params(game, config_type)
+                changed = {k: v for k, v in new_params.items() if current.get(k) != v}
+                if changed:
+                    print(f"\n  {game}: {changed}")
+                    short = ", ".join(
+                        f"{k.replace('macla_', '').replace('theta_', 'θ_')}={v}"
+                        for k, v in sorted(changed.items())
+                    )
+                    param_summaries.append(f"{game.split('_')[0]}: {short}")
+                else:
+                    print(f"\n  {game}: no changes (at boundary)")
+            desc_parts = [p for p in [note, f"iter {iteration + 1}"] if p]
+            desc_parts.append("; ".join(param_summaries) if param_summaries else "no param changes")
+            print(f"\nDescription: {' | '.join(desc_parts)}")
+            print("\n[DRY RUN] Skipping experiment execution")
+        return
 
-        # Check if any game improved
-        any_improved = False
-        for game, data in run_results.items():
-            if data["max_eval"] > best.get(game, 0):
-                any_improved = True
-                print(f"  {game}: IMPROVED {best.get(game, 0):.2f} → {data['max_eval']:.2f}")
-            else:
-                print(f"  {game}: no improvement (best={best.get(game, 0):.2f})")
+    state = OrakSweepState()
+    planner = OrakPlanner(
+        state=state,
+        config=config,
+        tag=tag,
+        max_iterations=max_iterations,
+        games=games,
+        config_type=config_type,
+        note=note,
+        patience=patience,
+        time_budget_min=time_budget_min,
+        config_name=cfg,
+    )
+    monitor = OrakTriageMonitor(state=state, games=games, tag=tag, config_name=cfg)
+    extractor = OrakResultExtractor(
+        state=state,
+        games=games,
+        tag=tag,
+        config_type=config_type,
+        config_name=cfg,
+        monitor=monitor,
+    )
 
-        # Regenerate plot
-        plot_progress(tag=tag, config_type=config_type, config_name=cfg)
-
-        # Convergence stop: track consecutive iterations with no improvement
-        if any_improved:
-            no_improve_streak = 0
-        else:
-            no_improve_streak += 1
-            print(f"\nNo improvements in iteration {iteration + 1} (streak={no_improve_streak}/{patience}).")
-            if patience > 0 and no_improve_streak >= patience:
-                print(f"\nEarly stop: no improvement for {patience} consecutive iterations.")
-                break
-
+    sweep_start = time.time()
+    runner = SweepRunner(
+        tag=tag,
+        planner=planner,
+        triage=monitor,
+        extractor=extractor,
+        experiments_dir=ROOT / "experiments",
+        iter_timeout_min=ITER_TIMEOUT_MIN,
+        triage_poll_s=TRIAGE_POLL_INTERVAL,
+        pause_between_iters_s=0,
+    )
+    result = runner.run()
     elapsed_total = (time.time() - sweep_start) / 60
-    print(f"\nAutoresearch complete after {min(iteration + 1, max_iterations)} iterations ({elapsed_total:.1f}min)")
+    print(
+        f"\nAutoresearch complete after {result.iterations} iterations "
+        f"({elapsed_total:.1f}min)"
+    )
     plot_progress(tag=tag, config_type=config_type, config_name=cfg)
 
 
@@ -1114,13 +1313,13 @@ def analyze(
         if propose:
             changes = propose_changes(analysis)
             if changes:
-                print(f"\n  Proposed changes:")
+                print("\n  Proposed changes:")
                 for c in changes:
                     print(f"    [{c['type']}] {c['target']}: {c['reason']}")
                     if c["type"] == "prompt":
                         print(f"           → append: '{c['text'][:80]}...'")
             else:
-                print(f"\n  No changes proposed")
+                print("\n  No changes proposed")
 
 
 if __name__ == "__main__":
