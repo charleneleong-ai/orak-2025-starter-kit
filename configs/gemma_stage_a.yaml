@@ -1,0 +1,21 @@
+# @package _global_
+#
+# Stage A baseline variant of `gemma.yaml` — vmem off, planner off across all
+# games. Used by experiments/scripts/run_full_baseline_sweep.sh to measure
+# clean Stage A scores without modifying the shipped configs.
+#
+# Usage:
+#   python run.py -c gemma_stage_a --local --games super_mario
+
+ENV: ${oc.env:ENV, "dev"}
+CWD: ${hydra:runtime.cwd}
+LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
+
+defaults:
+  - _self_
+  - twenty_fourty_eight: base
+  - super_mario: base
+  - pokemon_red: base
+  - override twenty_fourty_eight/agent: gemma_stage_a
+  - override super_mario/agent: gemma_stage_a
+  - override pokemon_red/agent: gemma_stage_a

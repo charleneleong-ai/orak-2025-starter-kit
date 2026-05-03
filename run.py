@@ -27,6 +27,7 @@ class ExperimentConfigName(StrEnum):
     LOCAL_TEST = "local_test"
     GEMMA = "gemma"
     GEMMA_TEST = "gemma_test"
+    GEMMA_STAGE_A = "gemma_stage_a"
 
 
 load_dotenv()
