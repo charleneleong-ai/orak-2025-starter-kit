@@ -1,10 +1,19 @@
 """Tests for OnlineAgentEvaluator reward shaping.
 
-PR #28 v6 introduced two changes covered here:
-1. Pokemon map-transition reward only fires on first visit per episode.
-2. Shaping params are overridable via the constructor's `shaping_overrides`.
+Covers:
+- Per-game RewardShaper dispatch via the SHAPERS registry.
+- Pokemon map-transition reward only fires on first visit per episode.
+- Shaping params overridable via the constructor's `shaping_overrides`.
 """
-from agents.macla.online_evaluator import OnlineAgentEvaluator, DEFAULT_SHAPING
+from agents.macla.online_evaluator import (
+    DEFAULT_SHAPING,
+    GenericShaper,
+    MarioShaper,
+    OnlineAgentEvaluator,
+    PokemonShaper,
+    SHAPERS,
+    TwentyFortyEightShaper,
+)
 
 
 def _state(map_name: str, score: int = 0, flags: int = 0) -> str:
@@ -96,3 +105,22 @@ def test_unknown_game_with_overrides_does_not_crash():
         shaping_overrides={"reward_min": -10.0, "reward_max": 10.0},
     )
     assert ev._shaping == {"reward_min": -10.0, "reward_max": 10.0}
+
+
+# ── Registry / shaper-dispatch tests ────────────────────────
+
+def test_registry_dispatches_correct_shaper_per_game():
+    """OnlineAgentEvaluator picks the right shaper class for each game."""
+    assert isinstance(OnlineAgentEvaluator("super_mario")._shaper, MarioShaper)
+    assert isinstance(OnlineAgentEvaluator("twenty_fourty_eight")._shaper, TwentyFortyEightShaper)
+    assert isinstance(OnlineAgentEvaluator("pokemon_red")._shaper, PokemonShaper)
+    assert isinstance(OnlineAgentEvaluator("totally_unknown")._shaper, GenericShaper)
+
+
+def test_registry_keys_match_default_shaping_keys():
+    """SHAPERS and DEFAULT_SHAPING should stay in sync — every registered shaper
+    needs default params, and every shaping entry needs a shaper to use it."""
+    assert set(SHAPERS.keys()) == set(DEFAULT_SHAPING.keys()), (
+        f"SHAPERS keys {set(SHAPERS.keys())} != "
+        f"DEFAULT_SHAPING keys {set(DEFAULT_SHAPING.keys())}"
+    )

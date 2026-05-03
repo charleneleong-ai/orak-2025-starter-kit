@@ -4,8 +4,13 @@ OnlineAgentEvaluator: per-step reward shaping for MACLA.
 Replaces binary success/fail with continuous rewards based on
 game-specific score deltas, position progress, and metric changes.
 
-Shaping params per game live in DEFAULT_SHAPING below. Override per-agent via
-the agent yaml `reward_shaping:` block, e.g.:
+Architecture: each game has its own `RewardShaper` subclass that owns its
+metric extraction, reward computation, and per-episode state. The evaluator
+itself is a thin coordinator. Add a new game by writing a `<Game>Shaper`
+subclass and registering it in `SHAPERS`.
+
+Shaping params per game live in DEFAULT_SHAPING. Override per-agent via the
+agent yaml `reward_shaping:` block, e.g.:
 
     # configs/<game>/agent/<variant>.yaml
     reward_shaping:
@@ -14,10 +19,6 @@ the agent yaml `reward_shaping:` block, e.g.:
 
 Missing keys fall back to the per-game DEFAULT_SHAPING entry. Useful for
 ablation sweeps over shaping values without editing source.
-
-TODO(refactor): consider splitting each `_reward_<game>` into a
-`RewardShaper` strategy class with a registry; current dict-dispatch will
-become unwieldy as more games are added.
 """
 import re
 from collections import deque
@@ -25,9 +26,10 @@ from collections import deque
 from loguru import logger
 
 
+# ── Shaping defaults ────────────────────────────────────────
+
 # Per-game default shaping params. See module docstring for override syntax.
-# Game-specific rationale lives next to the parameters that encode it, so the
-# `_reward_<game>` methods stay mechanical.
+# Game-specific rationale lives next to the parameters that encode it.
 DEFAULT_SHAPING: dict[str, dict[str, float]] = {
     "super_mario": {
         "fatal_penalty": -2.0,
@@ -75,74 +77,63 @@ DEFAULT_SHAPING: dict[str, dict[str, float]] = {
 }
 
 
-class OnlineAgentEvaluator:
-    """Computes continuous per-step rewards from game state deltas."""
+# ── Regex helpers (stateless) ───────────────────────────────
 
-    def __init__(self, game_name: str, shaping_overrides: dict | None = None):
-        self._game_name = game_name
-        self._prev_metrics: dict = {}
-        self._step_rewards: deque = deque(maxlen=100)
+def _find_float(pattern: str, text: str) -> float | None:
+    m = re.search(pattern, text, re.IGNORECASE)
+    return float(m.group(1)) if m else None
+
+
+def _find_int(pattern: str, text: str) -> int | None:
+    m = re.search(pattern, text, re.IGNORECASE)
+    return int(m.group(1)) if m else None
+
+
+def _find_str(pattern: str, text: str) -> str | None:
+    m = re.search(pattern, text, re.IGNORECASE)
+    return m.group(1) if m else None
+
+
+# ── Shaper protocol ─────────────────────────────────────────
+
+class RewardShaper:
+    """Base class — game shapers extract metrics and compute rewards.
+
+    Subclasses must implement `extract_metrics` and `compute_reward`. They
+    inherit a per-episode `_stagnation_count` and a `_shaping` dict (defaults
+    overlaid with per-agent overrides). Override `reset_episode` to clear
+    any additional per-episode state (e.g. visited-maps set).
+    """
+
+    def __init__(self, shaping: dict):
+        self._shaping = shaping
         self._stagnation_count: int = 0
-        self._visited_maps: set[str] = set()
-        self._shaping: dict[str, float] = {
-            **DEFAULT_SHAPING.get(game_name, {}),
-            **(shaping_overrides or {}),
-        }
 
-    def evaluate_step(
-        self, prev_state: str, cur_state: str, success: bool, is_fatal: bool
-    ) -> float:
-        """Compute shaped reward in [-2.0, 3.0] range."""
-        cur_metrics = self._extract_metrics(cur_state)
-        prev_metrics = self._prev_metrics or self._extract_metrics(prev_state)
+    def extract_metrics(self, state: str) -> dict:
+        raise NotImplementedError
 
-        reward = self._compute_reward(prev_metrics, cur_metrics, success, is_fatal)
+    def compute_reward(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
+        raise NotImplementedError
 
-        self._prev_metrics = cur_metrics
-        self._step_rewards.append(reward)
-        logger.debug(f"[Evaluator] {self._game_name} shaped_reward={reward:.3f} metrics={cur_metrics}")
-        return reward
-
-    def mean_reward(self) -> float:
-        return sum(self._step_rewards) / len(self._step_rewards) if self._step_rewards else 0.0
-
-    def last_reward(self) -> float:
-        return self._step_rewards[-1] if self._step_rewards else 0.0
-
-    def reset_episode(self):
-        self._prev_metrics = {}
+    def reset_episode(self) -> None:
         self._stagnation_count = 0
-        self._visited_maps = set()
 
-    def _extract_metrics(self, state: str) -> dict:
-        extractors = {
-            "super_mario": self._extract_mario,
-            "twenty_fourty_eight": self._extract_2048,
-            "pokemon_red": self._extract_pokemon,
+    def _clamp(self, reward: float) -> float:
+        s = self._shaping
+        return max(s["reward_min"], min(s["reward_max"], reward))
+
+
+# ── Mario ───────────────────────────────────────────────────
+
+class MarioShaper(RewardShaper):
+    def extract_metrics(self, state: str) -> dict:
+        return {
+            "x_pos": _find_float(r"x_pos:?\s*(\d+\.?\d*)", state) or 0,
+            "score": _find_float(r"[Ss]core:?\s*(\d+)", state) or 0,
+            "lives": _find_int(r"[Ll]ives:?\s*(\d+)", state),
         }
-        extractor = extractors.get(self._game_name, self._extract_generic)
-        return extractor(state)
 
-    def _compute_reward(
-        self, prev: dict, cur: dict, success: bool, is_fatal: bool
-    ) -> float:
-        computers = {
-            "super_mario": self._reward_mario,
-            "twenty_fourty_eight": self._reward_2048,
-            "pokemon_red": self._reward_pokemon,
-        }
-        computer = computers.get(self._game_name, self._reward_generic)
-        return computer(prev, cur, success, is_fatal)
-
-    # ── Mario ───────────────────────────────────────────────
-
-    def _extract_mario(self, state: str) -> dict:
-        x = self._find_float(r"x_pos:?\s*(\d+\.?\d*)", state) or 0
-        score = self._find_float(r"[Ss]core:?\s*(\d+)", state) or 0
-        lives = self._find_int(r"[Ll]ives:?\s*(\d+)", state)
-        return {"x_pos": x, "score": score, "lives": lives}
-
-    def _reward_mario(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
+    def compute_reward(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
         s = self._shaping
         if is_fatal:
             return s["fatal_penalty"]
@@ -166,31 +157,38 @@ class OnlineAgentEvaluator:
         else:
             self._stagnation_count = 0
 
-        return max(s["reward_min"], min(s["reward_max"], reward))
+        return self._clamp(reward)
 
-    # ── 2048 ────────────────────────────────────────────────
 
-    def _extract_2048(self, state: str) -> dict:
-        score = self._find_float(r"[Ss]core:?\s*(\d+\.?\d*)", state) or 0
-        max_tile = self._find_int(r"[Mm]ax.?[Tt]ile:?\s*(\d+)", state) or 0
+# ── 2048 ────────────────────────────────────────────────────
+
+class TwentyFortyEightShaper(RewardShaper):
+    _BOARD_RE = re.compile(
+        r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]"
+        r"\s*,\s*"
+        r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]"
+        r"\s*,\s*"
+        r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]"
+        r"\s*,\s*"
+        r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]"
+    )
+
+    def extract_metrics(self, state: str) -> dict:
+        score = _find_float(r"[Ss]core:?\s*(\d+\.?\d*)", state) or 0
+        max_tile = _find_int(r"[Mm]ax.?[Tt]ile:?\s*(\d+)", state) or 0
         empty_cells = state.count(", 0,") + state.count("[0,") + state.count(", 0]") + state.count("[0]")
-        max_pos = self._extract_2048_max_position(state, max_tile)
-        return {"score": score, "max_tile": max_tile, "empty_cells": empty_cells, "max_pos": max_pos}
+        return {
+            "score": score,
+            "max_tile": max_tile,
+            "empty_cells": empty_cells,
+            "max_pos": self._max_position(state, max_tile),
+        }
 
-    def _extract_2048_max_position(self, state: str, max_tile: int) -> str:
+    def _max_position(self, state: str, max_tile: int) -> str:
         """Return 'corner' / 'edge' / 'center' / 'unknown' for the max tile."""
         if max_tile <= 0:
             return "unknown"
-        m = re.search(
-            r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]"
-            r"\s*,\s*"
-            r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]"
-            r"\s*,\s*"
-            r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]"
-            r"\s*,\s*"
-            r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]",
-            state,
-        )
+        m = self._BOARD_RE.search(state)
         if not m:
             return "unknown"
         cells = [int(x) for x in m.groups()]
@@ -205,7 +203,7 @@ class OnlineAgentEvaluator:
             return "edge"
         return "center"
 
-    def _reward_2048(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
+    def compute_reward(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
         s = self._shaping
         if is_fatal:
             return s["fatal_penalty"]
@@ -240,17 +238,28 @@ class OnlineAgentEvaluator:
         else:
             self._stagnation_count = 0
 
-        return max(s["reward_min"], min(s["reward_max"], reward))
+        return self._clamp(reward)
 
-    # ── Pokemon Red ─────────────────────────────────────────
 
-    def _extract_pokemon(self, state: str) -> dict:
-        score = self._find_float(r"[Ss]core:?\s*(\d+\.?\d*)", state) or 0
-        flags = self._find_int(r"[Ff]lags?:?\s*(\d+)", state) or 0
-        map_name = self._find_str(r"[Mm]ap.?[Nn]ame:?\s*(\S+)", state) or ""
-        return {"score": score, "flags": flags, "map_name": map_name}
+# ── Pokemon Red ─────────────────────────────────────────────
 
-    def _reward_pokemon(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
+class PokemonShaper(RewardShaper):
+    def __init__(self, shaping: dict):
+        super().__init__(shaping)
+        self._visited_maps: set[str] = set()
+
+    def reset_episode(self) -> None:
+        super().reset_episode()
+        self._visited_maps = set()
+
+    def extract_metrics(self, state: str) -> dict:
+        return {
+            "score": _find_float(r"[Ss]core:?\s*(\d+\.?\d*)", state) or 0,
+            "flags": _find_int(r"[Ff]lags?:?\s*(\d+)", state) or 0,
+            "map_name": _find_str(r"[Mm]ap.?[Nn]ame:?\s*(\S+)", state) or "",
+        }
+
+    def compute_reward(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
         s = self._shaping
         if is_fatal:
             return s["fatal_penalty"]
@@ -282,15 +291,16 @@ class OnlineAgentEvaluator:
         else:
             self._stagnation_count = 0
 
-        return max(s["reward_min"], min(s["reward_max"], reward))
+        return self._clamp(reward)
 
-    # ── Generic fallback ────────────────────────────────────
 
-    def _extract_generic(self, state: str) -> dict:
-        score = self._find_float(r"[Ss]core:?\s*(\d+\.?\d*)", state) or 0
-        return {"score": score}
+# ── Generic fallback ────────────────────────────────────────
 
-    def _reward_generic(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
+class GenericShaper(RewardShaper):
+    def extract_metrics(self, state: str) -> dict:
+        return {"score": _find_float(r"[Ss]core:?\s*(\d+\.?\d*)", state) or 0}
+
+    def compute_reward(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
         if is_fatal:
             return -1.0
         if success:
@@ -298,16 +308,56 @@ class OnlineAgentEvaluator:
             return max(0.5, min(3.0, score_delta / 100.0 + 0.5))
         return 0.0
 
-    # ── Helpers ─────────────────────────────────────────────
 
-    def _find_float(self, pattern: str, text: str) -> float | None:
-        m = re.search(pattern, text, re.IGNORECASE)
-        return float(m.group(1)) if m else None
+# ── Registry + evaluator ────────────────────────────────────
 
-    def _find_int(self, pattern: str, text: str) -> int | None:
-        m = re.search(pattern, text, re.IGNORECASE)
-        return int(m.group(1)) if m else None
+SHAPERS: dict[str, type[RewardShaper]] = {
+    "super_mario": MarioShaper,
+    "twenty_fourty_eight": TwentyFortyEightShaper,
+    "pokemon_red": PokemonShaper,
+}
 
-    def _find_str(self, pattern: str, text: str) -> str | None:
-        m = re.search(pattern, text, re.IGNORECASE)
-        return m.group(1) if m else None
+
+class OnlineAgentEvaluator:
+    """Coordinates a per-game `RewardShaper`. Stateless across games."""
+
+    def __init__(self, game_name: str, shaping_overrides: dict | None = None):
+        self._game_name = game_name
+        self._prev_metrics: dict = {}
+        self._step_rewards: deque = deque(maxlen=100)
+        self._shaping: dict[str, float] = {
+            **DEFAULT_SHAPING.get(game_name, {}),
+            **(shaping_overrides or {}),
+        }
+        shaper_cls = SHAPERS.get(game_name, GenericShaper)
+        self._shaper: RewardShaper = shaper_cls(self._shaping)
+
+    def evaluate_step(
+        self, prev_state: str, cur_state: str, success: bool, is_fatal: bool
+    ) -> float:
+        """Compute shaped reward in [reward_min, reward_max] (defaults: -2.0 to 3.0)."""
+        cur_metrics = self._shaper.extract_metrics(cur_state)
+        prev_metrics = self._prev_metrics or self._shaper.extract_metrics(prev_state)
+
+        reward = self._shaper.compute_reward(prev_metrics, cur_metrics, success, is_fatal)
+
+        self._prev_metrics = cur_metrics
+        self._step_rewards.append(reward)
+        logger.debug(f"[Evaluator] {self._game_name} shaped_reward={reward:.3f} metrics={cur_metrics}")
+        return reward
+
+    def mean_reward(self) -> float:
+        return sum(self._step_rewards) / len(self._step_rewards) if self._step_rewards else 0.0
+
+    def last_reward(self) -> float:
+        return self._step_rewards[-1] if self._step_rewards else 0.0
+
+    def reset_episode(self) -> None:
+        self._prev_metrics = {}
+        self._shaper.reset_episode()
+
+    # Backward-compat shim — some callers/tests reach for the visited-maps set
+    # directly. Forward to the pokemon shaper when applicable; empty set otherwise.
+    @property
+    def _visited_maps(self) -> set[str]:
+        return getattr(self._shaper, "_visited_maps", set())
