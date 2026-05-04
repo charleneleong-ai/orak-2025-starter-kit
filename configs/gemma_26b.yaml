@@ -1,0 +1,22 @@
+# @package _global_
+#
+# Gemma-4-26b-a4b-it (MoE) variant of gemma.yaml. Routes pokemon_red to the
+# 26b agent variant; mario / 2048 stay on the dense E4B since the v11 sweep
+# only covers pokemon. Keep both top-level configs in sync if extending.
+#
+# Usage:
+#   ./serving/gemma_serve.sh unsloth/gemma-4-26b-a4b-it   # in another shell
+#   python run.py -c gemma_26b --local --games pokemon_red
+
+ENV: ${oc.env:ENV, "dev"}
+CWD: ${hydra:runtime.cwd}
+LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
+
+defaults:
+  - _self_
+  - twenty_fourty_eight: base
+  - super_mario: base
+  - pokemon_red: base
+  - override twenty_fourty_eight/agent: gemma
+  - override super_mario/agent: gemma
+  - override pokemon_red/agent: gemma_26b

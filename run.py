@@ -28,6 +28,7 @@ class ExperimentConfigName(StrEnum):
     GEMMA = "gemma"
     GEMMA_TEST = "gemma_test"
     GEMMA_STAGE_A = "gemma_stage_a"
+    GEMMA_26B = "gemma_26b"
 
 
 load_dotenv()
