@@ -102,3 +102,8 @@ override-dependencies = [
 
 [tool.uv.sources]
 segment-anything = { git = "https://github.com/facebookresearch/segment-anything.git" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
