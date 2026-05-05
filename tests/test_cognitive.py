@@ -308,6 +308,61 @@ def test_subtask_planner_uses_custom_system_prompt_when_provided():
     assert "Anti-loop" not in system_msg.content
 
 
+def test_build_subtask_history_pulls_from_trajectory_buffer():
+    """``UnifiedMaclaAgent._build_subtask_history`` must consume the live
+    trajectory buffer (when wired) so the planner sees outcome-tagged history,
+    not just one step of fallback. Call the method on a duck-typed stand-in
+    rather than constructing a full agent (which needs wandb/weave/LLM)."""
+    from agents._harness import StepRecord, TrajectoryWriter
+    from agents.macla.unified import UnifiedMaclaAgent
+
+    class _StubConfig:
+        subtask_history_steps = 4
+
+    class _Stub:
+        config = _StubConfig()
+        _trajectory_writer = None  # set below
+
+    stub = _Stub()
+    writer = TrajectoryWriter("/tmp")  # dir unused — we never flush
+    for i in range(6):
+        writer.add_step(StepRecord(
+            step=i + 1, system_prompt=None, user_prompt="u",
+            assistant_output="a", action=f"act{i}",
+            info_score=float(i // 3),  # 0,0,0,1,1,1
+            obs_digest="x" if i < 2 else "y",
+        ))
+    stub._trajectory_writer = writer
+
+    out = UnifiedMaclaAgent._build_subtask_history(stub)
+    # Only the last 4 steps are included (history_steps=4)
+    assert "step 3" in out
+    assert "step 6" in out
+    assert "step 1" not in out
+    assert "step 2" not in out
+    # Score delta from 0 -> 1 between step 3 and step 4 must be visible
+    assert "(+1)" in out
+
+
+def test_build_subtask_history_falls_back_when_no_writer():
+    """Without a wired trajectory writer (tests, ad-hoc scripts), the legacy
+    one-line history form must still work — the planner should never crash."""
+    from agents.macla.unified import UnifiedMaclaAgent
+
+    class _StubConfig:
+        subtask_history_steps = 8
+
+    class _Stub:
+        config = _StubConfig()
+        _trajectory_writer = None
+        _last_action = "north"
+        _prev_state_str = "Pallet Town entrance"
+
+    out = UnifiedMaclaAgent._build_subtask_history(_Stub())
+    assert "Last action: north" in out
+    assert "Pallet Town" in out
+
+
 def test_local_sentence_transformers_backend(monkeypatch):
     """When OPENAI_API_KEY is missing, provider falls through to the local
     sentence-transformers model. Skipped if sentence-transformers is not

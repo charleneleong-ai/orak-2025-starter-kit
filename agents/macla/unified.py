@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from agents.base import BaseOrakAgent
 from agents._cognitive import LLMSubtaskPlanner, VectorMemoryProvider
-from agents._harness import with_retries
+from agents._harness import format_recent_history, with_retries
 from agents.macla.base import BaseMaclaAgent
 from agents.macla.context_extractors import build_context_extractor
 from agents.macla.structured_output import safe_structured_invoke
@@ -133,7 +133,20 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         self._subtask_planner = self._maybe_init_subtask_planner(config)
 
     def _build_subtask_history(self) -> str:
-        """Build a compact history string for the subtask planner."""
+        """Build an outcome-tagged history block for the subtask planner.
+
+        Pulls the last K records from the live trajectory buffer and renders
+        them with score deltas + state-changed tags. Falls back to the legacy
+        one-line form when the trajectory writer hasn't been wired (tests,
+        ad-hoc scripts).
+        """
+        k = max(1, int(getattr(self.config, "subtask_history_steps", 8)))
+        writer = getattr(self, "_trajectory_writer", None)
+        if writer is not None:
+            recent = writer.recent(k)
+            if recent:
+                return format_recent_history(recent)
+
         last_action = getattr(self, "_last_action", "none")
         prev_state = getattr(self, "_prev_state_str", "") or ""
         prev_summary = prev_state[:200] if prev_state else "(no prior state)"
@@ -378,6 +391,19 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         if self._subtask_planner is not None:
             try:
                 history_str = self._build_subtask_history()
+                # Cross-episode learning: feed retrieved memories into the
+                # planner's history, not just the action LLM. Lets the planner
+                # see "this kind of state previously led to score=+1 via X"
+                # and bias the subtask accordingly.
+                if self._memory_provider is not None:
+                    recalled = self._memory_provider.prefetch(
+                        f"{goal} | {observation[:200]}"
+                    )
+                    if recalled:
+                        history_str = (
+                            f"### Recalled prior memories\n{recalled}\n\n"
+                            f"### Recent steps (this episode)\n{history_str}"
+                        )
                 subtask = self._subtask_planner.plan(
                     goal=goal,
                     observation=observation,
