@@ -1,22 +1,36 @@
 # @package _global_
 #
-# Gemma-4-26b-a4b-it (MoE) variant of gemma.yaml. Routes pokemon_red to the
-# 26b agent variant; mario / 2048 stay on the dense E4B since the v11 sweep
-# only covers pokemon. Keep both top-level configs in sync if extending.
+# Gemma-4-26b-a4b-it (MoE) variant of gemma.yaml. Routes ALL games to the
+# 26b agent variant — for cross-game validation of the new outcome-tagged
+# trajectory architecture (PR #31). Each game's gemma_26b.yaml mirrors its
+# gemma.yaml but bumps the model to unsloth/gemma-4-26b-a4b-it and turns on
+# the subtask planner.
 #
 # Usage:
 #   ./serving/gemma_serve.sh unsloth/gemma-4-26b-a4b-it   # in another shell
-#   python run.py -c gemma_26b --local --games pokemon_red
+#   python run.py -c gemma_26b --local --games pokemon_red super_mario twenty_fourty_eight
 
 ENV: ${oc.env:ENV, "dev"}
 CWD: ${hydra:runtime.cwd}
 LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
 
 defaults:
-  - _self_
   - twenty_fourty_eight: base
   - super_mario: base
   - pokemon_red: base
-  - override twenty_fourty_eight/agent: gemma
-  - override super_mario/agent: gemma
+  - override twenty_fourty_eight/agent: gemma_26b
+  - override super_mario/agent: gemma_26b
   - override pokemon_red/agent: gemma_26b
+  - _self_
+
+# Sweep-level wandb tag overrides — replace the legacy "gemini" tag (stale
+# default) with accurate model + arch identifiers for easier tracking.
+twenty_fourty_eight:
+  wandb:
+    tags: ["gemma", "gemma-26b", "twenty_fourty_eight", "stage_d_planner", "outcome_tagged_history"]
+super_mario:
+  wandb:
+    tags: ["gemma", "gemma-26b", "super_mario", "stage_d_planner", "outcome_tagged_history"]
+pokemon_red:
+  wandb:
+    tags: ["gemma", "gemma-26b", "pokemon_red", "stage_d_planner", "outcome_tagged_history"]
