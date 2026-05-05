@@ -372,18 +372,20 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             prev_state_str=getattr(self, "_prev_state_str", ""),
         ))
 
-        # Stage C: prepend retrieved memories to the user prompt when the
-        # vector-memory provider is active. Query is the goal + a slice of
-        # the current observation — enough signal for cosine retrieval.
+        # Vector-memory recall — one query feeds both the action LLM (Stage C)
+        # and the subtask planner (Stage D). Avoids duplicate embedding +
+        # retrieval cost per step.
+        recalled = ""
         if self._memory_provider is not None:
-            query = f"{goal} | {observation[:300]}"
-            recalled = self._memory_provider.prefetch(query)
-            if recalled:
-                user_text = (
-                    "[Recalled memories from prior steps]\n"
-                    f"{recalled}\n\n"
-                    f"{user_text}"
-                )
+            recalled = self._memory_provider.prefetch(f"{goal} | {observation[:300]}")
+
+        # Stage C: prepend recalled memories to the action LLM's user prompt.
+        if recalled:
+            user_text = (
+                "[Recalled memories from prior steps]\n"
+                f"{recalled}\n\n"
+                f"{user_text}"
+            )
 
         # Stage D: ask the subtask planner for a near-term sub-goal and
         # prepend it. For long-horizon games (pokemon) this is the missing
@@ -391,19 +393,14 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         if self._subtask_planner is not None:
             try:
                 history_str = self._build_subtask_history()
-                # Cross-episode learning: feed retrieved memories into the
-                # planner's history, not just the action LLM. Lets the planner
-                # see "this kind of state previously led to score=+1 via X"
-                # and bias the subtask accordingly.
-                if self._memory_provider is not None:
-                    recalled = self._memory_provider.prefetch(
-                        f"{goal} | {observation[:200]}"
+                # Cross-episode learning: feed the same recalled memories into
+                # the planner so it sees "this kind of state previously led to
+                # score=+1 via X" and biases the subtask accordingly.
+                if recalled:
+                    history_str = (
+                        f"### Recalled prior memories\n{recalled}\n\n"
+                        f"### Recent steps (this episode)\n{history_str}"
                     )
-                    if recalled:
-                        history_str = (
-                            f"### Recalled prior memories\n{recalled}\n\n"
-                            f"### Recent steps (this episode)\n{history_str}"
-                        )
                 subtask = self._subtask_planner.plan(
                     goal=goal,
                     observation=observation,
