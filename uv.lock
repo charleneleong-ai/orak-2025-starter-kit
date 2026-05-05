@@ -224,8 +224,8 @@ wheels = [
 
 [[package]]
 name = "autoresearch"
-version = "0.19.6"
-source = { git = "ssh://git@github.com/charleneleong-ai/autoresearch.git?rev=v0.19.6#2244a8ecf1a97ff0b55f828ceb1f95a3fe9cabed" }
+version = "0.20.0"
+source = { git = "ssh://git@github.com/charleneleong-ai/autoresearch.git?rev=v0.20.0#fc46721d2ed9d48a7dca01562547cb70a886c079" }
 dependencies = [
     { name = "matplotlib" },
     { name = "plotly" },
@@ -3149,7 +3149,7 @@ requires-dist = [
     { name = "ahk-binary", specifier = ">=2025.1.0" },
     { name = "aiohttp", specifier = ">=3.13.2" },
     { name = "anthropic", specifier = ">=0.72.0" },
-    { name = "autoresearch", git = "ssh://git@github.com/charleneleong-ai/autoresearch.git?rev=v0.19.6" },
+    { name = "autoresearch", git = "ssh://git@github.com/charleneleong-ai/autoresearch.git?rev=v0.20.0" },
     { name = "backoff", specifier = ">=2.2.1" },
     { name = "burnysc2", specifier = "==7.1.1" },
     { name = "chardet", specifier = ">=5.2.0" },
