@@ -49,13 +49,14 @@ from autoresearch.retrospective import (  # noqa: E402
 
 # Allow running as both `python experiments/autoresearch.py` and `python -m experiments.autoresearch`
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from autoresearch import normalize_score
+
 from experiments.experiment_progress import (
     ALL_GAMES,
     GAME_LOG_DIR,
     extract_run_results,
     load_results,
     log_experiment,
-    normalize_eval_score,
     plot_progress,
 )
 
@@ -651,7 +652,7 @@ def _triage_check(
         total = len(entries)
         evals = [e.get("evaluation_score", 0) for e in entries]
         max_eval_raw = max(evals) if evals else 0
-        max_eval = normalize_eval_score(game, max_eval_raw, max(e.get("game_score", 0) for e in entries))
+        max_eval = normalize_score(game, max_eval_raw)
 
         # Don't kill an iter that's already produced a new PR best for this
         # game. Otherwise propose_next_params advances past the kill (which
@@ -685,7 +686,7 @@ def _triage_check(
             last_n = episode_scores[-TRIAGE_NO_LEARN_EPISODES:]
             best_before = max(episode_scores[:-TRIAGE_NO_LEARN_EPISODES]) if len(episode_scores) > TRIAGE_NO_LEARN_EPISODES else 0
             if max(last_n) <= best_before:
-                return f"{game}: no improvement for {TRIAGE_NO_LEARN_EPISODES} episodes (best={normalize_eval_score(game, best_before, 0):.2f}%)"
+                return f"{game}: no improvement for {TRIAGE_NO_LEARN_EPISODES} episodes (best={normalize_score(game, best_before):.2f}%)"
 
         # Triage 3: Baseline gate — below baseline*factor after 100 steps
         baseline = baseline_scores.get(game, 0)

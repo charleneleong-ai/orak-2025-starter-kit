@@ -19,6 +19,15 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
+from autoresearch.results import (
+    KILL_GPU_SLOW,
+    KILL_GPU_SPIKE,
+    KILL_LOSS_BLOWUP,
+    KILL_NO_LEARNING,
+    KILL_POLICY_DIVERGENCE,
+    categorize_kill_reason,
+)
+
 # ────────────────────────── EDIT FOR YOUR PROJECT ──────────────────────────
 TAG = "unified_macla"
 SCORE_FIELD = "evaluation_score"  # 0-100 normalised in orak
@@ -54,18 +63,46 @@ _STATUS_STYLE = {
 
 
 def _kill_tag(kill_reason: str) -> str:
-    """Map a long triage reason to a short category for the inline label."""
+    """Map a long triage reason to a short category for the inline label.
+
+    Orak-specific triage labels (plateau / below-baseline / iter-timeout /
+    no-improvement) take precedence — they describe orak's *specific*
+    triage triggers, which the upstream `categorize_kill_reason` would
+    otherwise collapse into the more-generic ``no_learning`` bucket
+    (eg. "below baseline gate" matches upstream's ``"baseline"`` rule).
+
+    Anything that doesn't match an orak trigger falls through to the
+    upstream categoriser, which handles the gemma4-style KL/loss/GPU
+    patterns that orak doesn't emit but might see if a sweep ever
+    bridges the two projects.
+    """
     kr = (kill_reason or "").lower()
+    if not kr:
+        return "killed early"
+    if "no improvement" in kr or "no_learn" in kr:
+        return "killed: no learning"
     if "plateau" in kr:
         m = re.search(r"\(([\d.]+)%\)", kr)
         return f"killed: plateau {m.group(1)}%" if m else "killed: plateau"
-    if "no improvement" in kr or "no_learn" in kr:
-        return "killed: no learning"
     if "below baseline" in kr or "baseline gate" in kr:
         return "killed: below baseline"
     if "iteration timeout" in kr or "iter timeout" in kr:
         return "killed: iter timeout"
-    return f"killed: {kill_reason[:30]}" if kill_reason else "killed early"
+
+    # Fall back to upstream classifier for anything orak doesn't recognise
+    # (gemma4 KL/loss divergence, GPU spike/slow/hang/wasted/undersized).
+    category, extras = categorize_kill_reason(kill_reason)
+    if category == KILL_POLICY_DIVERGENCE:
+        return f"killed: kl={extras['kl']} (policy)" if extras else "killed: policy divergence"
+    if category == KILL_LOSS_BLOWUP:
+        return f"killed: |loss|={extras['loss']}" if extras else "killed: loss blow-up"
+    if category == KILL_GPU_SPIKE:
+        return f"killed: {extras['step_time']}s GPU spike" if extras else "killed: GPU spike"
+    if category == KILL_GPU_SLOW:
+        return f"killed: {extras['step_time']}s/step (slow)" if extras else "killed: GPU slow"
+    if category == KILL_NO_LEARNING:
+        return "killed: no learning"
+    return f"killed: {kill_reason[:30]}"
 
 
 def _load(path: Path) -> list[dict]:

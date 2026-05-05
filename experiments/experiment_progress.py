@@ -30,6 +30,8 @@ import typer
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from autoresearch import normalize_score
+
 EXPERIMENTS_DIR = Path(__file__).parent
 
 
@@ -101,28 +103,6 @@ GAME_LOG_DIR = Path(__file__).parent.parent / "game_logs"
 ALL_GAMES = ["super_mario", "twenty_fourty_eight", "pokemon_red"]
 
 
-def normalize_eval_score(game: str, eval_score: float, game_score: float) -> float:
-    """Normalize evaluation scores to 0-100 scale for cross-game comparison.
-
-    Server returns different scales per game:
-    - Mario: already 0-100 (x_pos progress %)
-    - 2048: 0-1 fraction (game_score/20000) → multiply by 100
-    - Pokemon: raw flag count (0-7) → (flags/7)*100
-    """
-    if game == "twenty_fourty_eight":
-        # Server returns fraction; also compute from game_score as fallback
-        if eval_score < 1.0:
-            return eval_score * 100
-        return min(eval_score, 100.0)
-    elif game == "pokemon_red":
-        # Server returns raw flag count
-        if eval_score <= 7:
-            return (eval_score / 7) * 100
-        return min(eval_score, 100.0)
-    # Mario: already 0-100
-    return eval_score
-
-
 def extract_run_results(run_id: str, games: list[str] | None = None) -> dict[str, dict]:
     """Parse game_logs/<game>/<run_id>/game_states.jsonl for final scores.
 
@@ -144,10 +124,9 @@ def extract_run_results(run_id: str, games: list[str] | None = None) -> dict[str
         episodes = sum(1 for i, e in enumerate(entries) if i > 0 and e["iteration"] <= entries[i - 1]["iteration"])
         # Normalize to 0-100
         max_eval_raw = max(e["evaluation_score"] for e in entries)
-        max_game_score = max(e.get("game_score", 0) for e in entries)
-        max_eval = normalize_eval_score(game, max_eval_raw, max_game_score)
+        max_eval = normalize_score(game, max_eval_raw)
         results[game] = {
-            "evaluation_score": normalize_eval_score(game, last["evaluation_score"], last.get("game_score", 0)),
+            "evaluation_score": normalize_score(game, last["evaluation_score"]),
             "game_score": last.get("game_score", 0),
             "steps": len(entries),
             "episodes": episodes,
@@ -489,7 +468,7 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
     out_dir = _tag_dir(tag, config_name)
     output_path = out_dir / "progress.html"
     try:
-        from experiments._chart_widgets import plotly_label_toggle
+        from autoresearch.charts import plotly_label_toggle
         post_script = plotly_label_toggle(
             label_indices=label_annotation_indices,
             n_traces=len(fig.data),
