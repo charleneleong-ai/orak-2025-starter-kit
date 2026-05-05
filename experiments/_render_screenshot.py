@@ -62,36 +62,76 @@ _STATUS_STYLE = {
 }
 
 
+# Custom kill categories specific to orak's per-game triage triggers.
+# These don't map to upstream KILL_CATEGORIES (which are RL-loop concepts —
+# KL divergence, loss blow-up, GPU underuse). Returned by
+# :func:`_orak_kill_classifier` and dispatched in :func:`_kill_tag`.
+_ORAK_KILL_PLATEAU = "orak_plateau"
+_ORAK_KILL_BELOW_BASELINE = "orak_below_baseline_gate"
+_ORAK_KILL_ITER_TIMEOUT = "orak_iter_timeout"
+
+
+def _orak_kill_classifier(kr: str) -> tuple[str, dict[str, str]] | None:
+    """Project-specific kill-reason classifier passed to upstream's
+    `categorize_kill_reason(extra_classifier=...)` hook.
+
+    Two responsibilities:
+
+    1. **Extend** upstream's `KILL_NO_LEARNING` matcher to recognise orak's
+       wording (`"no improvement"` / `"no_learn"`) — upstream only catches
+       gemma4's `"no reward"` / `"baseline"` phrasings.
+
+    2. **Override** upstream's over-eager `"baseline"` substring rule for
+       orak's `"below baseline gate"` triage trigger. Without this hook,
+       orak's specific gate-violation kill would get bucketed as the
+       more-generic `KILL_NO_LEARNING`. Returning a custom category
+       (`_ORAK_KILL_BELOW_BASELINE`) preserves the distinction so the
+       chart label can reflect the actual triage trigger.
+
+    Custom categories for orak's `"score plateau"` and `"iteration timeout"`
+    triggers are returned here too — `_kill_tag` dispatches on them
+    instead of pattern-matching the raw string a second time.
+
+    Receives the lowercased reason; returns `(category, extras)` to win,
+    or `None` to fall through to upstream's builtin patterns.
+    """
+    if "no improvement" in kr or "no_learn" in kr:
+        return KILL_NO_LEARNING, {}
+    if "below baseline" in kr or "baseline gate" in kr:
+        return _ORAK_KILL_BELOW_BASELINE, {}
+    if "plateau" in kr:
+        m = re.search(r"\(([\d.]+)%\)", kr)
+        return _ORAK_KILL_PLATEAU, ({"plateau_pct": m.group(1)} if m else {})
+    if "iteration timeout" in kr or "iter timeout" in kr:
+        return _ORAK_KILL_ITER_TIMEOUT, {}
+    return None
+
+
 def _kill_tag(kill_reason: str) -> str:
     """Map a long triage reason to a short category for the inline label.
 
-    Orak-specific triage labels (plateau / below-baseline / iter-timeout /
-    no-improvement) take precedence — they describe orak's *specific*
-    triage triggers, which the upstream `categorize_kill_reason` would
-    otherwise collapse into the more-generic ``no_learning`` bucket
-    (eg. "below baseline gate" matches upstream's ``"baseline"`` rule).
-
-    Anything that doesn't match an orak trigger falls through to the
-    upstream categoriser, which handles the gemma4-style KL/loss/GPU
-    patterns that orak doesn't emit but might see if a sweep ever
-    bridges the two projects.
+    Pure dispatcher over `categorize_kill_reason` — all string matching
+    lives in either upstream's builtin patterns or
+    `_orak_kill_classifier` (passed via the `extra_classifier=` hook).
+    Adding a new orak triage trigger means adding a branch to the
+    classifier, not to this function.
     """
-    kr = (kill_reason or "").lower()
-    if not kr:
+    if not (kill_reason or "").strip():
         return "killed early"
-    if "no improvement" in kr or "no_learn" in kr:
-        return "killed: no learning"
-    if "plateau" in kr:
-        m = re.search(r"\(([\d.]+)%\)", kr)
-        return f"killed: plateau {m.group(1)}%" if m else "killed: plateau"
-    if "below baseline" in kr or "baseline gate" in kr:
+    category, extras = categorize_kill_reason(
+        kill_reason,
+        extra_classifier=_orak_kill_classifier,
+    )
+
+    # Orak-specific categories (returned by _orak_kill_classifier).
+    if category == _ORAK_KILL_PLATEAU:
+        return f"killed: plateau {extras['plateau_pct']}%" if extras else "killed: plateau"
+    if category == _ORAK_KILL_BELOW_BASELINE:
         return "killed: below baseline"
-    if "iteration timeout" in kr or "iter timeout" in kr:
+    if category == _ORAK_KILL_ITER_TIMEOUT:
         return "killed: iter timeout"
 
-    # Fall back to upstream classifier for anything orak doesn't recognise
-    # (gemma4 KL/loss divergence, GPU spike/slow/hang/wasted/undersized).
-    category, extras = categorize_kill_reason(kill_reason)
+    # Upstream categories (matched in autoresearch.results.categorize_kill_reason).
     if category == KILL_POLICY_DIVERGENCE:
         return f"killed: kl={extras['kl']} (policy)" if extras else "killed: policy divergence"
     if category == KILL_LOSS_BLOWUP:
