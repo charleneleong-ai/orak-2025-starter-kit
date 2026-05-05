@@ -12,8 +12,13 @@ Generic infrastructure shared across every agent in this repo, **independent of 
                          │         │            │
                          ↓         ↓            ↓
                     ┌─────────────────────────────────────────────┐
-   Harness          │              agents/_harness/                │  horizontal:
-                    │   prompt_caching · retry_utils · trajectory  │  shared
+   Harness          │              agents/_harness/                │  thin re-export
+                    │   ┌───────────────────────────────────────┐  │  layer over
+                    │   │  autoresearch.{trajectory, retry_utils,│  │  shared infra
+                    │   │  prompt_caching}  (lifted upstream)    │  │
+                    │   └───────────────────────────────────────┘  │
+                    │   structured_invoke (langchain-coupled,      │
+                    │   stays local)                               │
                     └────┬────────────────────────────────────────┘
                          ↓
                     ┌─────────────────────────────────────────────┐
@@ -23,30 +28,20 @@ Generic infrastructure shared across every agent in this repo, **independent of 
 
 The harness has **zero knowledge** of MACLA, procedure memory, sub-goal decomposition, vector retrieval, game adapters, or any cognitive concept. It only deals with: how the LLM call is made, what gets recorded, and how the prefix is cached.
 
-## Modules
+## Where the code lives
 
-### `prompt_caching.py`
+| Symbol | Source |
+|---|---|
+| `TrajectoryWriter`, `StepRecord`, `convert_scratchpad_to_think`, `has_incomplete_scratchpad` | `autoresearch.trajectory` (lifted v0.17.0, autoresearch#32) |
+| `extract_cache_stats` | `autoresearch.prompt_caching` (lifted v0.17.0, autoresearch#34) |
+| `with_retries`, `classify`, `jittered_backoff`, `ClassifiedError`, `ErrorClass` | `autoresearch.retry_utils` (lifted v0.17.0, autoresearch#34) |
+| `structured_invoke_with_usage` | `agents/_harness/structured_invoke.py` (still local — langchain-coupled) |
 
-Two backends are in scope:
+`agents/_harness/__init__.py` re-exports all of the above so call-sites don't need to know which symbol came from which package — `from agents._harness import TrajectoryWriter` keeps working.
 
-* **vLLM** (primary) serving `unsloth/gemma-4-E4B-it` on the OpenAI-compatible chat-completions endpoint. Auto-caches by byte-identical prompt prefix.
-* **OpenAI cloud** (baselines) — `BaseOpenAIAgent` via langchain ChatOpenAI, plus `OpenAIPokemonVectorMemoryAgent` calling `client.responses.create` directly. Both auto-cache server-side.
+## What each module does
 
-Either way: prefix caching is automatic, no markers needed. This module just surfaces the cache hit count:
-
-* `extract_cache_stats(usage)` — pulls `cached_tokens` from a usage object regardless of shape (vLLM/ChatCompletions: `prompt_tokens_details.cached_tokens`; OpenAI Responses: `input_tokens_details.cached_tokens`; dict-shaped). Surfaces in `log_extras["tokens_cached"]` automatically via `BaseOrakAgent.get_action`.
-
-To benefit from prefix caching, agents only need to keep the system + game-rules prefix stable across turns — which they already do. The win is *measurement*: a pokemon-style 5-module loop on a 200-step episode runs the same big prefix ~1000 times; the first repeat pays for the rest, and `cached_tokens` lets you verify it.
-
-### `retry_utils.py`
-
-* `jittered_backoff(attempt, base_delay=5.0, max_delay=120.0, jitter_ratio=0.5)` — decorrelated exponential backoff. Counter-seeded jitter prevents thundering-herd retries when autoresearch workers hit the same vLLM server.
-* `classify(error) -> ClassifiedError` — categorises by HTTP status / message into `TRANSIENT` (retry), `TERMINAL` (raise), `UNKNOWN` (retry but log loudly).
-* `with_retries(fn, max_attempts=3, label=...)` — runs `fn` with classified retries. The original exception is raised on terminal errors or exhaustion, with a `__classified__` attribute attached for cheap introspection.
-
-The classifier is intentionally small (~80 LOC) — fancier branching can be added if a real failure mode demands it.
-
-### `trajectory.py`
+### Trajectory (`autoresearch.trajectory`)
 
 * `StepRecord` — dataclass for a single step (system/user/assistant turns + tokens + fallback flag).
 * `TrajectoryWriter` — buffers `StepRecord`s, flushes per-episode to either:
@@ -56,6 +51,26 @@ The classifier is intentionally small (~80 LOC) — fancier branching can be add
 * `convert_scratchpad_to_think` — replaces `<REASONING_SCRATCHPAD>` with `<think>` for thinking-mode dataset compatibility.
 
 The legacy `raw_requests.jsonl` per-step log keeps working alongside this — `TrajectoryWriter` only emits the new rolled-up files.
+
+### Prompt caching (`autoresearch.prompt_caching`)
+
+`extract_cache_stats(usage)` pulls `cached_tokens` from a usage object regardless of shape:
+
+* vLLM / OpenAI ChatCompletions `CompletionUsage` — `prompt_tokens_details.cached_tokens`
+* OpenAI Responses `ResponseUsage` — `input_tokens_details.cached_tokens`
+* Plain `dict` (some custom adapters)
+
+Surfaces in `log_extras["tokens_cached"]` automatically via `BaseOrakAgent.get_action`.
+
+### Retry (`autoresearch.retry_utils`)
+
+* `jittered_backoff(attempt, base_delay=5.0, max_delay=120.0, jitter_ratio=0.5)` — decorrelated exponential backoff. Counter-seeded jitter prevents thundering-herd retries when autoresearch workers hit the same vLLM server.
+* `classify(error) -> ClassifiedError` — categorises by HTTP status / message into `TRANSIENT` (retry), `TERMINAL` (raise), `UNKNOWN` (retry but log loudly).
+* `with_retries(fn, max_attempts=3, label=...)` — runs `fn` with classified retries. The original exception is raised on terminal errors or exhaustion, with a `__classified__` attribute attached for cheap introspection.
+
+### Structured invoke (`agents/_harness/structured_invoke.py`)
+
+`structured_invoke_with_usage(llm, messages, output_schema)` wraps langchain's structured-output API to preserve `usage_metadata` so `extract_cache_stats` has something to read. Stays local because it's langchain-coupled and not yet on autoresearch's surface.
 
 ## Wiring status
 
@@ -92,11 +107,16 @@ If your agent inherits from `BaseOrakAgent` (directly or transitively via `BaseO
    ```
 3. **Prefix caching**: nothing to do — vLLM caches automatically. Just check `cached_tokens` is non-zero in your stats after a few turns.
 
-If your agent does NOT inherit `BaseOrakAgent` (e.g. `OpenAIPokemonVectorMemoryAgent`), you can still import the modules directly — but trajectory/cache wiring needs to be done manually.
+If your agent does NOT inherit `BaseOrakAgent` (e.g. `OpenAIPokemonVectorMemoryAgent`), import from `autoresearch` (or `agents._harness`) directly — but trajectory/cache wiring needs to be done manually.
+
+## Testing
+
+* **Primitive unit tests** (`StepRecord.to_sharegpt`, `TrajectoryWriter.flush_episode`, `extract_cache_stats` shapes, `with_retries` retry/raise paths) live upstream in `autoresearch/tests/test_{trajectory,prompt_caching,retry_utils}.py` — not duplicated here.
+* **Integration tests** (`tests/test_harness_integration.py`) cover the orak-specific wiring: `BaseOrakAgent.set_log_dir` → `TrajectoryWriter` instantiation, `_mark_fallback` → routing to `failed_trajectories.jsonl`, `cached_tokens` flow from usage object → `log_extras` → `StepRecord`. These are the only harness tests that need to live in this repo.
 
 ## What's intentionally NOT here
 
-* Heavy error-classification machinery — replaced by an inline 80-LOC classifier; expand only when a real failure mode demands it.
+* Heavy error-classification machinery — replaced by an inline ~80-LOC classifier; expand only when a real failure mode demands it.
 * Context compression / window management — not needed at 200-step game lengths.
-* Memory provider abstractions — that's a cognitive-architecture concern, not a harness concern. Belongs in a future `agents/_cognitive/` package (Stage B).
+* Memory provider abstractions — that's a cognitive-architecture concern, not a harness concern. Lives in `agents/_cognitive/`.
 * Provider-agnostic LLM transports — orak uses langchain adapters; replacing that is a separate concern out of scope here.
