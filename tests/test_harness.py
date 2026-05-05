@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from agents._harness import (
+    ErrorClass,
     StepRecord,
     TrajectoryWriter,
     classify,
@@ -17,7 +18,6 @@ from agents._harness import (
     jittered_backoff,
     with_retries,
 )
-from agents._harness.retry_utils import ErrorClass
 
 
 # ── prompt_caching ──────────────────────────────────────────────────────
