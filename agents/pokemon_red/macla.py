@@ -30,7 +30,31 @@ class PokemonRedMaclaAgent(BaseMaclaAgent, PokemonRedAgent):
             tags.extend(["gemini", self.config.model, "vertex-ai"])
         elif isinstance(self.config, OpenAIConfig):
             tags.extend(["openai", self.config.model])
-        return tags   
+        return tags
+
+    # Compiled once so the per-step regex match in _extract_loop_state stays cheap.
+    # The map name in pokemon obs is followed by a comma (``Map Name: OaksLab,``)
+    # so the non-greedy capture stops there. ``Your position (x, y)`` is the
+    # canonical line emitted by ``parse_game_state`` in pokemon_red_env.
+    _LOOP_MAP_RE = re.compile(r"Map Name:\s*([^,\s]+)")
+    _LOOP_POS_RE = re.compile(r"Your position \(x, y\):\s*\((\d+),\s*(\d+)\)")
+
+    def _extract_loop_state(self, obs):
+        """Lift ``(map, x, y)`` out of the pokemon obs for the loop detector.
+
+        Both regexes are pinned to the format produced by
+        ``PokemonRedEnv.parse_game_state``. Returns ``None`` (silencing
+        the detector for this step) if either piece is missing — for
+        instance during a battle screen where ``[Map Info]`` is replaced.
+        """
+        text = obs.get("obs_str", "")
+        if not text:
+            return None
+        m_map = self._LOOP_MAP_RE.search(text)
+        m_pos = self._LOOP_POS_RE.search(text)
+        if not m_map or not m_pos:
+            return None
+        return (m_map.group(1), int(m_pos.group(1)), int(m_pos.group(2)))
     
     @weave.op()
     def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, Any, str, str, str]:
