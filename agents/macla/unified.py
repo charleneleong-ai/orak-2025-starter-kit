@@ -260,6 +260,17 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         prompt_for_log = getattr(self, "_last_llm_user_text", None) or f"Goal: {goal}\nObs: {cur_state_str}"
         # Reset so a step that hits procedure cache (no LLM) shows the stub
         self._last_llm_user_text = None
+
+        # Surface LLM token usage captured by safe_structured_invoke so the
+        # base get_action plumbing logs prompt/completion/total tokens. Only
+        # set on steps where _base_fallback actually invoked the LLM —
+        # procedure-cache hits leave usage at None.
+        last_usage = getattr(self, "_last_llm_usage", None)
+        if last_usage is not None:
+            if isinstance(memory_stats, dict):
+                memory_stats.setdefault("usage", last_usage)
+            self._last_llm_usage = None
+
         return action, reasoning, output_text, memory_stats, prompt_for_log, game_phase, self._last_update_type, update_info
 
     # ── Abstract method implementations ──────────────────────────────
@@ -383,17 +394,21 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         self._last_llm_user_text = user_text
 
         try:
-            result = with_retries(
+            result, usage = with_retries(
                 lambda: safe_structured_invoke(self._llm, messages, self._action_schema),
                 label="macla_unified.llm",
             )
             reasoning = getattr(result, "reasoning", "")
             action = self._adapter.extract_action(result)
             self._llm_reasoning = reasoning
+            # Stash usage so BaseMaclaAgent.get_action can pull it off and
+            # surface tokens_prompt/completion/total into log_extras.
+            self._last_llm_usage = usage
             return [action], reasoning
         except Exception as e:
             logger.error(f"Unified fallback failed after retries: {e}")
             self._mark_fallback(f"llm_error: {type(e).__name__}: {str(e)[:200]}")
+            self._last_llm_usage = None
             return [self._adapter.DEFAULT_ACTION], f"Fallback error: {e}"
 
     def calculate_metrics(self, game_info: dict[str, Any]) -> dict[str, Any]:

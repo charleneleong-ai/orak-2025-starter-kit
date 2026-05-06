@@ -2,15 +2,59 @@
 Structured output with JSON fallback for models that don't support native structured output.
 
 Usage:
-    result = safe_structured_invoke(llm, messages, GameAction)
+    result, usage = safe_structured_invoke(llm, messages, GameAction)
     # Works with Gemini, OpenAI (native), and Ollama/vLLM (JSON fallback)
 """
 import json
 import re
+from typing import Any
 
-from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from loguru import logger
 from pydantic import BaseModel
+
+
+def _extract_usage(raw: Any) -> dict | None:
+    """Lift token counts off a LangChain AIMessage into a flat dict.
+
+    Tries ``usage_metadata`` first (the canonical LangChain field on
+    AIMessage; populated by every modern provider including the
+    OpenAI-compatible vLLM endpoint), then falls back to legacy
+    ``response_metadata['token_usage']`` for older provider integrations.
+    Returns None if neither carries usage — in which case downstream
+    token logging stays at zero, same as before this fix.
+    """
+    if raw is None:
+        return None
+    usage_meta = getattr(raw, "usage_metadata", None)
+    if isinstance(usage_meta, dict) and usage_meta:
+        # LangChain canonical: input_tokens / output_tokens / total_tokens.
+        # Normalise to the names BaseOrakAgent.get_action expects so the
+        # existing surfacing block in agents/base.py keeps working.
+        return {
+            "tokens_prompt": usage_meta.get("input_tokens", 0),
+            "tokens_completion": usage_meta.get("output_tokens", 0),
+            "tokens_total": usage_meta.get(
+                "total_tokens",
+                usage_meta.get("input_tokens", 0) + usage_meta.get("output_tokens", 0),
+            ),
+            "raw_usage_metadata": usage_meta,
+        }
+    response_meta = getattr(raw, "response_metadata", None)
+    if isinstance(response_meta, dict):
+        token_usage = response_meta.get("token_usage")
+        if isinstance(token_usage, dict) and token_usage:
+            return {
+                "tokens_prompt": token_usage.get("prompt_tokens", 0),
+                "tokens_completion": token_usage.get("completion_tokens", 0),
+                "tokens_total": token_usage.get(
+                    "total_tokens",
+                    token_usage.get("prompt_tokens", 0)
+                    + token_usage.get("completion_tokens", 0),
+                ),
+                "raw_usage_metadata": token_usage,
+            }
+    return None
 
 
 def safe_structured_invoke(
@@ -18,7 +62,7 @@ def safe_structured_invoke(
     messages: list[BaseMessage],
     output_schema: type[BaseModel],
     fallback_to_json: bool = True,
-) -> BaseModel:
+) -> tuple[BaseModel, dict | None]:
     """
     Try native structured output first, fall back to JSON prompt + parsing.
 
@@ -27,11 +71,33 @@ def safe_structured_invoke(
         messages: List of messages to send
         output_schema: Pydantic model class for the expected output
         fallback_to_json: If True, append JSON schema to prompt and parse response
+
+    Returns:
+        Tuple of ``(parsed_model, usage_dict_or_None)``. The usage dict carries
+        ``tokens_prompt`` / ``tokens_completion`` / ``tokens_total`` keys that
+        ``BaseOrakAgent.get_action`` already knows how to surface into
+        ``raw_requests.jsonl``. Pre-fix, the whole AIMessage wrapper was
+        thrown away — leaving ``"tokens": {"prompt": 0, "completion": 0}``
+        in the per-step log, which broke W&B token cost tracking.
     """
-    # Try native structured output
+    # Try native structured output. include_raw=True returns the wrapper
+    # {"raw": AIMessage, "parsed": SchemaModel, "parsing_error": Exception?}
+    # so we can read usage_metadata off the AIMessage.
     try:
-        structured_llm = llm.with_structured_output(output_schema)
-        return structured_llm.invoke(messages)
+        structured_llm = llm.with_structured_output(output_schema, include_raw=True)
+        result = structured_llm.invoke(messages)
+        if isinstance(result, dict) and "parsed" in result:
+            parsed = result["parsed"]
+            if parsed is not None:
+                return parsed, _extract_usage(result.get("raw"))
+            # Native structured-output returned no parse — fall through to
+            # the JSON path so we still produce a result.
+        elif isinstance(result, BaseModel):
+            # Provider doesn't honour include_raw (some langchain integrations
+            # silently ignore the kwarg) — we get just the parsed model and
+            # lose usage on this path. Same as pre-fix behaviour for those
+            # providers; not worse.
+            return result, None
     except (NotImplementedError, AttributeError, TypeError):
         if not fallback_to_json:
             raise
@@ -53,7 +119,8 @@ def safe_structured_invoke(
 
     response = llm.invoke(modified)
     content = response.content if hasattr(response, "content") else str(response)
-    return _parse_json_response(content, output_schema)
+    parsed = _parse_json_response(content, output_schema)
+    return parsed, _extract_usage(response)
 
 
 def _parse_json_response(content: str, schema: type[BaseModel]) -> BaseModel:
