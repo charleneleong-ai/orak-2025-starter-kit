@@ -278,7 +278,14 @@ class PokemonRedEnv(BaseEnv):
             if (self.prev_state_dict['map_info']['map_name'] != self.state_dict['map_info']['map_name']) and (not 'RedsHouse' in self.state_dict['map_info']['map_name']):
                 self.score += 1
         elif self.score == 1:
-            if 'SPRITE_OAK' in self.state_dict['map_info']['map_screen_raw']:
+            # Oak's intro cutscene replaces the tile grid with a textbox, so
+            # `SPRITE_OAK in map_screen_raw` goes blind for the duration of
+            # the chase + intro speech. Once the cutscene warps the player
+            # into OaksLab the encounter has provably happened, so OR with
+            # the RAM-derived map name.
+            map_screen = self.state_dict['map_info'].get('map_screen_raw') or ''
+            map_name = self.state_dict['map_info'].get('map_name') or ''
+            if 'SPRITE_OAK' in map_screen or 'OaksLab' in map_name:
                 self.score += 1
         elif self.score == 2:
             if 'Name' in self.state_dict['your_party']:
