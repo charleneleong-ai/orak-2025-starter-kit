@@ -1,6 +1,7 @@
 """Game-specific adapter for 2048 — used by UnifiedMaclaAgent."""
 from pydantic import BaseModel, Field
 
+from agents.twenty_fourty_eight._metrics import normalize_2048_score
 from agents.twenty_fourty_eight.base import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 
 
@@ -49,7 +50,7 @@ def calculate_metrics(game_info: dict) -> dict:
     except (ValueError, TypeError):
         max_tile = 0
     return {
-        "evaluation_score": min((current_game_score / 20000) * 100, 100),
+        "evaluation_score": normalize_2048_score(max_tile),
         "max_tile": max_tile,
         "score": current_game_score,
     }

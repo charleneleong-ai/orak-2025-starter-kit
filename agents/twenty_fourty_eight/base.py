@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 from agents.base import BaseOrakAgent
 from agents._harness import structured_invoke_with_usage, with_retries
+from agents.twenty_fourty_eight._metrics import normalize_2048_score
 
 
 import weave
@@ -93,14 +94,13 @@ class TwentyFourtyEightAgent(BaseOrakAgent):
     _last_update_type: str = PrivateAttr(default="atomic_entry")
 
     def calculate_metrics(self, game_info: dict[str, Any]) -> dict[str, Any]:
-        current_game_score = int(float(game_info.get("score", 0)))
         try:
             max_tile = int(game_info.get("max_tile", 0))
         except (ValueError, TypeError):
             max_tile = 0
         return {
-            "evaluation_score": min((current_game_score / 20000) * 100, 100),
-            "max_tile": max_tile
+            "evaluation_score": normalize_2048_score(max_tile),
+            "max_tile": max_tile,
         }
 
     def extract_postconditions(self, success_contexts):
