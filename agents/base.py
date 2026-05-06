@@ -19,6 +19,27 @@ try:
 except ImportError:
     PILImage = None
 
+
+def _resolve_weave_project(wandb_config: WandbConfig, wandb_run) -> str:
+    """Build the ``entity/project`` string that runner.py feeds back into
+    ``with_weave_client``.
+
+    Why: ``runner.py`` rpartitions this string on ``'/'`` to set the per-
+    act() weave client context. A bare project name (no slash) resolves
+    to ``entity=None`` server-side and trace.wandb.ai answers ``403
+    Forbidden / Project not found`` — once per agent step. A 300-step
+    pokemon run produced 4,507 of these in the log. The wandb run wandb
+    just created already has the resolved entity (from ``~/.netrc``);
+    fall back to that when ``WANDB_ENTITY`` was not set explicitly.
+    """
+    entity = wandb_config.entity
+    if not entity and wandb_run is not None:
+        entity = getattr(wandb_run, "entity", None)
+    if entity:
+        return f"{entity}/{wandb_config.project}"
+    return wandb_config.project
+
+
 class BaseOrakAgent(weave.Model):
     TRACK: ClassVar[str] = "TRACK1"
     
@@ -82,10 +103,9 @@ class BaseOrakAgent(weave.Model):
                 notes=self.wandb_config.notes,
                 name=self.wandb_config.run_id
             )
-            # Initialize weave for this game's project and store client for act() switching
-            self._weave_project = self.wandb_config.project
-            if self.wandb_config.entity:
-                self._weave_project = f"{self.wandb_config.entity}/{self._weave_project}"
+            # Initialize weave for this game's project and store client for act() switching.
+            # See _resolve_weave_project for why the entity prefix is mandatory.
+            self._weave_project = _resolve_weave_project(self.wandb_config, self._wandb_run)
             try:
                 self._weave_client = weave.init(self._weave_project)
                 if self._weave_client and self._wandb_run:
