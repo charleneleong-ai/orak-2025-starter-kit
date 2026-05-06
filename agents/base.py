@@ -473,17 +473,42 @@ class BaseOrakAgent(weave.Model):
         return action, log_extras
 
     def _postprocess_log_extras(self, log_extras: dict[str, Any], usage: Any) -> None:
-        """Add cache stats + fallback flag to log_extras.
+        """Add cache stats + fallback flag + prompt/completion tokens to log_extras.
 
         Reusable from `BaseMaclaAgent.get_action` and any other override that
-        builds log_extras manually — keeps cache/fallback plumbing in one place.
-        Mutates `log_extras` in place.
+        builds log_extras manually — keeps cache/fallback/token plumbing in
+        one place. Mutates ``log_extras`` in place.
+
+        ``usage`` may be a LangChain UsageMetadata dict, an OpenAI usage
+        object with ``.prompt_tokens`` attrs, or the normalised dict
+        produced by ``safe_structured_invoke._extract_usage`` (which
+        already uses ``tokens_prompt`` / ``tokens_completion`` /
+        ``tokens_total`` keys). Without this, MACLA's get_action path
+        only logged cached tokens and the per-step record showed
+        ``"tokens": {"prompt": 0, "completion": 0, "total": 0}`` for
+        every LLM call.
         """
         cache_stats = extract_cache_stats(usage)
         if cache_stats["cached_tokens"]:
             log_extras["tokens_cached"] = cache_stats["cached_tokens"]
             self._cached_tokens_total += cache_stats["cached_tokens"]
             log_extras["cached_tokens_total"] = self._cached_tokens_total
+
+        if usage is not None and not log_extras.get("tokens_total"):
+            if isinstance(usage, dict):
+                # Dict-shaped usage from safe_structured_invoke's normaliser
+                # already uses the canonical keys.
+                for key in ("tokens_prompt", "tokens_completion", "tokens_total"):
+                    val = usage.get(key)
+                    if val:
+                        log_extras[key] = val
+            elif hasattr(usage, "prompt_tokens"):
+                # OpenAI-shaped usage object (Pydantic). Mirror the
+                # surfacing block in BaseOrakAgent.get_action so MACLA
+                # and non-MACLA paths produce identical telemetry.
+                log_extras["tokens_prompt"] = usage.prompt_tokens
+                log_extras["tokens_completion"] = usage.completion_tokens
+                log_extras["tokens_total"] = usage.total_tokens
 
         if self._pending_fallback is not None:
             log_extras["is_fallback"] = True
