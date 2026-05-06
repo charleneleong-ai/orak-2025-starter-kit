@@ -16,6 +16,7 @@ from langchain_openai import ChatOpenAI
 from loguru import logger
 from config.agent_config import GeminiConfig, LocalConfig, OpenAIConfig
 from pydantic import BaseModel
+from agents.loop_detector import LoopDetector
 from agents.macla.macla_lib import LLMMACLAAgent
 from agents.macla.online_evaluator import OnlineAgentEvaluator
 
@@ -44,6 +45,7 @@ class BaseMaclaAgent(BaseModel):
     _method_counters: dict = PrivateAttr(default_factory=lambda: {})
     _last_update_type: str = PrivateAttr(default="atomic_entry")
     _llm_reasoning: str = PrivateAttr(default="")  # Store LLM reasoning from fallback
+    _loop_detector: LoopDetector = PrivateAttr(default_factory=LoopDetector)
     
     def _init_macla_agent(self):
         """Initialize the MACLA agent based on config type."""
@@ -478,6 +480,7 @@ class BaseMaclaAgent(BaseModel):
         
         # Reset per-episode counters
         self._steps_in_current_episode = 0
+        self._loop_detector.reset()
         
         try:
             memory_stats = self._macla_agent.get_detailed_memory_stats()
@@ -524,17 +527,85 @@ class BaseMaclaAgent(BaseModel):
         except Exception as e:
             logger.error(f"Failed to log MACLA end-of-episode stats: {e}")
     
+    def _maybe_render_stuck_detector(
+        self, obs: dict[str, Any], game_info: dict[str, Any]
+    ) -> str | None:
+        """Observe one step on the loop detector and return its block.
+
+        Returns ``None`` (and silently no-ops) when the per-game extractor
+        hasn't been wired — keeps the detector opt-in per game. Logs but
+        does not raise on extractor errors so a malformed obs can't crash
+        the agent loop.
+        """
+        try:
+            state = self._extract_loop_state(obs)
+        except Exception as e:
+            logger.warning(f"_extract_loop_state failed: {e}")
+            state = None
+        if state is None:
+            return None
+        try:
+            score = float(game_info.get("score", 0))
+        except (TypeError, ValueError):
+            score = 0.0
+        action_class = self._extract_action_class(self._last_action)
+        signal = self._loop_detector.observe(
+            state=state, score=score, action_class=action_class
+        )
+        return self._loop_detector.render(signal)
+
+    def _extract_loop_state(self, obs: dict[str, Any]) -> tuple | None:
+        """Per-game hook: return ``(map_or_phase, x, y)`` for the loop detector.
+
+        Default returns ``None``, which silences the detector for any
+        game that hasn't supplied an extractor. Game-specific MACLA
+        subclasses (PokemonRedMaclaAgent, etc.) override this to lift
+        position info out of their obs format.
+        """
+        return None
+
+    @staticmethod
+    def _extract_action_class(action_str: str | None) -> str | None:
+        """Pull the tool/action family out of ``self._last_action``.
+
+        Examples:
+          ``use_tool(interact_with_object, (object_name="OBJ_1_1"))`` -> ``interact_with_object``
+          ``use_tool(move_to, (x_dest=4, y_dest=11))``                 -> ``move_to``
+          ``a|b|right``                                                -> ``raw_input``
+          ``"No action yet"``                                          -> ``None``
+        """
+        if not action_str or action_str == "No action yet":
+            return None
+        s = action_str.strip()
+        if s.startswith("use_tool("):
+            inner = s[len("use_tool("):]
+            # First token before comma or paren is the tool name.
+            for sep in (",", " ", ")"):
+                if sep in inner:
+                    inner = inner.split(sep, 1)[0]
+            return inner.strip(" '\"") or None
+        return "raw_input"
+
     def get_action(self, obs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """
         Common get_action implementation for all MACLA agents.
         This method extracts MACLA metrics and adds them to log_extras.
-        
+
         Game-specific agents should implement _get_action() instead of overriding this.
         """
         game_info = obs.get("game_info", {})
         cur_state_str = obs.get("obs_str", "")
         obs_image = obs.get("obs_image", None)
-        
+
+        # Run the loop detector and prepend a [Stuck Detector] block so
+        # the LLM can see when it's bouncing on the same tile / spamming
+        # the same tool / oscillating between maps. The detector stays
+        # silent during warmup and during clean exploration; only fires
+        # when one of the three signals trips its threshold.
+        stuck_block = self._maybe_render_stuck_detector(obs, game_info)
+        if stuck_block:
+            cur_state_str = f"{stuck_block}\n\n{cur_state_str}"
+
         # Call game-specific _get_action (should be implemented by subclass)
         result_tuple = self._get_action(
             task_description=game_info.get("task_description", ""),
