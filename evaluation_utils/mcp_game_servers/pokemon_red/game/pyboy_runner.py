@@ -332,19 +332,70 @@ class PyBoyRunner:
         return text
     
     def get_map_visual(self, coll_map, player_x, player_y, object_coords):
+        warp_dests = self.get_warp_destinations()
         lines = []
         for sy in range(max(0, player_y - 4), player_y + 5):
             line = ""
             for sx in range(max(0, player_x - 4), player_x + 5):
-                if (sx, sy) in object_coords:
-                    cell = object_coords[(sx, sy)]
+                key = (sx, sy)
+                if key in object_coords:
+                    cell = object_coords[key]
                 elif coll_map and sy < len(coll_map) and sx < len(coll_map[sy]):
-                    cell = coll_map[sy][sx]
+                    cell = self._enrich_warp_label(coll_map[sy][sx], key, warp_dests)
                 else:
                     cell = "?"
                 line += f"({sx:2d},{sy:2d}): {cell}\t"
             lines.append(line)
         return "\n".join(lines)
+
+    def get_warp_destinations(self) -> dict[tuple[int, int], str]:
+        """Map every warp tile on the current map to its destination map name.
+
+        Reads the active wWarpEntries table from PyBoy memory:
+
+          wNumberOfWarps  @ 0xD3AE  (1 byte, count, max 32)
+          wWarpEntries    @ 0xD3AF  (4 bytes per entry: y, x, dest_warp_id, dest_map_id)
+
+        Returns ``{(x, y): dest_map_name}``. Resolves the trick value
+        ``dest_map_id == 0xFF`` ("use last entered map", i.e. door warps that
+        return the player to wherever they came from) to ``"PrevMap"``.
+
+        Without this enrichment, all warp tiles render as the bare string
+        ``WarpPoint``, leaving the agent unable to distinguish a staircase
+        (``Warp→RedsHouse2f``) from an exit door (``Warp→PalletTown``) — see
+        the audit in commit f98ed6b for the failure-mode that prompted this.
+        """
+        mem = self.pyboy.memory
+        n_warps = mem[0xD3AE]
+        # Game Boy memory occasionally returns garbage for uninitialised
+        # regions; clamp defensively.
+        if n_warps > 32:
+            n_warps = 0
+        out: dict[tuple[int, int], str] = {}
+        for i in range(n_warps):
+            base = 0xD3AF + i * 4
+            wy = mem[base]
+            wx = mem[base + 1]
+            # mem[base + 2] is dest_warp_id, unused for the label
+            dest_map_id = mem[base + 3]
+            if dest_map_id == 0xFF:
+                dest_name = "PrevMap"
+            else:
+                dest_name = self.map_names.get(
+                    str(dest_map_id), f"UNKNOWN_{dest_map_id}"
+                )
+            out[(wx, wy)] = dest_name
+        return out
+
+    @staticmethod
+    def _enrich_warp_label(cell: str, coord: tuple[int, int],
+                           warp_dests: dict[tuple[int, int], str]) -> str:
+        """If ``cell`` is the bare 'WarpPoint' marker and ``coord`` resolves to
+        a destination via ``warp_dests``, return ``f"Warp→{dest}"`` instead.
+        Otherwise return ``cell`` unchanged."""
+        if cell == "WarpPoint" and coord in warp_dests:
+            return f"Warp→{warp_dests[coord]}"
+        return cell
 
     def get_object_coords(self, player_x, player_y):
         mem = self.pyboy.memory
@@ -417,13 +468,14 @@ class PyBoyRunner:
         if self.get_battle_state() != 'Field':
             text += "Not in Field State"
             return text
+        warp_dests = self.get_warp_destinations()
         for sy in range(max(0, player_y - 4), min(player_y + 4, max_height) + 1):
             for sx in range(max(0, player_x - 4), min(player_x + 5, max_width) + 1):
                 key = (sx, sy)
                 if key in object_coords:
                     cell = object_coords[key]
                 elif coll_map and sy < len(coll_map) and sx < len(coll_map[sy]):
-                    cell = coll_map[sy][sx]
+                    cell = self._enrich_warp_label(coll_map[sy][sx], key, warp_dests)
                 else:
                     cell = "?"
                 text += f"({sx:2d}, {sy:2d}): {cell}\t"
