@@ -1,4 +1,5 @@
 import ast
+import math
 import os
 import json
 import re
@@ -21,6 +22,24 @@ logger = logging.getLogger(__name__)
 
 THEME = "light"
 TEXT_COL = (0, 0, 0)
+
+# Win tile is 2048 = 2^11, so log2(max_tile)/11 maps progress onto 0-1.
+# max_tile=2 → 9.09%, max_tile=128 → 63.6%, max_tile=2048 → 100%.
+WIN_TILE_LOG2 = 11.0
+
+
+def normalize_2048_score(max_tile: int) -> float:
+    """0-100 progress-to-win for a 2048 board.
+
+    Replaces the legacy `min(1.0, game_score/20_000) * 100` proxy, which
+    treated game_score=20,000 as the win threshold — an arbitrary choice
+    uncorrelated with reaching the 2048 tile. log2(max_tile) is the
+    natural progress metric since the game doubles tiles.
+    """
+    if max_tile <= 1:
+        return 0.0
+    return min((math.log2(max_tile) / WIN_TILE_LOG2) * 100.0, 100.0)
+
 
 DEFAULT_WIDTH = 500
 DEFAULT_HEIGHT = 500
@@ -233,7 +252,10 @@ class TwentyFourtyEightEnv(BaseEnv):
 
     def evaluate(self, obs: Obs):
         done = obs.terminated
-        return min(1.0, obs.score/20_000), done
+        # Returns 0-100 already; the upstream normalize_score passthrough
+        # applies (its `if raw < 1.0: return raw*100` heuristic only fires
+        # for legacy 0-1 game_states.jsonl rows, not new-style values).
+        return normalize_2048_score(obs.max_tile), done
 
     def get_game_info(self) -> dict:
         return {
