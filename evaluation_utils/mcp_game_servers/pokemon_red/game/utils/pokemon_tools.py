@@ -3,6 +3,22 @@ import re
 import heapq
 from mcp_game_servers.pokemon_red.game.utils.map_utils import *
 
+
+def _is_warp(cell) -> bool:
+    """True for legacy 'WarpPoint' and PR #44's enriched 'Warp→<dest>' labels.
+
+    Why: PR #44 added warp-destination labels to the rendered map (so the
+    agent can tell a staircase from an exit door). That same rendered text
+    is parsed back into ``explored_map`` by ``construct_init_map``, so
+    cells that used to read ``"WarpPoint"`` now read ``"Warp→RedsHouse1f"``.
+    Every consumer that still compared against the bare string was silently
+    rejecting all warp tiles — see PR #44 regression on the Stage A retry
+    where the agent was stuck spamming ``warp_with_warp_point`` for 300
+    steps with 0.0 score.
+    """
+    return isinstance(cell, str) and (cell == "WarpPoint" or cell.startswith("Warp→"))
+
+
 def execute_action_response(toolset, action_response: str):
     try:
         inside = action_response[len("use_tool("):-1]
@@ -130,11 +146,11 @@ class PokemonToolset:
                 return True
             if tile == '~' and isSurf:
                 return True
-            if tile == 'WarpPoint' and is_destination:
+            if _is_warp(tile) and is_destination:
                 return True
-            
+
             return False
-        
+
         if not can_land(x_dest, y_dest, is_destination=True):
             return (False, f"Destination coordinate is not walkable ('{explored_map[y_dest][x_dest]}'). Please reset the destination.")
 
@@ -188,7 +204,7 @@ class PokemonToolset:
                 if in_bounds(nx, ny):
                     tile_next = explored_map[ny][nx]
                     # Check if the next tile is walkable
-                    if tile_next in {'O', 'G', '~', 'WarpPoint', 'D', 'L', 'R'}:
+                    if tile_next in {'O', 'G', '~', 'D', 'L', 'R'} or _is_warp(tile_next):
                         if tile_next in {'D','L','R'}:
                             # Jumping over ledge
                             jump = can_jump_ledge(nx, ny, dx, dy, is_dest)
@@ -275,7 +291,7 @@ class PokemonToolset:
                 return True
             if tile == '~' and isSurf:
                 return True
-            if tile == 'WarpPoint':
+            if _is_warp(tile):
                 return True
             return False
 
@@ -360,8 +376,8 @@ class PokemonToolset:
         """
         if self.agent.memory.state_dict['state'] != 'Field':
             return (False, f"Current state: '{self.agent.memory.state_dict['state']}' state, not 'Field' state")
-        if object_name == 'WarpPoint':
-            return (False, f"'WarpPoint' cannot be the target of this tool. Use `warp_with_warp_point` tool.")
+        if _is_warp(object_name):
+            return (False, f"'{object_name}' cannot be the target of this tool. Use `warp_with_warp_point` tool.")
 
         for attempt in range(max_attempts):
             success, results = self._start_interact_inner(object_name, isSurf)
@@ -416,8 +432,8 @@ class PokemonToolset:
         target_coord = (x_dest, y_dest)
         x_player = self.agent.memory.state_dict['map_info']["player_pos_x"]
         y_player = self.agent.memory.state_dict['map_info']["player_pos_y"]
-        if explored_map[y_dest][x_dest] == 'WarpPoint':
-            return (False, f"The destination is 'WarpPoint'. Use 'warp_with_warp_point' tool.")
+        if _is_warp(explored_map[y_dest][x_dest]):
+            return (False, f"The destination is '{explored_map[y_dest][x_dest]}'. Use 'warp_with_warp_point' tool.")
         elif (x_dest, y_dest) == (x_player, y_player):
             return (False, f"The destination is the current position. Set another destination.")
 
@@ -457,8 +473,8 @@ class PokemonToolset:
         prev_map = self.agent.memory.state_dict['map_info']['map_name']
         explored_map = self.agent.memory.map_memory_dict[prev_map]["explored_map"]
         
-        if not explored_map[y_dest][x_dest] == 'WarpPoint':
-            return (False, f"({x_dest}, {y_dest}) is not 'WarpPoint'")
+        if not _is_warp(explored_map[y_dest][x_dest]):
+            return (False, f"({x_dest}, {y_dest}) is not a warp tile (got '{explored_map[y_dest][x_dest]}')")
         
         for attempt in range(max_attempts):
             if self.agent.memory.state_dict['state'] != 'Field':
@@ -551,7 +567,8 @@ class PokemonToolset:
         y_max = map_info['y_max']
 
         # TODO: '~' will be added after the 'SURF'
-        walkable_tiles = {'O', 'G', 'WarpPoint'}  # Walkable tiles
+        def _walkable(tile: str) -> bool:
+            return tile in {'O', 'G'} or _is_warp(tile)
 
         # for attempt in range(max_attempts):
         prev_map = self.agent.memory.state_dict['map_info']['map_name']
@@ -562,16 +579,16 @@ class PokemonToolset:
                 return (False, f"Cannot move the position. Currently in {self.agent.memory.state_dict['state']} state.")
             
             if direction == 'north':
-                candidates = [(x, 0) for x in range(x_max) if explored_map[0][x] in walkable_tiles]
+                candidates = [(x, 0) for x in range(x_max) if _walkable(explored_map[0][x])]
                 post_action = 'up'
             elif direction == 'south':
-                candidates = [(x, y_max) for x in range(x_max) if explored_map[y_max][x] in walkable_tiles]
+                candidates = [(x, y_max) for x in range(x_max) if _walkable(explored_map[y_max][x])]
                 post_action = 'down'
             elif direction == 'west':
-                candidates = [(0, y) for y in range(y_max) if explored_map[y][0] in walkable_tiles]
+                candidates = [(0, y) for y in range(y_max) if _walkable(explored_map[y][0])]
                 post_action = 'left'
             elif direction == 'east':
-                candidates = [(x_max, y) for y in range(y_max) if explored_map[y][x_max] in walkable_tiles]
+                candidates = [(x_max, y) for y in range(y_max) if _walkable(explored_map[y][x_max])]
                 post_action = 'right'
             else:
                 return (False, f"{direction} is not valid direction")
