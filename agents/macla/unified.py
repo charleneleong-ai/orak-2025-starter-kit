@@ -275,6 +275,23 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
 
     # ── Abstract method implementations ──────────────────────────────
 
+    def _extract_loop_state(self, obs):
+        """Dispatch to the per-game adapter's ``extract_loop_state`` if it
+        exposes one. Adapters that haven't been wired return None and the
+        LoopDetector stays silent for that game.
+
+        Why: the BaseMaclaAgent default is None, but UnifiedMaclaAgent
+        is the agent class actually used by the gemma_stage_a config —
+        without this dispatch the per-game extractor on
+        PokemonRedMaclaAgent never runs, the detector never sees a
+        state primitive, and the [Stuck Detector] block stays empty even
+        when the agent is clearly looping.
+        """
+        adapter_extract = getattr(self._adapter, "extract_loop_state", None)
+        if adapter_extract is None:
+            return None
+        return adapter_extract(obs)
+
     def _extract_context(self, observation: str) -> str | dict:
         return self._context_extractor.extract(observation)
 

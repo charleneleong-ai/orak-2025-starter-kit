@@ -1,9 +1,18 @@
 """Game-specific adapter for Pokemon Red — used by UnifiedMaclaAgent."""
+import re
 from typing import Optional
 
 from pydantic import BaseModel, Field
 
 from agents.pokemon_red.base import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
+
+
+# Compiled once for the per-step lookup in extract_loop_state. Mirrors the
+# regexes in pokemon_red/macla.py so the LoopDetector wiring works for both
+# UnifiedMaclaAgent (uses this adapter) and PokemonRedMaclaAgent (uses its
+# own override) without requiring a refactor.
+_LOOP_MAP_RE = re.compile(r"Map Name:\s*([^,\s]+)")
+_LOOP_POS_RE = re.compile(r"Your position \(x, y\):\s*\((\d+),\s*(\d+)\)")
 
 
 class PokemonAction(BaseModel):
@@ -37,6 +46,24 @@ CONTEXT_FIELDS = {
 
 def extract_action(result: PokemonAction) -> str:
     return result.action
+
+
+def extract_loop_state(obs: dict) -> tuple | None:
+    """Lift ``(map, x, y)`` out of pokemon obs for the LoopDetector.
+
+    UnifiedMaclaAgent's adapter dispatch reads this; mirrors the
+    method on PokemonRedMaclaAgent so both agent classes feed the
+    detector identically. Returns ``None`` during battles/menus
+    where ``[Map Info]`` is replaced by a textbox.
+    """
+    text = obs.get("obs_str", "")
+    if not text:
+        return None
+    m_map = _LOOP_MAP_RE.search(text)
+    m_pos = _LOOP_POS_RE.search(text)
+    if not m_map or not m_pos:
+        return None
+    return (m_map.group(1), int(m_pos.group(1)), int(m_pos.group(2)))
 
 
 def calculate_metrics(game_info: dict) -> dict:
