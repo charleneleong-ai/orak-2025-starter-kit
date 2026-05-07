@@ -39,15 +39,44 @@ def load_map_module(map_name):
     spec.loader.exec_module(mod)
     return mod.tile_type, mod.map_connection, mod.tile_map, mod.coll_map
 
+def _resolve_asm_path(asm_path: str) -> str | None:
+    """Find an asm file on disk, tolerating case mismatches.
+
+    pokered's checkout uses CamelCase with capital floor suffixes
+    (``RedsHouse1F.asm``, ``Museum2F.asm``) but our ``map_names.json``
+    snapshots the runtime map names with lowercase ``f``
+    (``RedsHouse1f``). Linux is case-sensitive, so a direct lookup
+    misses 76 of 248 maps and the renderer falls back to ``OBJ_X_Y``
+    placeholders — which is exactly the failure mode that kept the
+    Stage A pokemon agent from telling a Pokeball from a bookshelf
+    in Oak's lab.
+
+    Returns the resolved path (which may differ in case from the
+    requested ``asm_path``), or ``None`` if no case-insensitive match
+    exists in the directory.
+    """
+    if os.path.exists(asm_path):
+        return asm_path
+    asm_dir = os.path.dirname(asm_path)
+    target = os.path.basename(asm_path).lower()
+    if not os.path.isdir(asm_dir):
+        return None
+    for entry in os.listdir(asm_dir):
+        if entry.lower() == target:
+            return os.path.join(asm_dir, entry)
+    return None
+
+
 def parse_object_sprites(asm_path):
-    if not os.path.exists(asm_path):
+    resolved = _resolve_asm_path(asm_path)
+    if resolved is None:
         print(f"[WARN] asm not found: {asm_path}")
         return []
 
     sprite_names = []
     pattern = re.compile(r"object_event\s+\d+,\s*\d+,\s*([A-Z0-9_]+)")
 
-    with open(asm_path, encoding="utf-8") as f:
+    with open(resolved, encoding="utf-8") as f:
         for line in f:
             match = pattern.search(line)
             if match:
