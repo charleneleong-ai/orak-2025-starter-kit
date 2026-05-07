@@ -21,6 +21,38 @@ from config.utils import load_agent_map
 from loguru import logger
 from evaluation_utils.checkpointable import Checkpointable
 
+def act_with_weave_context(agent, obs, step):
+    """Run ``agent.act`` under the agent's weave project, but only re-init
+    weave when the project actually changes.
+
+    The naive wrap (``with with_weave_client(...)`` per step) re-runs
+    ``init_weave`` every iteration. ``init_weave`` only short-circuits
+    when both the project name AND ``ensure_project_exists`` match the
+    cached client; the agent inits weave with ``ensure_project_exists=
+    True`` while ``with_weave_client`` passes ``False``, so the cache
+    miss is unavoidable. Each miss calls ``current_client.finish()``,
+    which spawns a rich-progress-bar refresh thread, eventually hitting
+    the OS thread limit and dying with ``RuntimeError: can't start new
+    thread``. See ``game_logs/pokemon_red/20260507_003616/`` — pokemon
+    Stage A run died at step 199.
+    """
+    weave_project = getattr(agent, "_weave_project", None)
+    if not weave_project:
+        return agent.act(obs, step=step)
+    from weave.trace.context import weave_client_context as wcc
+    cur = wcc.get_weave_client()
+    cur_full = (
+        f"{cur.entity}/{cur.project}"
+        if cur is not None and getattr(cur, "entity", None)
+        else None
+    )
+    if cur_full == weave_project:
+        return agent.act(obs, step=step)
+    entity, _, project = weave_project.rpartition("/")
+    with wcc.with_weave_client(entity or None, project):
+        return agent.act(obs, step=step)
+
+
 def pil_image_to_base64(image_object):
     """
     Converts a PIL Image object to a base64 string.
@@ -372,16 +404,7 @@ class Runner:
                     total_steps += 1
                     obs = await self._call_in_thread(env.load_obs)
 
-                    # Wrap act() with weave client context so traces go to correct project
-                    def _act_with_weave_context(agent, obs, step):
-                        if hasattr(agent, '_weave_project') and agent._weave_project:
-                            from weave.trace.context.weave_client_context import with_weave_client
-                            entity, _, project = agent._weave_project.rpartition("/")
-                            with with_weave_client(entity or None, project):
-                                return agent.act(obs, step=step)
-                        return agent.act(obs, step=step)
-
-                    act_result = await self._call_in_thread(_act_with_weave_context, agent, obs, total_steps)
+                    act_result = await self._call_in_thread(act_with_weave_context, agent, obs, total_steps)
                     action = act_result.get("action")
 
                     result = await self._call_in_thread(env.dispatch_final_action, action)
