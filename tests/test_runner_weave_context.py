@@ -8,6 +8,7 @@ the OS thread limit hit — see ``game_logs/pokemon_red/20260507_003616/``
 (died step 199). The fix skips the wrap when the active weave client
 already matches the agent's project.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -24,6 +25,7 @@ def weave(monkeypatch):
     """Mock the two weave entry points the helper hits. Tests set
     ``weave.get.return_value`` and read ``weave.wrap.call_count``."""
     from weave.trace.context import weave_client_context as wcc
+
     get = MagicMock(return_value=None)
     wrap = MagicMock(return_value=contextlib.nullcontext())
     monkeypatch.setattr(wcc, "get_weave_client", get)
@@ -53,11 +55,14 @@ def test_thousand_steps_never_wrap(weave):
     assert weave.wrap.call_count == 0
 
 
-@pytest.mark.parametrize("current", [
-    SimpleNamespace(entity="chaleong", project="orak-super-mario"),  # different game
-    None,  # cold start
-    SimpleNamespace(project="orak-pokemon-red"),  # client missing entity
-])
+@pytest.mark.parametrize(
+    "current",
+    [
+        SimpleNamespace(entity="chaleong", project="orak-super-mario"),  # different game
+        None,  # cold start
+        SimpleNamespace(project="orak-pokemon-red"),  # client missing entity
+    ],
+)
 def test_wraps_when_active_client_does_not_match(weave, current):
     weave.get.return_value = current
     act_with_weave_context(_agent(), {}, 1)

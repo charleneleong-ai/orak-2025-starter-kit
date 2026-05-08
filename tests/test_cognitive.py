@@ -1,4 +1,5 @@
 """Unit tests for agents/_cognitive/. Mocked embeddings — no API access."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -10,19 +11,21 @@ from agents._cognitive import MemoryProvider, VectorMemoryProvider
 def _det_embed(text: str) -> np.ndarray:
     """Deterministic embedding: hash text into a 4-dim vector. Stable across runs."""
     h = abs(hash(text))
-    return np.array([
-        float((h >> 0) % 13),
-        float((h >> 4) % 17),
-        float((h >> 8) % 19),
-        float((h >> 12) % 23),
-    ])
+    return np.array(
+        [
+            float((h >> 0) % 13),
+            float((h >> 4) % 17),
+            float((h >> 8) % 19),
+            float((h >> 12) % 23),
+        ]
+    )
 
 
 def _orthogonal_embed(text: str) -> np.ndarray:
     """Orthogonal vectors per text — every retrieval has cos sim = 0 unless self-match."""
     mapping = {
         "alpha": np.array([1.0, 0, 0, 0]),
-        "beta":  np.array([0, 1.0, 0, 0]),
+        "beta": np.array([0, 1.0, 0, 0]),
         "gamma": np.array([0, 0, 1.0, 0]),
         "delta": np.array([0, 0, 0, 1.0]),
     }
@@ -102,11 +105,13 @@ def test_max_memories_evicts_oldest():
     # Use add_memory (no dedup) + a varying embedding so each insert is kept.
     # add_event would dedup on similar embeddings; we want pure FIFO eviction here.
     counter = {"n": 0}
+
     def varying_embed(_text: str) -> np.ndarray:
         counter["n"] += 1
         v = np.zeros(4)
         v[counter["n"] % 4] = 1.0
         return v
+
     p = VectorMemoryProvider(embedding_fn=varying_embed, max_memories=3)
     p.add_memory("first", {"step": 1})
     p.add_memory("second", {"step": 2})
@@ -126,7 +131,7 @@ def test_stats_track_retrievals_and_hits():
     # before any prefetch. Adjust expectation accordingly.
     base = p.stats()["retrievals"]
     p.prefetch("alpha")  # match → +1 retrieval, +1 hit
-    p.prefetch("zzz")    # no match → +1 retrieval, +0 hits
+    p.prefetch("zzz")  # no match → +1 retrieval, +0 hits
     s = p.stats()
     assert s["retrievals"] == base + 2
     assert s["hits"] >= 1
@@ -191,6 +196,7 @@ class _FakeMsg:
 
 class _FakeLLM:
     """Mock langchain-style LLM that returns a fixed response."""
+
     def __init__(self, response_text: str = ""):
         self._response_text = response_text
         self.invoke_count = 0
@@ -202,6 +208,7 @@ class _FakeLLM:
 
 def test_subtask_planner_parses_section():
     from agents._cognitive import LLMSubtaskPlanner
+
     response = (
         "### Subtask_reasoning\n"
         "Agent must leave the starting house to make any progress.\n"
@@ -216,6 +223,7 @@ def test_subtask_planner_parses_section():
 
 def test_subtask_planner_caches_when_replan_every_gt_1():
     from agents._cognitive import LLMSubtaskPlanner
+
     response = "### Subtask\nGo north\n"
     fake = _FakeLLM(response)
     p = LLMSubtaskPlanner(fake, replan_every=3)
@@ -244,6 +252,7 @@ def test_subtask_planner_falls_back_on_invoke_failure():
 def test_subtask_planner_handles_missing_section_header():
     """LLM forgets the ### Subtask header — planner falls back to first short line."""
     from agents._cognitive import LLMSubtaskPlanner
+
     response = "Walk south to the door"  # bare answer, no section
     p = LLMSubtaskPlanner(_FakeLLM(response))
     out = p.plan(goal="g", observation="o")

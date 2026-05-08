@@ -15,6 +15,7 @@ Concrete providers (``VectorMemoryProvider``, future ``BuiltinMemoryProvider``,
 etc.) implement this and can be plugged into any agent — pokemon, 2048, mario,
 future cognitive-loop variants — without re-implementing semantic memory.
 """
+
 from __future__ import annotations
 
 import logging

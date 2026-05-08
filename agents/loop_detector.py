@@ -24,12 +24,12 @@ The renderer emits a ``[Stuck Detector]`` block ready to inject into the
 obs prompt. Each game's obs renderer wires it in separately (PR 2);
 this module is pure logic + tests, no game-specific code.
 """
+
 from __future__ import annotations
 
-from collections import Counter, deque
+from collections import deque
+from collections.abc import Hashable
 from dataclasses import dataclass, field
-from typing import Hashable
-
 
 # Default thresholds. Picked from a 280-step pokemon trajectory where the
 # agent visited (OaksLab, 4, 1) seven times in 50 steps without progress —
@@ -81,8 +81,7 @@ class LoopSignal:
         return any(
             (
                 self.state_repeats >= state_repeat_threshold,
-                self.action_repeat_streak >= action_repeat_threshold
-                and self.state_repeats >= 2,
+                self.action_repeat_streak >= action_repeat_threshold and self.state_repeats >= 2,
                 self.oscillation_count >= oscillation_threshold,
             )
         )
@@ -252,9 +251,7 @@ class LoopDetector:
             return None
 
         lines = ["[Stuck Detector]"]
-        lines.append(
-            f"- No score gain in last {signal.steps_since_score_gain} steps."
-        )
+        lines.append(f"- No score gain in last {signal.steps_since_score_gain} steps.")
         if signal.state_repeats >= self.state_repeat_threshold:
             lines.append(
                 f"- Visited current position {signal.state_repeats} times in "

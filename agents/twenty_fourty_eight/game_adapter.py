@@ -1,8 +1,8 @@
 """Game-specific adapter for 2048 — used by UnifiedMaclaAgent."""
+
 from pydantic import BaseModel, Field
 
 from agents.twenty_fourty_eight._metrics import normalize_2048_score
-from agents.twenty_fourty_eight.base import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 
 
 class TwentyFortyEightAction(BaseModel):

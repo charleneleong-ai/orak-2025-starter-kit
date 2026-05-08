@@ -102,3 +102,66 @@ override-dependencies = [
 
 [tool.uv.sources]
 segment-anything = { git = "https://github.com/facebookresearch/segment-anything.git" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Vendored / generated / pseudocode files we don't own.
+extend-exclude = [
+    # Upstream game-server sources (pokemon_red, super_mario, star_craft,
+    # twenty_fourty_eight); their style isn't ours to drift.
+    "evaluation_utils/mcp_game_servers",
+    # Pure pseudocode "copy-paste examples" reference file — uses `self`
+    # outside class scope by design.
+    "evaluation_utils/grpc_server_utils_quick_reference.py",
+    # Per-sweep tooling that's branch-scoped and routinely regenerated;
+    # not library code worth lint-gating.
+    "experiments/pr31_*",
+    # Generated protobuf stubs.
+    "**/_pb2.py",
+    "**/_pb2.pyi",
+    "**/_pb2_grpc.py",
+]
+
+[tool.ruff.lint.isort]
+# Declare project-internal packages explicitly so ruff classifies imports
+# the same way in CI as it does locally. Without this:
+# - Anything in site-packages locally but absent in CI shifts groups
+# - Runtime-created top-level dirs (e.g. wandb/, game_logs/) trick ruff's
+#   heuristic classifier into treating their imports as first-party
+known-first-party = [
+    "agents",
+    "config",
+    "configs",
+    "evaluation_utils",
+    "experiments",
+    "tests",
+]
+# Pin third-party packages whose classification flickers based on whether
+# a same-named dir exists in the working tree (wandb writes ./wandb/ at
+# runtime; weave occasionally drops local dirs too).
+known-third-party = ["wandb", "weave", "loguru", "pydantic"]
+
+[tool.ruff.lint]
+# E/F/W = pyflakes + pycodestyle, I = isort, B = bugbear, UP = pyupgrade
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    # typer requires `typer.Option(...)` calls as argument defaults to
+    # discover CLI flags — known false positive on B008.
+    "B008",
+    # Line length is too noisy on this codebase's mix of long prompt
+    # strings, long URLs, and dense matplotlib calls.
+    "E501",
+    # ── Deferred to a follow-up cleanup pass ────────────────────────────
+    # The rules below catch real-but-non-blocking style/safety issues. We
+    # leave them OFF for now to land the lint baseline without churning
+    # every game agent. Re-enable case-by-case once the obvious wins land.
+    "B023",   # function-uses-loop-variable (false positives on default-arg capture)
+    "B027",   # empty-method-without-abstract-decorator (orak's MemoryProvider uses no-op defaults intentionally)
+    "B904",   # raise-without-from-inside-except (defensive game code)
+    "B905",   # zip-without-explicit-strict (default has been zip's behavior forever)
+    "E722",   # bare-except (defensive game code)
+    "E731",   # lambda-assignment (concise helpers are fine)
+    "E741",   # ambiguous-variable-name (`l`/`I`/`O` in matplotlib code)
+    "W291",   # trailing-whitespace inside prompt strings (model wording is sacred)
+]

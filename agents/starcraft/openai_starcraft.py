@@ -1,5 +1,5 @@
-from agents.starcraft.base import StarCraftAgent
 from agents.openai_agent import BaseOpenAIAgent
+from agents.starcraft.base import StarCraftAgent
 
 
 class OpenAIStarCraftAgent(BaseOpenAIAgent, StarCraftAgent):

@@ -1,18 +1,20 @@
+import json
+import os
 import traceback
-from typing import ClassVar, Any, Optional
-from pydantic import PrivateAttr
+from typing import Any, ClassVar
+
 import wandb
 import weave
-import os
-import json
 from loguru import logger
-from config.agent_config import AgentConfig
-from config.base import WandbConfig
+from pydantic import PrivateAttr
+
 from agents._harness import (
     StepRecord,
     TrajectoryWriter,
     extract_cache_stats,
 )
+from config.agent_config import AgentConfig
+from config.base import WandbConfig
 
 try:
     from PIL import Image as PILImage
@@ -42,39 +44,41 @@ def _resolve_weave_project(wandb_config: WandbConfig, wandb_run) -> str:
 
 class BaseOrakAgent(weave.Model):
     TRACK: ClassVar[str] = "TRACK1"
-    
+
     config: AgentConfig
     wandb_config: WandbConfig
-    
+
     _prev_state_str: str = PrivateAttr(default="N/A")
     _last_action: str = PrivateAttr(default="No action yet")
     _step_count: int = PrivateAttr(default=0)
     _last_score: int = PrivateAttr(default=0)
-    
+
     # Stats tracking
-    _stats: dict[str, int] = PrivateAttr(default_factory=lambda: {
-        "total_inference_calls": 0,
-        "total_input_tokens": 0,
-        "total_output_tokens": 0,
-        "total_tokens": 0
-    })
-    _requests_log_path: Optional[str] = PrivateAttr(default=None)
-    _trajectory_writer: Optional[TrajectoryWriter] = PrivateAttr(default=None)
+    _stats: dict[str, int] = PrivateAttr(
+        default_factory=lambda: {
+            "total_inference_calls": 0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_tokens": 0,
+        }
+    )
+    _requests_log_path: str | None = PrivateAttr(default=None)
+    _trajectory_writer: TrajectoryWriter | None = PrivateAttr(default=None)
     _cached_tokens_total: int = PrivateAttr(default=0)
-    _pending_fallback: Optional[dict[str, Any]] = PrivateAttr(default=None)
+    _pending_fallback: dict[str, Any] | None = PrivateAttr(default=None)
 
     # Per-episode stats
     _episode_stats: list[dict[str, Any]] = PrivateAttr(default_factory=list)
-    _current_episode_stats: dict[str, int] = PrivateAttr(default_factory=lambda: {
-        "inference_calls": 0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "tokens": 0
-    })
+    _current_episode_stats: dict[str, int] = PrivateAttr(
+        default_factory=lambda: {
+            "inference_calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "tokens": 0,
+        }
+    )
     # Action distribution tracking
     _action_counts: dict[str, int] = PrivateAttr(default_factory=lambda: {})
-
-
 
     def __init__(self, config: AgentConfig = None, wandb_config: WandbConfig = None):
         super().__init__(config=config, wandb_config=wandb_config)
@@ -101,7 +105,7 @@ class BaseOrakAgent(weave.Model):
                 config=self.config.to_dict() if hasattr(self.config, "to_dict") else {},
                 tags=tags,
                 notes=self.wandb_config.notes,
-                name=self.wandb_config.run_id
+                name=self.wandb_config.run_id,
             )
             # Initialize weave for this game's project and store client for act() switching.
             # See _resolve_weave_project for why the entity prefix is mandatory.
@@ -124,9 +128,11 @@ class BaseOrakAgent(weave.Model):
         """Return model declaration."""
         return {
             "name": self.config.model,
-            "version": "unknown", 
-            "provider": self.AGENT_TAGS[0] if hasattr(self, "AGENT_TAGS") and self.AGENT_TAGS else "unknown",
-            "parameter_count": "unknown", 
+            "version": "unknown",
+            "provider": self.AGENT_TAGS[0]
+            if hasattr(self, "AGENT_TAGS") and self.AGENT_TAGS
+            else "unknown",
+            "parameter_count": "unknown",
         }
 
     def get_evaluation_summary(self, episodes: int) -> dict[str, Any]:
@@ -135,8 +141,12 @@ class BaseOrakAgent(weave.Model):
             "total_inference_calls": self._stats["total_inference_calls"],
             "total_tokens": self._stats["total_tokens"],
             "evaluation_episodes": episodes,
-            "mean_calls_per_episode": self._stats["total_inference_calls"] / episodes if episodes > 0 else 0,
-            "mean_tokens_per_episode": self._stats["total_tokens"] / episodes if episodes > 0 else 0,
+            "mean_calls_per_episode": self._stats["total_inference_calls"] / episodes
+            if episodes > 0
+            else 0,
+            "mean_tokens_per_episode": self._stats["total_tokens"] / episodes
+            if episodes > 0
+            else 0,
             "episodes": self._episode_stats,
         }
 
@@ -153,49 +163,60 @@ class BaseOrakAgent(weave.Model):
             except Exception as e:
                 logger.warning(f"Failed to flush trajectory at episode end: {e}")
 
-        self._episode_stats.append({
-            "episode_id": episode_id,
-            "game_name": game_name,
-            "seed": seed,
-            "inference_calls": self._current_episode_stats["inference_calls"],
-            "tokens": self._current_episode_stats["tokens"],
-            "final_score": final_score
-        })
-        
+        self._episode_stats.append(
+            {
+                "episode_id": episode_id,
+                "game_name": game_name,
+                "seed": seed,
+                "inference_calls": self._current_episode_stats["inference_calls"],
+                "tokens": self._current_episode_stats["tokens"],
+                "final_score": final_score,
+            }
+        )
+
         # Log episode summary to wandb
         if self.wandb_config and self.wandb_config.enabled:
             num_episodes = len(self._episode_stats)
             total_score = sum(e["final_score"] for e in self._episode_stats)
             mean_score = total_score / num_episodes if num_episodes > 0 else 0
-            max_score = max([e["final_score"] for e in self._episode_stats]) if num_episodes > 0 else 0
-            self._wandb_run.log({
-                # Episode stats (renamed from episode/ to episode_end/)
-                "episode_end/id": episode_id,
-                "episode_end/final_score": final_score,
-                "episode_end/inference_calls": self._current_episode_stats["inference_calls"],
-                "episode_end/tokens": self._current_episode_stats["tokens"],
-                "episode_end/input_tokens": self._current_episode_stats["input_tokens"],
-                "episode_end/output_tokens": self._current_episode_stats["output_tokens"],
+            max_score = (
+                max([e["final_score"] for e in self._episode_stats]) if num_episodes > 0 else 0
+            )
+            self._wandb_run.log(
+                {
+                    # Episode stats (renamed from episode/ to episode_end/)
+                    "episode_end/id": episode_id,
+                    "episode_end/final_score": final_score,
+                    "episode_end/inference_calls": self._current_episode_stats["inference_calls"],
+                    "episode_end/tokens": self._current_episode_stats["tokens"],
+                    "episode_end/input_tokens": self._current_episode_stats["input_tokens"],
+                    "episode_end/output_tokens": self._current_episode_stats["output_tokens"],
+                    "agg/total_inference_calls": self._stats["total_inference_calls"],
+                    "agg/total_tokens": self._stats["total_tokens"],
+                    "agg/total_input_tokens": self._stats["total_input_tokens"],
+                    "agg/total_output_tokens": self._stats["total_output_tokens"],
+                    "agg/mean_calls_per_episode": self._stats["total_inference_calls"]
+                    / num_episodes
+                    if num_episodes > 0
+                    else 0,
+                    "agg/mean_tokens_per_episode": self._stats["total_tokens"] / num_episodes
+                    if num_episodes > 0
+                    else 0,
+                    "agg/mean_score": mean_score,
+                    "agg/max_score": max_score,
+                    "agg/total_episodes": num_episodes,
+                },
+                step=self._step_count,
+            )
 
-                "agg/total_inference_calls": self._stats["total_inference_calls"],
-                "agg/total_tokens": self._stats["total_tokens"],
-                "agg/total_input_tokens": self._stats["total_input_tokens"],
-                "agg/total_output_tokens": self._stats["total_output_tokens"],
-                "agg/mean_calls_per_episode": self._stats["total_inference_calls"] / num_episodes if num_episodes > 0 else 0,
-                "agg/mean_tokens_per_episode": self._stats["total_tokens"] / num_episodes if num_episodes > 0 else 0,
-                "agg/mean_score": mean_score,
-                "agg/max_score": max_score,
-                "agg/total_episodes": num_episodes,
-            }, step=self._step_count)
-        
         # Reset current episode stats
         self._current_episode_stats = {
             "inference_calls": 0,
             "input_tokens": 0,
             "output_tokens": 0,
-            "tokens": 0
+            "tokens": 0,
         }
-        
+
         # Reset step count for next episode
         self._step_count = 0
 
@@ -205,7 +226,7 @@ class BaseOrakAgent(weave.Model):
         game_info = obs.get("game_info", {})
         cur_state_str = obs.get("obs_str", "")
         obs_image = obs.get("obs_image", None)
-        
+
         current_score = int(float(game_info.get("score", 0)))
         if step is not None:
             self._step_count = step
@@ -214,25 +235,25 @@ class BaseOrakAgent(weave.Model):
 
         # Get action from subclass
         action, log_extras = self.get_action(obs)
-        
+
         # Update stats
         if not log_extras or log_extras.get("inference_called", True):
             self._stats["total_inference_calls"] += 1
             self._current_episode_stats["inference_calls"] += 1
-        
+
         if log_extras:
             tokens_prompt = log_extras.get("tokens_prompt", 0)
             tokens_completion = log_extras.get("tokens_completion", 0)
             tokens_total = log_extras.get("tokens_total", 0)
-            
+
             # If total is not provided but parts are
             if tokens_total == 0 and (tokens_prompt > 0 or tokens_completion > 0):
                 tokens_total = tokens_prompt + tokens_completion
-                
+
             self._stats["total_input_tokens"] += tokens_prompt
             self._stats["total_output_tokens"] += tokens_completion
             self._stats["total_tokens"] += tokens_total
-            
+
             self._current_episode_stats["input_tokens"] += tokens_prompt
             self._current_episode_stats["output_tokens"] += tokens_completion
             self._current_episode_stats["tokens"] += tokens_total
@@ -250,7 +271,7 @@ class BaseOrakAgent(weave.Model):
                             "completion": log_extras.get("tokens_completion", 0),
                             "total": log_extras.get("tokens_total", 0),
                             "cached": log_extras.get("tokens_cached", 0),
-                        }
+                        },
                     }
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
             except Exception as e:
@@ -259,20 +280,22 @@ class BaseOrakAgent(weave.Model):
 
         if self._trajectory_writer is not None and log_extras and "user_prompt" in log_extras:
             try:
-                self._trajectory_writer.add_step(StepRecord(
-                    step=self._step_count,
-                    system_prompt=log_extras.get("system_prompt"),
-                    user_prompt=log_extras.get("user_prompt", ""),
-                    assistant_output=log_extras.get("output_text", ""),
-                    action=action,
-                    reasoning=log_extras.get("reasoning", "") or "",
-                    tokens_prompt=log_extras.get("tokens_prompt", 0),
-                    tokens_completion=log_extras.get("tokens_completion", 0),
-                    tokens_total=log_extras.get("tokens_total", 0),
-                    cached_tokens=log_extras.get("tokens_cached", 0),
-                    is_fallback=bool(log_extras.get("is_fallback", False)),
-                    fallback_reason=log_extras.get("fallback_reason"),
-                ))
+                self._trajectory_writer.add_step(
+                    StepRecord(
+                        step=self._step_count,
+                        system_prompt=log_extras.get("system_prompt"),
+                        user_prompt=log_extras.get("user_prompt", ""),
+                        assistant_output=log_extras.get("output_text", ""),
+                        action=action,
+                        reasoning=log_extras.get("reasoning", "") or "",
+                        tokens_prompt=log_extras.get("tokens_prompt", 0),
+                        tokens_completion=log_extras.get("tokens_completion", 0),
+                        tokens_total=log_extras.get("tokens_total", 0),
+                        cached_tokens=log_extras.get("tokens_cached", 0),
+                        is_fallback=bool(log_extras.get("is_fallback", False)),
+                        fallback_reason=log_extras.get("fallback_reason"),
+                    )
+                )
             except Exception as e:
                 logger.warning(f"Failed to record trajectory step: {e}")
 
@@ -283,40 +306,40 @@ class BaseOrakAgent(weave.Model):
                 "score_delta": current_score - self._last_score,
                 "action": action,
             }
-            
+
             # Add game_phase if available
-            if hasattr(self, '_game_phase'):
+            if hasattr(self, "_game_phase"):
                 log_data["game_phase"] = self._game_phase
-                
+
             # Add update_type if available
-            if hasattr(self, '_last_update_type'):
+            if hasattr(self, "_last_update_type"):
                 log_data["update_type"] = self._last_update_type
-        
+
             # Add _method_used if available
-            if hasattr(self, '_method_used'):
+            if hasattr(self, "_method_used"):
                 log_data["method_used"] = self._method_used
-            
+
             # Add game specific metrics from game_info
             # We can log everything in game_info that is a number
             for k, v in game_info.items():
                 if isinstance(v, (int, float)):
                     log_data[f"game_info/{k}"] = v
-            
+
             # Add custom metrics from subclass
             custom_metrics = self.calculate_metrics(game_info)
             log_data.update(custom_metrics)
-            
+
             # Add extras from get_action
             if log_extras:
                 # Filter out output_text from wandb log to avoid clutter if they are huge
                 # But keep tokens and reasoning length
                 for k, v in log_extras.items():
                     if k == "reasoning":
-                         # Wrap reasoning in pre-wrap for better readability in wandb
-                         log_data[k] = wandb.Html(f"<div style='white-space: pre-wrap;'>{v}</div>")
+                        # Wrap reasoning in pre-wrap for better readability in wandb
+                        log_data[k] = wandb.Html(f"<div style='white-space: pre-wrap;'>{v}</div>")
                     elif k == "user_prompt":
-                         # Log prompt as HTML for readability
-                         log_data[k] = wandb.Html(f"<pre style='white-space: pre-wrap;'>{v}</pre>")
+                        # Log prompt as HTML for readability
+                        log_data[k] = wandb.Html(f"<pre style='white-space: pre-wrap;'>{v}</pre>")
                     elif k not in ["output_text"]:
                         if PILImage and isinstance(v, PILImage.Image):
                             log_data[k] = wandb.Image(v)
@@ -326,35 +349,39 @@ class BaseOrakAgent(weave.Model):
             # Log action distribution with simplified action name
             # Subclasses can provide "simplified_action" in log_extras to override default behavior
             simplified_action = log_extras.get("simplified_action", action)
-            
+
             # Simple fallback for generic function calls if not provided
             if simplified_action == action and "(" in action:
-                 try:
+                try:
                     simplified_action = action.split("(")[0]
-                 except (IndexError, AttributeError):
+                except (IndexError, AttributeError):
                     pass
 
             # Log action distributio
-            self._action_counts[simplified_action] = self._action_counts.get(simplified_action, 0) + 1
+            self._action_counts[simplified_action] = (
+                self._action_counts.get(simplified_action, 0) + 1
+            )
             total_actions = sum(self._action_counts.values())
-            
+
             for act, count in self._action_counts.items():
                 log_data[f"action_history/{act}"] = count / total_actions
-            
+
             episode_num = len(self._episode_stats) + 1
 
             # Log obs_str as text
             if cur_state_str:
                 log_data["obs_str"] = wandb.Html(f"<pre>Ep: {episode_num}\n{cur_state_str}</pre>")
-            
+
             # Log obs_image if available
             if obs_image is not None:
                 try:
-                    log_data["obs_image"] = wandb.Image(obs_image, caption=f"Ep: {episode_num} | Step {self._step_count}")
-                except Exception as e:
+                    log_data["obs_image"] = wandb.Image(
+                        obs_image, caption=f"Ep: {episode_num} | Step {self._step_count}"
+                    )
+                except Exception:
                     # If image logging fails, just continue
                     logger.warning(f"Warning: Could not log image: {traceback.format_exc()}")
-            
+
             self._wandb_run.log(log_data, step=self._step_count)
 
         self._prev_state_str = cur_state_str
@@ -368,11 +395,11 @@ class BaseOrakAgent(weave.Model):
         metrics = self.calculate_metrics(game_info)
         result.update(metrics)
 
-        if hasattr(self, '_game_phase'):
+        if hasattr(self, "_game_phase"):
             result["game_phase"] = self._game_phase
-        if hasattr(self, '_last_update_type'):
+        if hasattr(self, "_last_update_type"):
             result["update_type"] = self._last_update_type
-        if hasattr(self, '_method_used'):
+        if hasattr(self, "_method_used"):
             result["method_used"] = self._method_used
 
         if log_extras:
@@ -396,7 +423,16 @@ class BaseOrakAgent(weave.Model):
         # TwentyFourtyEightAgent — 7-tuple with phase + update_type
         7: ["action", "reasoning", "output_text", "usage", "prompt", "game_phase", "update_type"],
         # UnifiedMaclaAgent — 8-tuple with memory_stats (not usage) + update_info
-        8: ["action", "reasoning", "output_text", "memory_stats", "prompt", "game_phase", "update_type", "update_info"],
+        8: [
+            "action",
+            "reasoning",
+            "output_text",
+            "memory_stats",
+            "prompt",
+            "game_phase",
+            "update_type",
+            "update_info",
+        ],
     }
 
     def _parse_get_action_result(self, result: Any) -> dict[str, Any]:
@@ -520,7 +556,9 @@ class BaseOrakAgent(weave.Model):
         action because of an LLM error. Surfaces in trajectory + log_extras."""
         self._pending_fallback = {"reason": reason}
 
-    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, str, Any, str]:
+    def _get_action(
+        self, task_description: str, cur_state_str: str, obs_image: Any = None
+    ) -> tuple[str, str, str, str, Any, str]:
         """
         Get action from LLM.
         This method should be overridden by subclasses and often decorated with @weave.op().
@@ -544,14 +582,14 @@ class BaseOrakAgent(weave.Model):
                 pass
 
     # ===== Checkpoint Methods =====
-    
+
     def get_state(self) -> dict[str, Any]:
         """
         Get agent state for checkpointing.
-        
+
         Subclasses should override this to add their specific state,
         calling super().get_state() first to include base state.
-        
+
         Returns:
             Dictionary containing agent state.
         """
@@ -564,14 +602,14 @@ class BaseOrakAgent(weave.Model):
             "prev_state_str": self._prev_state_str,
             "last_action": self._last_action,
         }
-    
+
     def load_state(self, state: dict[str, Any]) -> None:
         """
         Load agent state from checkpoint.
-        
+
         Subclasses should override this to restore their specific state,
         calling super().load_state(state) first to restore base state.
-        
+
         Args:
             state: State dictionary from get_state()
         """
@@ -579,22 +617,24 @@ class BaseOrakAgent(weave.Model):
         self._episode_stats = state.get("episode_stats", [])
         self._current_episode_stats = state.get(
             "current_episode_stats",
-            {"inference_calls": 0, "input_tokens": 0, "output_tokens": 0, "tokens": 0}
+            {"inference_calls": 0, "input_tokens": 0, "output_tokens": 0, "tokens": 0},
         )
         self._step_count = state.get("step_count", 0)
         self._last_score = state.get("last_score", 0)
         self._prev_state_str = state.get("prev_state_str", "N/A")
         self._last_action = state.get("last_action", "No action yet")
-        
-        logger.info(f"Loaded agent state: {self._step_count} steps, {len(self._episode_stats)} episodes")
-    
+
+        logger.info(
+            f"Loaded agent state: {self._step_count} steps, {len(self._episode_stats)} episodes"
+        )
+
     def get_checkpoint_metadata(self) -> dict[str, Any]:
         """
         Get metadata for checkpoint summary.
-        
+
         Subclasses can override to add their own metadata,
         calling super().get_checkpoint_metadata() to include base metadata.
-        
+
         Returns:
             Metadata dictionary with summary information.
         """
@@ -605,4 +645,3 @@ class BaseOrakAgent(weave.Model):
             "total_inference_calls": self._stats.get("total_inference_calls", 0),
             "total_tokens": self._stats.get("total_tokens", 0),
         }
-

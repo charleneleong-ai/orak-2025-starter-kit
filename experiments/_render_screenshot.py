@@ -10,6 +10,7 @@ deadlocks or in headless CI.
 Usage:
     .venv/bin/python experiments/_render_screenshot.py
 """
+
 from __future__ import annotations
 
 import json
@@ -18,7 +19,6 @@ import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-
 from autoresearch.render import _kill_tag as _upstream_kill_tag
 from autoresearch.results import KILL_NO_LEARNING, categorize_kill_reason
 
@@ -43,16 +43,18 @@ def _paths_for(config_name: str | None) -> tuple[Path, Path, str]:
         out = ROOT / "experiments" / TAG / "progress_static.png"
         suffix = ""
     return results, out, suffix
+
+
 # ──────────────────────────────────────────────────────────────────────────
 
 
 _STATUS_STYLE = {
-    "DISCARD":    {"color": "#cccccc", "line_color": "#999",    "text_color": "#777"},
-    "KEEP":       {"color": "#2ecc71", "line_color": "black",   "text_color": "#1a7a3a"},
-    "BASELINE":   {"color": "#2ecc71", "line_color": "black",   "text_color": "#1a7a3a"},
-    "RUNNING":    {"color": "#f1c40f", "line_color": "#9a7d0a", "text_color": "#7d6608"},
+    "DISCARD": {"color": "#cccccc", "line_color": "#999", "text_color": "#777"},
+    "KEEP": {"color": "#2ecc71", "line_color": "black", "text_color": "#1a7a3a"},
+    "BASELINE": {"color": "#2ecc71", "line_color": "black", "text_color": "#1a7a3a"},
+    "RUNNING": {"color": "#f1c40f", "line_color": "#9a7d0a", "text_color": "#7d6608"},
     "EARLY_KILL": {"color": "#7f8c8d", "line_color": "#34495e", "text_color": "#34495e"},
-    "CRASH":      {"color": "#e74c3c", "line_color": "#922b21", "text_color": "#922b21"},
+    "CRASH": {"color": "#e74c3c", "line_color": "#922b21", "text_color": "#922b21"},
 }
 
 
@@ -151,7 +153,8 @@ def _render_game_axis(ax, rows: list[dict], game: str) -> None:
         cfg = _STATUS_STYLE.get(r.get("status", "DISCARD"), _STATUS_STYLE["DISCARD"])
         is_best = r.get("experiment") == best_exp
         ax.scatter(
-            r.get("experiment", 0), score(r),
+            r.get("experiment", 0),
+            score(r),
             s=300 if is_best else 160,
             c=cfg["color"],
             edgecolors="#27ae60" if is_best else cfg["line_color"],
@@ -185,9 +188,12 @@ def _render_game_axis(ax, rows: list[dict], game: str) -> None:
 
         y_off = 1.4 if j % 2 == 0 else -1.6
         ax.annotate(
-            text, xy=(r.get("experiment", 0), score(r)),
-            xytext=(0, y_off * 16), textcoords="offset points",
-            ha="center", va="center",
+            text,
+            xy=(r.get("experiment", 0), score(r)),
+            xytext=(0, y_off * 16),
+            textcoords="offset points",
+            ha="center",
+            va="center",
             fontsize=8 if not is_best else 9,
             fontweight="bold" if is_best else "normal",
             color=("#1a7a3a" if is_best else cfg["text_color"]),
@@ -206,7 +212,8 @@ def _render_game_axis(ax, rows: list[dict], game: str) -> None:
     pretty = game.replace("_", " ").title()
     ax.set_title(
         f"{pretty} — {n} exp · {n_kept} kept · {n_kill} killed · {runtime_total:.0f}min",
-        fontsize=11, color="#222",
+        fontsize=11,
+        color="#222",
     )
     ax.set_xlabel("Experiment #", fontsize=10)
     ax.set_ylabel(SCORE_LABEL, fontsize=9)
@@ -230,8 +237,7 @@ def main() -> None:
     games = sorted({r.get("game", "unknown") for r in rows})
     n_games = len(games)
 
-    fig, axes = plt.subplots(n_games, 1, figsize=(14, 5 * n_games), dpi=140,
-                             squeeze=False)
+    fig, axes = plt.subplots(n_games, 1, figsize=(14, 5 * n_games), dpi=140, squeeze=False)
     fig.patch.set_facecolor("white")
 
     for idx, game in enumerate(games):

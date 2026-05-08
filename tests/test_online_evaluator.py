@@ -5,13 +5,14 @@ Covers:
 - Pokemon map-transition reward only fires on first visit per episode.
 - Shaping params overridable via the constructor's `shaping_overrides`.
 """
+
 from agents.macla.online_evaluator import (
     DEFAULT_SHAPING,
+    SHAPERS,
     GenericShaper,
     MarioShaper,
     OnlineAgentEvaluator,
     PokemonShaper,
-    SHAPERS,
     TwentyFortyEightShaper,
 )
 
@@ -51,7 +52,9 @@ def test_pokemon_new_map_after_warp_loop_still_rewards():
     ev.evaluate_step(_state("RedsHouse2f"), _state("RedsHouse2f"), True, False)
 
     ev.evaluate_step(_state("RedsHouse2f"), _state("RedsHouse1f"), True, False)  # discover 1f
-    ev.evaluate_step(_state("RedsHouse1f"), _state("RedsHouse2f"), True, False)  # back to 2f, no reward
+    ev.evaluate_step(
+        _state("RedsHouse1f"), _state("RedsHouse2f"), True, False
+    )  # back to 2f, no reward
     r_outside = ev.evaluate_step(_state("RedsHouse2f"), _state("PalletTown"), True, False)
     assert r_outside >= 1.5, f"discovering PalletTown should still reward >= 1.5, got {r_outside}"
 
@@ -83,8 +86,7 @@ def test_shaping_override_repeat_visit_bonus_restores_old_behavior():
     r2 = ev.evaluate_step(_state("RedsHouse1f"), _state("RedsHouse2f"), True, False)
     r3 = ev.evaluate_step(_state("RedsHouse2f"), _state("RedsHouse1f"), True, False)
     assert r2 >= 1.5 and r3 >= 1.5, (
-        f"with repeat_visit_bonus=1.5 every transition should reward >= 1.5, "
-        f"got r2={r2}, r3={r3}"
+        f"with repeat_visit_bonus=1.5 every transition should reward >= 1.5, got r2={r2}, r3={r3}"
     )
 
 
@@ -95,7 +97,9 @@ def test_shaping_override_partial_keeps_other_defaults():
         shaping_overrides={"flag_bonus": 99.0},
     )
     assert ev._shaping["flag_bonus"] == 99.0
-    assert ev._shaping["map_discovery_bonus"] == DEFAULT_SHAPING["pokemon_red"]["map_discovery_bonus"]
+    assert (
+        ev._shaping["map_discovery_bonus"] == DEFAULT_SHAPING["pokemon_red"]["map_discovery_bonus"]
+    )
 
 
 def test_unknown_game_with_overrides_does_not_crash():
@@ -109,6 +113,7 @@ def test_unknown_game_with_overrides_does_not_crash():
 
 # ── Registry / shaper-dispatch tests ────────────────────────
 
+
 def test_registry_dispatches_correct_shaper_per_game():
     """OnlineAgentEvaluator picks the right shaper class for each game."""
     assert isinstance(OnlineAgentEvaluator("super_mario")._shaper, MarioShaper)
@@ -121,6 +126,5 @@ def test_registry_keys_match_default_shaping_keys():
     """SHAPERS and DEFAULT_SHAPING should stay in sync — every registered shaper
     needs default params, and every shaping entry needs a shaper to use it."""
     assert set(SHAPERS.keys()) == set(DEFAULT_SHAPING.keys()), (
-        f"SHAPERS keys {set(SHAPERS.keys())} != "
-        f"DEFAULT_SHAPING keys {set(DEFAULT_SHAPING.keys())}"
+        f"SHAPERS keys {set(SHAPERS.keys())} != DEFAULT_SHAPING keys {set(DEFAULT_SHAPING.keys())}"
     )

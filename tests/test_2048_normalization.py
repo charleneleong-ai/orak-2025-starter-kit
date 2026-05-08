@@ -7,6 +7,7 @@ arbitrary proxy for the win condition. This module exercises the new
 ``log2(max_tile)/log2(2048) * 100`` formula and asserts the agents-side
 helper agrees with the env-side helper bit-for-bit.
 """
+
 from __future__ import annotations
 
 import math
@@ -72,6 +73,6 @@ def test_agent_and_env_formulas_agree():
     and the cross-game scoreboard will diverge."""
     for power in range(0, 14):
         tile = 2**power
-        assert math.isclose(
-            agent_normalize(tile), _env_normalize(tile), rel_tol=1e-12
-        ), f"diverged at max_tile={tile}"
+        assert math.isclose(agent_normalize(tile), _env_normalize(tile), rel_tol=1e-12), (
+            f"diverged at max_tile={tile}"
+        )

@@ -14,6 +14,7 @@ These tests pin the predicate behaviour and prove the regression is
 fixed by exercising the actual ``can_land`` / pathfinding code paths
 that were broken.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -41,10 +42,7 @@ sys.modules.setdefault("mcp_game_servers.pokemon_red.game.utils", _utils_pkg)
 
 # pokemon_tools imports map_utils via `from ... import *`; load that
 # real module first so the star-import resolves cleanly.
-_MAP_UTILS_PATH = (
-    _REPO
-    / "evaluation_utils/mcp_game_servers/pokemon_red/game/utils/map_utils.py"
-)
+_MAP_UTILS_PATH = _REPO / "evaluation_utils/mcp_game_servers/pokemon_red/game/utils/map_utils.py"
 _map_spec = importlib.util.spec_from_file_location(
     "mcp_game_servers.pokemon_red.game.utils.map_utils", _MAP_UTILS_PATH
 )
@@ -52,10 +50,7 @@ _map_mod = importlib.util.module_from_spec(_map_spec)
 sys.modules["mcp_game_servers.pokemon_red.game.utils.map_utils"] = _map_mod
 _map_spec.loader.exec_module(_map_mod)
 
-_TOOLS_PATH = (
-    _REPO
-    / "evaluation_utils/mcp_game_servers/pokemon_red/game/utils/pokemon_tools.py"
-)
+_TOOLS_PATH = _REPO / "evaluation_utils/mcp_game_servers/pokemon_red/game/utils/pokemon_tools.py"
 _spec = importlib.util.spec_from_file_location(
     "mcp_game_servers.pokemon_red.game.utils.pokemon_tools", _TOOLS_PATH
 )
@@ -150,7 +145,7 @@ def test_warp_precondition_accepts_legacy_label():
     """Sanity: the legacy ``WarpPoint`` literal still works."""
     grid = _redshouse2f_grid_with_warp_label("WarpPoint")
     agent = _StubAgent(grid)
-    toolset = PokemonToolset(agent)
+    toolset = PokemonToolset(agent)  # noqa: F841 — kept for test setup parity
     explored = grid
     assert _is_warp(explored[1][7])  # precondition the tool checks
 

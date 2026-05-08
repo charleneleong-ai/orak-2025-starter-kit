@@ -39,18 +39,19 @@ Architecture:
     └─────────────────────────────────────────────────────────┘
 """
 
-import grpc
+import logging
+import os
 import threading
 import time
 import uuid
-import logging
-import os
 from concurrent import futures
 
-from evaluation_utils.protos import game_service_pb2 as pb2
-from evaluation_utils.protos import game_service_pb2_grpc as pb2_grpc
+import grpc
+
 from evaluation_utils.commons import GAME_DATA_DIR
 from evaluation_utils.live_export import live_export_enabled
+from evaluation_utils.protos import game_service_pb2 as pb2
+from evaluation_utils.protos import game_service_pb2_grpc as pb2_grpc
 
 LIVE_EXPORT_ENABLED = live_export_enabled()
 if LIVE_EXPORT_ENABLED:
@@ -177,24 +178,20 @@ class GameEnvServiceServicer(pb2_grpc.GameEnvServiceServicer):
         # No session registered yet
         if self._session_token is None:
             context.abort(
-                grpc.StatusCode.UNAUTHENTICATED,
-                "No active session. Call RegisterSession first."
+                grpc.StatusCode.UNAUTHENTICATED, "No active session. Call RegisterSession first."
             )
             return False
 
         # Token mismatch
         if token != self._session_token:
-            context.abort(
-                grpc.StatusCode.UNAUTHENTICATED,
-                "Invalid session token"
-            )
+            context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid session token")
             return False
 
         # Session expired
         if self._is_session_expired():
             context.abort(
                 grpc.StatusCode.UNAUTHENTICATED,
-                f"Session expired (timeout: {SESSION_TIMEOUT_SECONDS}s)"
+                f"Session expired (timeout: {SESSION_TIMEOUT_SECONDS}s)",
             )
             return False
 
@@ -222,13 +219,11 @@ class GameEnvServiceServicer(pb2_grpc.GameEnvServiceServicer):
         """
         # Reject if session exists and not expired
         if self._session_token and not self._is_session_expired():
-            logger.warning(
-                "RegisterSession rejected: server occupied by another client"
-            )
+            logger.warning("RegisterSession rejected: server occupied by another client")
             context.abort(
                 grpc.StatusCode.PERMISSION_DENIED,
                 "Server occupied by another client. Wait for session to expire or "
-                f"try again in {SESSION_TIMEOUT_SECONDS}s."
+                f"try again in {SESSION_TIMEOUT_SECONDS}s.",
             )
 
         # Generate new session
@@ -305,13 +300,15 @@ class GameEnvServiceServicer(pb2_grpc.GameEnvServiceServicer):
             logger.warning("GetObservation rejected: lock held by another operation")
             context.abort(
                 grpc.StatusCode.ABORTED,
-                "Busy: Another operation in progress. Retry after brief delay."
+                "Busy: Another operation in progress. Retry after brief delay.",
             )
 
         try:
             obs_str, obs_image_bytes, game_info = self._game.load_current_obs()
-            logger.debug(f"GetObservation: obs_str length={len(obs_str)}, "
-                        f"image size={len(obs_image_bytes) if obs_image_bytes else 0} bytes")
+            logger.debug(
+                f"GetObservation: obs_str length={len(obs_str)}, "
+                f"image size={len(obs_image_bytes) if obs_image_bytes else 0} bytes"
+            )
 
             if self._live_exporter:
                 self._live_exporter.record_observation(
@@ -375,7 +372,7 @@ class GameEnvServiceServicer(pb2_grpc.GameEnvServiceServicer):
             logger.warning("Step rejected: lock held by another action")
             context.abort(
                 grpc.StatusCode.ABORTED,
-                "Busy: Another action in progress. Retry after brief delay."
+                "Busy: Another action in progress. Retry after brief delay.",
             )
 
         try:
@@ -475,24 +472,21 @@ def serve(game_server, port: int):
         futures.ThreadPoolExecutor(max_workers=1),
         options=[
             # 50MB message size limits for large game screenshots
-            ('grpc.max_receive_message_length', 50 * 1024 * 1024),
-            ('grpc.max_send_message_length', 50 * 1024 * 1024),
-
+            ("grpc.max_receive_message_length", 50 * 1024 * 1024),
+            ("grpc.max_send_message_length", 50 * 1024 * 1024),
             # Keep-alive settings to detect dead clients
-            ('grpc.keepalive_time_ms', 30000),  # Ping every 30 seconds
-            ('grpc.keepalive_timeout_ms', 10000),  # Wait 10s for pong
-            ('grpc.keepalive_permit_without_calls', True),  # Ping even without RPCs
+            ("grpc.keepalive_time_ms", 30000),  # Ping every 30 seconds
+            ("grpc.keepalive_timeout_ms", 10000),  # Wait 10s for pong
+            ("grpc.keepalive_permit_without_calls", True),  # Ping even without RPCs
         ],
         compression=grpc.Compression.Gzip,
     )
 
     # Register servicer
-    pb2_grpc.add_GameEnvServiceServicer_to_server(
-        GameEnvServiceServicer(game_server), server
-    )
+    pb2_grpc.add_GameEnvServiceServicer_to_server(GameEnvServiceServicer(game_server), server)
 
     # Bind to port (all interfaces)
-    server.add_insecure_port(f'[::]:{port}')
+    server.add_insecure_port(f"[::]:{port}")
 
     # Start server
     server.start()

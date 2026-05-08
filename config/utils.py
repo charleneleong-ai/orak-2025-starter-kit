@@ -1,12 +1,11 @@
 from importlib import import_module
-from typing import Any, Optional, Type
+from pathlib import Path
+from typing import Any
 
 import hydra
 from hydra import compose, initialize
 from loguru import logger
 from omegaconf import OmegaConf
-
-from pathlib import Path
 
 from config.base import Settings
 
@@ -25,7 +24,7 @@ def load_hydra_settings(config_name: str = "config") -> Settings:
         return Settings(**cfg_dict)
 
 
-def get_module_by_class_path(class_path: str) -> Optional[Type]:  # type: ignore[type-arg]
+def get_module_by_class_path(class_path: str) -> type | None:  # type: ignore[type-arg]
     """
     Dynamically imports a class from a string class path.
 
@@ -48,10 +47,9 @@ def get_module_by_class_path(class_path: str) -> Optional[Type]:  # type: ignore
         raise ImportError(f"Cannot import {class_path}: {e}") from e
 
 
-
 def load_agent_map(settings: Settings, games: list[str] | None = None) -> dict[str, Any]:
     """Load agent map based on settings.
-    
+
     Args:
         settings: Settings object containing game configurations
         games: Optional list of game names to load agents for. If None, loads all available agents.

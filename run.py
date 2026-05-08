@@ -1,18 +1,18 @@
 import asyncio
-from typing import Any, Annotated
-import typer
-from enum import StrEnum
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
-from evaluation_utils.runner import Runner
-from evaluation_utils.commons import setup_logging, GAME_DATA_DIR, GAME_SERVER_PORTS
-from evaluation_utils.renderer import get_renderer
-from evaluation_utils.checkpoint_manager import CheckpointManager
-from dotenv import load_dotenv
-from config.utils import load_hydra_settings
-from loguru import logger
+from typing import Annotated
+
+import typer
 import weave
-import os
+from dotenv import load_dotenv
+from loguru import logger
+
+from config.utils import load_hydra_settings
+from evaluation_utils.commons import GAME_DATA_DIR, GAME_SERVER_PORTS, setup_logging
+from evaluation_utils.renderer import get_renderer
+from evaluation_utils.runner import Runner
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -50,47 +50,40 @@ def main(
         help="Use existing session id instead of creating a new session",
     ),
     local: bool = typer.Option(False, "--local", help="Run in local mode"),
-    games: Annotated[list[str] | None, typer.Option(
-        "--games",
-        help="Only run these games (space-separated list). Only supported in LOCAL mode.",
-    )] = None,   
+    games: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--games",
+            help="Only run these games (space-separated list). Only supported in LOCAL mode.",
+        ),
+    ] = None,
     experiment_description: str | None = typer.Option(
         None,
         "--experiment-description",
         "-d",
         help="Description for the experiment (logged to W&B notes)",
     ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Enable verbose logging"
-    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
     # Checkpoint options
     save_checkpoints: bool = typer.Option(
-        True,
-        "--save-checkpoints",
-        help="Save agent checkpoints during training"
+        True, "--save-checkpoints", help="Save agent checkpoints during training"
     ),
     load_checkpoint: bool = typer.Option(
-        False,
-        "--load-checkpoint",
-        help="Load from latest checkpoint if available"
+        False, "--load-checkpoint", help="Load from latest checkpoint if available"
     ),
     checkpoint_frequency: int = typer.Option(
-        10,
-        "--checkpoint-freq",
-        help="Save checkpoint every N steps (default: 10)"
+        10, "--checkpoint-freq", help="Save checkpoint every N steps (default: 10)"
     ),
     run_id: str | None = typer.Option(
-        None,
-        "--run-id",
-        help="Custom run ID for organising outputs (default: timestamp)"
+        None, "--run-id", help="Custom run ID for organising outputs (default: timestamp)"
     ),
     prev_run_id: str | None = typer.Option(
         None,
         "--prev-run-id",
         help="If set with --load-checkpoint, load the latest checkpoint from "
-             "game_logs/<game>/<prev_run_id>/checkpoints/ instead of the "
-             "current run's (empty) checkpoint dir. Used by autoresearch to "
-             "carry MACLA's learned procedures across iterations."
+        "game_logs/<game>/<prev_run_id>/checkpoints/ instead of the "
+        "current run's (empty) checkpoint dir. Used by autoresearch to "
+        "carry MACLA's learned procedures across iterations.",
     ),
 ):
     """Run evaluation for Orak 2025 games."""
@@ -98,16 +91,16 @@ def main(
     # Enforce that game selection is only supported in local mode
     if games is not None and not local:
         raise typer.BadParameter("--games can only be used together with --local")
-    
+
     # If no games specified in local mode, default to all games
     if local and games is None:
         games = list(GAME_SERVER_PORTS.keys())
-    
+
     setup_logging(verbose=verbose)
-    
+
     logger.info(f"Loading Hydra settings {config_name}...")
     settings = load_hydra_settings(config_name=config_name.value)
-    
+
     # Override W&B notes if provided
     if experiment_description:
         settings.wandb.notes = experiment_description
@@ -121,7 +114,6 @@ def main(
         if settings.star_craft and settings.star_craft.wandb:
             settings.star_craft.wandb.notes = experiment_description
         logger.info(f"Experiment description set: {experiment_description}")
-        
 
     # Note: weave is auto-initialized by wandb.init() per game project.
     # Do NOT call weave.init() globally — it overrides per-game initialization.
@@ -143,13 +135,15 @@ def main(
                 run_id = latest_run
                 logger.info(f"Auto-detected latest run: {latest_run}")
                 logger.info(f"Resuming Run ID: {run_id}")
-                logger.info(f"Looking for checkpoints in: {first_game_dir / latest_run / 'checkpoints'}")
+                logger.info(
+                    f"Looking for checkpoints in: {first_game_dir / latest_run / 'checkpoints'}"
+                )
 
     # Create run ID (timestamp-based if not provided)
     if run_id is None:
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         logger.info(f"Starting new run with ID: {run_id}")
-    
+
     settings.wandb.run_id = run_id
 
     # Initialize the centralized renderer
@@ -161,7 +155,7 @@ def main(
         selected_games = games if local else None
         renderer.event("Starting evaluation run ...")
         renderer.event(f"Settings: {settings.model_dump()}...")
-        
+
         runner = Runner(
             session_id=session_id,
             local=local,
@@ -174,7 +168,7 @@ def main(
             checkpoint_frequency=checkpoint_frequency,
             prev_run_id=prev_run_id,
         )
-        
+
         asyncio.run(runner.evaluate_all_games())
 
         # Show final summary with total score

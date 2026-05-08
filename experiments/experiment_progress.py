@@ -19,18 +19,16 @@ Usage:
     # Plot progress for a specific game
     python experiments/macla_progress.py plot --game super_mario
 """
+
 import json
-import sys
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
-import typer
-
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-
+import typer
 from autoresearch import normalize_score
+from plotly.subplots import make_subplots
 
 EXPERIMENTS_DIR = Path(__file__).parent
 
@@ -53,10 +51,19 @@ def _tag_dir(tag: str | None, config_name: str | None = None) -> Path:
     return d
 
 
-def log_experiment(game: str, score: float, steps: int, status: str, description: str,
-                   wandb_url: str = "", notes: str = "", game_score: float = 0.0,
-                   runtime_min: float = 0.0, tags: list[str] | None = None,
-                   config_name: str | None = None):
+def log_experiment(
+    game: str,
+    score: float,
+    steps: int,
+    status: str,
+    description: str,
+    wandb_url: str = "",
+    notes: str = "",
+    game_score: float = 0.0,
+    runtime_min: float = 0.0,
+    tags: list[str] | None = None,
+    config_name: str | None = None,
+):
     """Append an experiment result to experiments/<tag>[/<config_name>]/results.jsonl."""
     tag = tags[0] if tags else None
     experiments = load_results(tag=tag, config_name=config_name)
@@ -84,7 +91,9 @@ def log_experiment(game: str, score: float, steps: int, status: str, description
     with open(results_file, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
-    print(f"Logged to {results_file}: #{experiment_num} {game} score={score} [{status}] {description}")
+    print(
+        f"Logged to {results_file}: #{experiment_num} {game} score={score} [{status}] {description}"
+    )
 
 
 def load_results(tag: str | None = None, config_name: str | None = None) -> list[dict]:
@@ -121,7 +130,11 @@ def extract_run_results(run_id: str, games: list[str] | None = None) -> dict[str
         entries = [json.loads(l) for l in lines if l]
         last = entries[-1]
         # Count episodes (iteration resets to 1 at episode start)
-        episodes = sum(1 for i, e in enumerate(entries) if i > 0 and e["iteration"] <= entries[i - 1]["iteration"])
+        episodes = sum(
+            1
+            for i, e in enumerate(entries)
+            if i > 0 and e["iteration"] <= entries[i - 1]["iteration"]
+        )
         # Normalize to 0-100
         max_eval_raw = max(e["evaluation_score"] for e in entries)
         max_eval = normalize_score(game, max_eval_raw)
@@ -141,6 +154,7 @@ def _read_agent_models(games: list[str], config_type: str) -> dict[str, str]:
     which backend each dot was produced by.
     """
     import yaml as _yaml
+
     cfgs_root = Path(__file__).resolve().parent.parent / "configs"
     out: dict[str, str] = {}
     for g in games:
@@ -165,6 +179,7 @@ def _read_agent_metadata(games: list[str], config_type: str) -> str:
     Returns empty string if no config can be read.
     """
     import yaml as _yaml
+
     cfgs_root = Path(__file__).resolve().parent.parent / "configs"
     blocks = []
     for g in games:
@@ -185,8 +200,13 @@ def _read_agent_metadata(games: list[str], config_type: str) -> str:
         if cfg.get("max_tokens"):
             head_bits.append(f"max_tok={cfg['max_tokens']}")
         head = " · ".join(head_bits)
-        macla_keys = ["macla_theta_base", "macla_max_theta", "macla_min_theta",
-                      "macla_theta_decay", "macla_warmup_steps"]
+        macla_keys = [
+            "macla_theta_base",
+            "macla_max_theta",
+            "macla_min_theta",
+            "macla_theta_decay",
+            "macla_warmup_steps",
+        ]
         macla_bits = [f"{k.replace('macla_', '')}={cfg[k]}" for k in macla_keys if k in cfg]
         macla_line = ", ".join(macla_bits)
         blocks.append(
@@ -197,8 +217,12 @@ def _read_agent_metadata(games: list[str], config_type: str) -> str:
     return "<br>".join(blocks)
 
 
-def plot_progress(filter_game: str | None = None, tag: str | None = None,
-                  config_type: str | None = None, config_name: str | None = None):
+def plot_progress(
+    filter_game: str | None = None,
+    tag: str | None = None,
+    config_type: str | None = None,
+    config_name: str | None = None,
+):
     """Plot autoresearch-style progress chart per game using Plotly.
 
     Args:
@@ -212,7 +236,9 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
     results = load_results(tag=tag, config_name=config_name)
 
     title_suffix = f" — {config_name}" if config_name else ""
-    plot_title = f"{tag} Experiment Progress{title_suffix}" if tag else f"Experiment Progress{title_suffix}"
+    plot_title = (
+        f"{tag} Experiment Progress{title_suffix}" if tag else f"Experiment Progress{title_suffix}"
+    )
     if not results:
         print("No results yet. Use 'log' to add experiments.")
         return
@@ -232,10 +258,13 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
         total_runtime = sum(r.get("runtime_min", 0) for r in gr)
         game_title = g.replace("_", " ").title()
         runtime_str = f", {total_runtime:.0f}min total" if total_runtime else ""
-        subtitles.append(f"{game_title} — {n_exp} Experiments, {n_kept} Kept Improvements{runtime_str}")
+        subtitles.append(
+            f"{game_title} — {n_exp} Experiments, {n_kept} Kept Improvements{runtime_str}"
+        )
 
     fig = make_subplots(
-        rows=n_games, cols=1,
+        rows=n_games,
+        cols=1,
         subplot_titles=subtitles,
         vertical_spacing=0.12,
     )
@@ -282,16 +311,23 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
 
         model_for_game = game_models.get(game)
 
-        _SNAMES = {"DISCARD": "discarded", "KEEP": "kept", "BASELINE": "baseline",
-                    "RUNNING": "running", "EARLY_KILL": "killed early", "CRASH": "crashed"}
+        _SNAMES = {
+            "DISCARD": "discarded",
+            "KEEP": "kept",
+            "BASELINE": "baseline",
+            "RUNNING": "running",
+            "EARLY_KILL": "killed early",
+            "CRASH": "crashed",
+        }
 
         def _clean_label_text(desc, notes, game=""):
             """Strip note/machine prefix; show only this game's param changes."""
             import re as _re
-            m = _re.search(r'iter\s*(\d+)', desc or "")
+
+            m = _re.search(r"iter\s*(\d+)", desc or "")
             iter_n = f"iter {m.group(1)}" if m else ""
             # Get everything after "| iter N |"
-            after_iter = _re.sub(r'^.*?\|\s*iter\s*\d+\s*\|\s*', '', desc or "").strip()
+            after_iter = _re.sub(r"^.*?\|\s*iter\s*\d+\s*\|\s*", "", desc or "").strip()
             if after_iter == (desc or "").strip():
                 after_iter = ""
             # Try to extract params for this specific game only
@@ -300,19 +336,19 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
             params = ""
             if after_iter and game_short:
                 # Find this game's segment: "twenty: <stuff>" up to ";" or end
-                gm = _re.search(rf'{game_short}:\s*([^;]+)', after_iter)
+                gm = _re.search(rf"{game_short}:\s*([^;]+)", after_iter)
                 if gm:
                     params = gm.group(1).strip()
             if not params and after_iter:
                 # Fallback: show the whole thing (no per-game split found)
                 params = after_iter
             # Abbreviate verbose param names
-            params = _re.sub(r'macla_max_theta|max_theta', 'θ_max', params)
-            params = _re.sub(r'macla_min_theta|min_theta', 'θ_min', params)
-            params = _re.sub(r'macla_theta_base|theta_base', 'θ_base', params)
-            params = _re.sub(r'macla_warmup_steps?|warmup_steps?', 'wu', params)
-            params = _re.sub(r'macla_theta_decay|theta_decay', 'θ_decay', params)
-            params = _re.sub(r'param:\s*', '', params)  # strip "param: " prefix
+            params = _re.sub(r"macla_max_theta|max_theta", "θ_max", params)
+            params = _re.sub(r"macla_min_theta|min_theta", "θ_min", params)
+            params = _re.sub(r"macla_theta_base|theta_base", "θ_base", params)
+            params = _re.sub(r"macla_warmup_steps?|warmup_steps?", "wu", params)
+            params = _re.sub(r"macla_theta_decay|theta_decay", "θ_decay", params)
+            params = _re.sub(r"param:\s*", "", params)  # strip "param: " prefix
             if params.lower().strip() in ("no param changes", "no changes", "at boundary", ""):
                 params = ""
             iter_line = iter_n
@@ -324,12 +360,24 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
             if notes:
                 for sent in reversed([s.strip() for s in notes.split(".") if s.strip()]):
                     if "improved" in sent.lower():
-                        outcome = "↑ " + sent; break
+                        outcome = "↑ " + sent
+                        break
                     elif "below" in sent.lower():
-                        outcome = "↓ " + sent; break
+                        outcome = "↓ " + sent
+                        break
             return iter_line, outcome
 
-        def _label(exp_num, desc, notes, runtime=0, model=model_for_game, status="", score=0, steps=0, game_name=""):
+        def _label(
+            exp_num,
+            desc,
+            notes,
+            runtime=0,
+            model=model_for_game,
+            status="",
+            score=0,
+            steps=0,
+            game_name="",
+        ):
             """Label: E{n} · {runtime}min · {status} / iter N · params / outcome · eval."""
             head = f"<b>E{exp_num}</b>"
             if runtime:
@@ -350,33 +398,109 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
 
         # Plot markers (no text) + add annotations for labels
         status_config = {
-            "DISCARD": {"color": "#cccccc", "size": 10, "opacity": 0.7, "line_color": "#999", "symbol": "circle", "text_color": "#777"},
-            "KEEP": {"color": "#2ecc71", "size": 12, "opacity": 1.0, "line_color": "black", "symbol": "circle", "text_color": "#1a7a3a"},
-            "BASELINE": {"color": "#2ecc71", "size": 12, "opacity": 1.0, "line_color": "black", "symbol": "circle", "text_color": "#1a7a3a"},
-            "RUNNING": {"color": "#f39c12", "size": 10, "opacity": 1.0, "line_color": "#c27d0e", "symbol": "diamond", "text_color": "#c27d0e"},
-            "EARLY_KILL": {"color": "#e74c3c", "size": 10, "opacity": 0.8, "line_color": "#c0392b", "symbol": "x", "text_color": "#c0392b"},
-            "CRASH": {"color": "#e74c3c", "size": 10, "opacity": 0.8, "line_color": "#c0392b", "symbol": "x", "text_color": "#c0392b"},
+            "DISCARD": {
+                "color": "#cccccc",
+                "size": 10,
+                "opacity": 0.7,
+                "line_color": "#999",
+                "symbol": "circle",
+                "text_color": "#777",
+            },
+            "KEEP": {
+                "color": "#2ecc71",
+                "size": 12,
+                "opacity": 1.0,
+                "line_color": "black",
+                "symbol": "circle",
+                "text_color": "#1a7a3a",
+            },
+            "BASELINE": {
+                "color": "#2ecc71",
+                "size": 12,
+                "opacity": 1.0,
+                "line_color": "black",
+                "symbol": "circle",
+                "text_color": "#1a7a3a",
+            },
+            "RUNNING": {
+                "color": "#f39c12",
+                "size": 10,
+                "opacity": 1.0,
+                "line_color": "#c27d0e",
+                "symbol": "diamond",
+                "text_color": "#c27d0e",
+            },
+            "EARLY_KILL": {
+                "color": "#e74c3c",
+                "size": 10,
+                "opacity": 0.8,
+                "line_color": "#c0392b",
+                "symbol": "x",
+                "text_color": "#c0392b",
+            },
+            "CRASH": {
+                "color": "#e74c3c",
+                "size": 10,
+                "opacity": 0.8,
+                "line_color": "#c0392b",
+                "symbol": "x",
+                "text_color": "#c0392b",
+            },
         }
         legend_added = {"disc": False, "kept": False, "run": False, "kill": False}
 
-        for j, (x, y, s, en, d, n, u, gs, st, rt) in enumerate(zip(
-            xs, ys, statuses, exp_nums, descriptions, notes_list, wandb_urls, game_scores, steps_list, runtimes
-        )):
+        for j, (x, y, s, en, d, n, u, gs, st, rt) in enumerate(
+            zip(
+                xs,
+                ys,
+                statuses,
+                exp_nums,
+                descriptions,
+                notes_list,
+                wandb_urls,
+                game_scores,
+                steps_list,
+                runtimes,
+            )
+        ):
             cfg = status_config.get(s, status_config["DISCARD"])
-            legend_key = "kill" if s in ("EARLY_KILL", "CRASH") else ("disc" if s == "DISCARD" else ("run" if s == "RUNNING" else "kept"))
-            legend_name = {"disc": "Discarded", "kept": "Kept", "run": "Running", "kill": "Killed/Crashed"}[legend_key]
+            legend_key = (
+                "kill"
+                if s in ("EARLY_KILL", "CRASH")
+                else ("disc" if s == "DISCARD" else ("run" if s == "RUNNING" else "kept"))
+            )
+            legend_name = {
+                "disc": "Discarded",
+                "kept": "Kept",
+                "run": "Running",
+                "kill": "Killed/Crashed",
+            }[legend_key]
             show_legend = (i == 1) and not legend_added[legend_key]
             legend_added[legend_key] = True
 
             hover = _hover(d, u, n, gs, st, rt)
-            fig.add_trace(go.Scatter(
-                x=[x], y=[y], mode="markers",
-                marker=dict(color=cfg["color"], size=cfg["size"], opacity=cfg["opacity"],
-                            line=dict(width=1, color=cfg["line_color"]), symbol=cfg["symbol"]),
-                name=legend_name, legendgroup=legend_key, showlegend=show_legend,
-                customdata=[u],
-                hovertext=[hover], hovertemplate="%{hovertext}<br>Score: %{y}<extra>" + legend_name + "</extra>",
-            ), row=i, col=1)
+            fig.add_trace(
+                go.Scatter(
+                    x=[x],
+                    y=[y],
+                    mode="markers",
+                    marker=dict(
+                        color=cfg["color"],
+                        size=cfg["size"],
+                        opacity=cfg["opacity"],
+                        line=dict(width=1, color=cfg["line_color"]),
+                        symbol=cfg["symbol"],
+                    ),
+                    name=legend_name,
+                    legendgroup=legend_key,
+                    showlegend=show_legend,
+                    customdata=[u],
+                    hovertext=[hover],
+                    hovertemplate="%{hovertext}<br>Score: %{y}<extra>" + legend_name + "</extra>",
+                ),
+                row=i,
+                col=1,
+            )
 
             # Add annotation with full label text, alternating positions
             label = _label(en, d, n, rt, status=s, score=y, steps=st, game_name=game)
@@ -385,12 +509,22 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
             yref = f"y{i}" if i > 1 else "y"
             label_annotation_indices.append(len(fig.layout.annotations))
             fig.add_annotation(
-                x=x, y=y, xref=xref, yref=yref,
-                text=label, showarrow=True, arrowhead=2, arrowsize=0.8,
-                ax=40, ay=y_shift - (30 if j % 2 == 0 else -30),
+                x=x,
+                y=y,
+                xref=xref,
+                yref=yref,
+                text=label,
+                showarrow=True,
+                arrowhead=2,
+                arrowsize=0.8,
+                ax=40,
+                ay=y_shift - (30 if j % 2 == 0 else -30),
                 font=dict(size=8, color=cfg["text_color"]),
-                align="left", bgcolor="rgba(255,255,255,0.85)",
-                bordercolor=cfg["color"], borderwidth=1, borderpad=3,
+                align="left",
+                bgcolor="rgba(255,255,255,0.85)",
+                bordercolor=cfg["color"],
+                borderwidth=1,
+                borderpad=3,
             )
 
         # Running best line (step function through kept experiments)
@@ -404,17 +538,30 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
                 best_so_far = max(best_so_far, y)
                 running_best_x.append(x)
                 running_best_y.append(best_so_far)
-            fig.add_trace(go.Scatter(
-                x=running_best_x, y=running_best_y, mode="lines",
-                line=dict(color="#27ae60", width=2, shape="hv"),
-                name="Running best", legendgroup="best", showlegend=(i == 1),
-                hoverinfo="skip",
-            ), row=i, col=1)
+            fig.add_trace(
+                go.Scatter(
+                    x=running_best_x,
+                    y=running_best_y,
+                    mode="lines",
+                    line=dict(color="#27ae60", width=2, shape="hv"),
+                    name="Running best",
+                    legendgroup="best",
+                    showlegend=(i == 1),
+                    hoverinfo="skip",
+                ),
+                row=i,
+                col=1,
+            )
 
         max_y = max((r["evaluation_score"] for r in game_results), default=0)
         y_range = [0, max(max_y * 1.3, 5)] if max_y == 0 else None
-        fig.update_yaxes(title_text="Evaluation Score (higher is better)",
-                         rangemode="tozero", range=y_range, row=i, col=1)
+        fig.update_yaxes(
+            title_text="Evaluation Score (higher is better)",
+            rangemode="tozero",
+            range=y_range,
+            row=i,
+            col=1,
+        )
         # Only show tick marks for experiments that have data (skip gaps)
         fig.update_xaxes(title_text="Experiment #", tickvals=sorted(set(xs)), dtick=1, row=i, col=1)
 
@@ -430,7 +577,7 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
         "twenty_fourty_eight": "https://wandb.ai/chaleong/orak-2048",
     }
     # Update subplot titles to include formula
-    for idx, game in enumerate(games):
+    for _idx, game in enumerate(games):
         if game in EVAL_FORMULAS:
             # Subplot titles are stored as annotations by plotly
             for ann in fig.layout.annotations:
@@ -454,14 +601,22 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
 
     if metadata:
         fig.add_annotation(
-            xref="paper", yref="paper", x=0.0, y=1.0,
-            xanchor="left", yanchor="bottom",
-            text=metadata, showarrow=False, align="left",
+            xref="paper",
+            yref="paper",
+            x=0.0,
+            y=1.0,
+            xanchor="left",
+            yanchor="bottom",
+            text=metadata,
+            showarrow=False,
+            align="left",
             font=dict(size=11, color="#222"),
             bgcolor="rgba(245,247,250,0.95)",
             bordercolor="#dde",
-            borderwidth=1, borderpad=8,
-            xshift=0, yshift=40,
+            borderwidth=1,
+            borderpad=8,
+            xshift=0,
+            yshift=40,
         )
 
     # Save to experiments/<tag>/progress.html with a label-toggle switch
@@ -469,6 +624,7 @@ def plot_progress(filter_game: str | None = None, tag: str | None = None,
     output_path = out_dir / "progress.html"
     try:
         from autoresearch.charts import plotly_label_toggle
+
         post_script = plotly_label_toggle(
             label_indices=label_annotation_indices,
             n_traces=len(fig.data),
@@ -505,7 +661,9 @@ class Status(str, Enum):
 
 @app.command()
 def log(
-    game: str = typer.Option(..., help="Game name (e.g. super_mario, twenty_fourty_eight, pokemon_red)"),
+    game: str = typer.Option(
+        ..., help="Game name (e.g. super_mario, twenty_fourty_eight, pokemon_red)"
+    ),
     score: float = typer.Option(..., help="Evaluation score"),
     status: Status = typer.Option(..., help="Experiment outcome"),
     description: str = typer.Option(..., help="What changed in this experiment"),
@@ -514,16 +672,31 @@ def log(
     runtime_min: float = typer.Option(0.0, help="Runtime in minutes"),
     wandb_url: str = typer.Option("", help="W&B run URL"),
     notes: str = typer.Option("", help="Why kept/discarded, key observations, improvements"),
-    tag: str = typer.Option("macla", help="Experiment tag (e.g. macla, unified, baseline). Used for filtering plots."),
+    tag: str = typer.Option(
+        "macla", help="Experiment tag (e.g. macla, unified, baseline). Used for filtering plots."
+    ),
 ):
     """Log an experiment result."""
-    log_experiment(game, score, steps, status.value, description, wandb_url, notes, game_score, runtime_min, tags=[tag])
+    log_experiment(
+        game,
+        score,
+        steps,
+        status.value,
+        description,
+        wandb_url,
+        notes,
+        game_score,
+        runtime_min,
+        tags=[tag],
+    )
 
 
 @app.command()
 def plot(
     game: str | None = typer.Option(None, help="Filter to a specific game"),
-    tag: str | None = typer.Option(None, help="Filter by tag and use as title + filename (e.g. 'macla' → macla.html)"),
+    tag: str | None = typer.Option(
+        None, help="Filter by tag and use as title + filename (e.g. 'macla' → macla.html)"
+    ),
 ):
     """Plot progress chart. Use --tag to filter experiments and generate tag-specific output."""
     plot_progress(game, tag=tag)

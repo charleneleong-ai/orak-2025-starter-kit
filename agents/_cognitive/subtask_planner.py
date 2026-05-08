@@ -22,15 +22,15 @@ When NOT to use it:
 Cost: 1 extra LLM call per step (or per N steps if cached). Roughly 2× the
 per-step inference cost when used naively.
 """
+
 from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
-
 
 # Generic prompts — game-specific overrides go via the game adapter (see
 # ``LLMSubtaskPlanner.from_adapter`` below).
@@ -77,7 +77,7 @@ class SubtaskPlanner(ABC):
         goal: str,
         observation: str,
         history: str = "",
-        last_subtask: Optional[str] = None,
+        last_subtask: str | None = None,
     ) -> str:
         """Return the next subtask description (one short sentence)."""
 
@@ -118,7 +118,7 @@ class LLMSubtaskPlanner(SubtaskPlanner):
         self._user_prompt_template = user_prompt_template
         self._replan_every = max(1, replan_every)
         self._observation_chars = observation_chars
-        self._last_subtask: Optional[str] = None
+        self._last_subtask: str | None = None
         self._step_count: int = 0
         self._steps_since_plan: int = self._replan_every  # force first call to plan
         self._call_count: int = 0
@@ -134,7 +134,7 @@ class LLMSubtaskPlanner(SubtaskPlanner):
         goal: str,
         observation: str,
         history: str = "",
-        last_subtask: Optional[str] = None,
+        last_subtask: str | None = None,
     ) -> str:
         self._step_count += 1
         self._steps_since_plan += 1
@@ -172,7 +172,7 @@ class LLMSubtaskPlanner(SubtaskPlanner):
         # Fall back to cached subtask, or a generic one
         return cached or "Continue making progress toward the goal."
 
-    def _parse_subtask(self, text: str) -> Optional[str]:
+    def _parse_subtask(self, text: str) -> str | None:
         """Extract the ``### Subtask`` section content."""
         if not text:
             return None

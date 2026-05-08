@@ -6,6 +6,7 @@ Three strategies matching the three games:
 - DictFieldExtractor: Pokemon Red-style named field extraction
 - GeometricExtractor: 2048-style grid/density analysis
 """
+
 import re
 from typing import Any, Protocol
 
@@ -42,11 +43,13 @@ class RegexSpatialExtractor:
     def extract(self, observation: str | list) -> str:
         if isinstance(observation, list):
             observation = "\n".join(str(item) for item in observation)
-        # Get player position
-        player_x, player_y = 0, 0
+        # Get player position (only `player_x` is consumed downstream;
+        # `player_y` is parsed but unused — kept as a structural mirror of
+        # the regex's capture groups).
+        player_x, _player_y = 0, 0
         m = re.search(self.player_pattern, observation)
         if m:
-            player_x, player_y = int(m.group(1)), int(m.group(2))
+            player_x, _player_y = int(m.group(1)), int(m.group(2))
 
         context_parts = []
         for entity_def in self.entities:
@@ -71,7 +74,7 @@ class RegexSpatialExtractor:
             if "none" in positions_str.lower():
                 continue
 
-            for x_str, y_str in re.findall(r'\((\d+),\s*(\d+)(?:,\s*\d+)?\)', positions_str):
+            for x_str, _y_str in re.findall(r"\((\d+),\s*(\d+)(?:,\s*\d+)?\)", positions_str):
                 dx = int(x_str) - player_x
                 if dx < self.filter_behind or dx > self.filter_ahead:
                     continue
@@ -272,8 +275,7 @@ class StrategicGridExtractor:
         cells = [int(x) for x in re.findall(r"\d+", m.group(0))]
         if len(cells) != self.grid_size * self.grid_size:
             return None
-        return [cells[i * self.grid_size:(i + 1) * self.grid_size]
-                for i in range(self.grid_size)]
+        return [cells[i * self.grid_size : (i + 1) * self.grid_size] for i in range(self.grid_size)]
 
     def _strategic_signature(self, grid: list[list[int]]) -> dict[str, Any]:
         n = len(grid)
@@ -295,12 +297,18 @@ class StrategicGridExtractor:
             for r in range(n):
                 for c in range(n):
                     if grid[r][c] == max_val:
-                        if (r, c) == (0, 0): max_corner = "TL"
-                        elif (r, c) == (0, n - 1): max_corner = "TR"
-                        elif (r, c) == (n - 1, 0): max_corner = "BL"
-                        elif (r, c) == (n - 1, n - 1): max_corner = "BR"
-                        elif r in (0, n - 1) or c in (0, n - 1): max_corner = "edge"
-                        else: max_corner = "center"
+                        if (r, c) == (0, 0):
+                            max_corner = "TL"
+                        elif (r, c) == (0, n - 1):
+                            max_corner = "TR"
+                        elif (r, c) == (n - 1, 0):
+                            max_corner = "BL"
+                        elif (r, c) == (n - 1, n - 1):
+                            max_corner = "BR"
+                        elif r in (0, n - 1) or c in (0, n - 1):
+                            max_corner = "edge"
+                        else:
+                            max_corner = "center"
                         break
                 if max_corner != "none":
                     break

@@ -1,9 +1,6 @@
 """Game-specific adapter for Super Mario — used by UnifiedMaclaAgent."""
-import re
 
 from pydantic import BaseModel, Field
-
-from agents.super_mario.base import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 
 
 class MarioAction(BaseModel):
@@ -13,7 +10,9 @@ class MarioAction(BaseModel):
 
 VALID_ACTIONS = [f"Jump Level: {i}" for i in range(7)]
 DEFAULT_ACTION = "Jump Level: 0"
-DEFAULT_GOAL = "Move right to reach the goal, gain points and power-ups and avoid obstacles and enemies."
+DEFAULT_GOAL = (
+    "Move right to reach the goal, gain points and power-ups and avoid obstacles and enemies."
+)
 
 SCORE_PATTERN = r"[Ss]core:?\s*(\d+)"
 PROGRESS_PATTERN = r"x_pos:?\s*(\d+)"

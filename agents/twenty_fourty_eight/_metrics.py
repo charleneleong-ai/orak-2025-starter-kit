@@ -4,6 +4,7 @@ Mirrors `evaluation_utils.mcp_game_servers.twenty_fourty_eight.game.twenty_fourt
 Both layers must use the same formula so the chart's per-step score and
 the agent-side wandb dashboards agree.
 """
+
 import math
 
 # 2048 = 2^11, so log2(max_tile)/11 maps progress onto 0-1.
