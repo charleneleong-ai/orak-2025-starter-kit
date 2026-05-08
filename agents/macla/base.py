@@ -11,12 +11,12 @@ from abc import abstractmethod
 from collections import deque
 from typing import Any
 
+import wandb
 from langchain_google_vertexai import ChatVertexAI
 from langchain_openai import ChatOpenAI
 from loguru import logger
 from pydantic import BaseModel, PrivateAttr
 
-import wandb
 from agents.loop_detector import LoopDetector
 from agents.macla.macla_lib import LLMMACLAAgent
 from agents.macla.online_evaluator import OnlineAgentEvaluator

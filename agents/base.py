@@ -3,11 +3,11 @@ import os
 import traceback
 from typing import Any, ClassVar
 
+import wandb
 import weave
 from loguru import logger
 from pydantic import PrivateAttr
 
-import wandb
 from agents._harness import (
     StepRecord,
     TrajectoryWriter,

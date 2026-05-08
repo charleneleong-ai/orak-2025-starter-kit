@@ -123,6 +123,25 @@ extend-exclude = [
     "**/_pb2_grpc.py",
 ]
 
+[tool.ruff.lint.isort]
+# Declare project-internal packages explicitly so ruff classifies imports
+# the same way in CI as it does locally. Without this:
+# - Anything in site-packages locally but absent in CI shifts groups
+# - Runtime-created top-level dirs (e.g. wandb/, game_logs/) trick ruff's
+#   heuristic classifier into treating their imports as first-party
+known-first-party = [
+    "agents",
+    "config",
+    "configs",
+    "evaluation_utils",
+    "experiments",
+    "tests",
+]
+# Pin third-party packages whose classification flickers based on whether
+# a same-named dir exists in the working tree (wandb writes ./wandb/ at
+# runtime; weave occasionally drops local dirs too).
+known-third-party = ["wandb", "weave", "loguru", "pydantic"]
+
 [tool.ruff.lint]
 # E/F/W = pyflakes + pycodestyle, I = isort, B = bugbear, UP = pyupgrade
 select = ["E", "F", "W", "I", "B", "UP"]
