@@ -15,6 +15,7 @@ Usage:
     # Log results from a completed run
     python experiments/autoresearch.py log-run --run-id 20260422_213143
 """
+
 import json
 import os
 import re
@@ -34,6 +35,7 @@ if str(SCRIPT_DIR) in sys.path:
     sys.path.remove(str(SCRIPT_DIR))
 
 from autoresearch import IterPlan, SweepRunner  # noqa: E402
+
 # Post-iter retrospective hook (autoresearch >= 0.8.0). Detectors run after each
 # iter writes its results.jsonl row and surface failure-mode findings into the
 # next iter's description (warn) or stop the sweep (block). See PR #28 v6 audit
@@ -49,9 +51,9 @@ from autoresearch.retrospective import (  # noqa: E402
 
 # Allow running as both `python experiments/autoresearch.py` and `python -m experiments.autoresearch`
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from autoresearch import normalize_score
+from autoresearch import normalize_score  # noqa: E402
 
-from experiments.experiment_progress import (
+from experiments.experiment_progress import (  # noqa: E402
     ALL_GAMES,
     GAME_LOG_DIR,
     extract_run_results,
@@ -137,7 +139,9 @@ def analyze_trajectory(run_id: str, game: str) -> dict:
     current_max = 0
     for i, e in enumerate(entries):
         current_max = max(current_max, e.get("evaluation_score", 0))
-        if e.get("result", {}).get("is_finished") or (i > 0 and e["iteration"] <= entries[i - 1]["iteration"]):
+        if e.get("result", {}).get("is_finished") or (
+            i > 0 and e["iteration"] <= entries[i - 1]["iteration"]
+        ):
             episode_scores.append(current_max)
             current_max = 0
     if current_max > 0:
@@ -242,7 +246,9 @@ def _analyze_2048(entries: list[dict], analysis: dict):
     if total_dir > 0:
         max_dir_pct = max(direction_counts.values()) / total_dir
         analysis["action_imbalance"] = max_dir_pct > 0.4
-        analysis["direction_balance"] = {k: round(v / total_dir, 2) for k, v in direction_counts.items()}
+        analysis["direction_balance"] = {
+            k: round(v / total_dir, 2) for k, v in direction_counts.items()
+        }
     else:
         analysis["action_imbalance"] = False
 
@@ -264,47 +270,55 @@ def propose_changes(analysis: dict) -> list[dict]:
     # If procedures are learned but never refined (not enough data),
     # lower n_min_s/n_min_f so refinement kicks in faster
     if episodes >= 3 and analysis.get("score_plateau"):
-        changes.append({
-            "type": "param",
-            "target": "macla_n_min_s",
-            "action": "decrease",
-            "step": 1,
-            "min": 1,
-            "reason": f"Score plateau {episodes} eps — refine procedures faster",
-        })
-        changes.append({
-            "type": "param",
-            "target": "macla_n_min_f",
-            "action": "decrease",
-            "step": 1,
-            "min": 1,
-            "reason": f"Score plateau {episodes} eps — need fewer failures to refine",
-        })
+        changes.append(
+            {
+                "type": "param",
+                "target": "macla_n_min_s",
+                "action": "decrease",
+                "step": 1,
+                "min": 1,
+                "reason": f"Score plateau {episodes} eps — refine procedures faster",
+            }
+        )
+        changes.append(
+            {
+                "type": "param",
+                "target": "macla_n_min_f",
+                "action": "decrease",
+                "step": 1,
+                "min": 1,
+                "reason": f"Score plateau {episodes} eps — need fewer failures to refine",
+            }
+        )
 
     # ── Theta decay ────────────────────────────────────────────────
     # If procedures exist but score doesn't improve, decay faster
     # so agent explores new procedure/fallback combinations
     if episodes >= 5 and analysis.get("score_plateau"):
-        changes.append({
-            "type": "param",
-            "target": "macla_theta_decay",
-            "action": "increase",
-            "step": 0.001,
-            "max": 0.01,
-            "reason": "Stagnation — decay theta faster for exploration",
-        })
+        changes.append(
+            {
+                "type": "param",
+                "target": "macla_theta_decay",
+                "action": "increase",
+                "step": 0.001,
+                "max": 0.01,
+                "reason": "Stagnation — decay theta faster for exploration",
+            }
+        )
 
     # ── Temperature ────────────────────────────────────────────────
     # Action repetition signals LLM is too deterministic
     if analysis.get("repeated_actions") and analysis["top_action_pct"] > 0.6:
-        changes.append({
-            "type": "param",
-            "target": "temperature",
-            "action": "increase",
-            "step": 0.1,
-            "max": 1.5,
-            "reason": f"{analysis['top_action']} at {analysis['top_action_pct']:.0%} — increase diversity",
-        })
+        changes.append(
+            {
+                "type": "param",
+                "target": "temperature",
+                "action": "increase",
+                "step": 0.1,
+                "max": 1.5,
+                "reason": f"{analysis['top_action']} at {analysis['top_action_pct']:.0%} — increase diversity",
+            }
+        )
 
     # ── Game-specific structural changes ───────────────────────────
 
@@ -314,58 +328,68 @@ def propose_changes(analysis: dict) -> list[dict]:
             deaths = analysis["failure_zone_deaths"]
             total = analysis.get("failure_zone_total_deaths", deaths)
             if deaths / max(total, 1) > 0.3:
-                changes.append({
-                    "type": "param",
-                    "target": "macla_max_theta",
-                    "action": "decrease",
-                    "step": 0.03,
-                    "min": 0.10,
-                    "reason": f"Deaths at {analysis['failure_zone']} ({deaths}/{total}) — tighten procedure selection",
-                })
+                changes.append(
+                    {
+                        "type": "param",
+                        "target": "macla_max_theta",
+                        "action": "decrease",
+                        "step": 0.03,
+                        "min": 0.10,
+                        "reason": f"Deaths at {analysis['failure_zone']} ({deaths}/{total}) — tighten procedure selection",
+                    }
+                )
 
     elif game == "twenty_fourty_eight":
         # Action imbalance → increase theta_base to force more fallback diversity
         if analysis.get("action_imbalance"):
-            changes.append({
-                "type": "param",
-                "target": "macla_theta_base",
-                "action": "increase",
-                "step": 0.05,
-                "max": 0.45,
-                "reason": f"Action imbalance {analysis.get('direction_balance', {})} — more fallback for diversity",
-            })
+            changes.append(
+                {
+                    "type": "param",
+                    "target": "macla_theta_base",
+                    "action": "increase",
+                    "step": 0.05,
+                    "max": 0.45,
+                    "reason": f"Action imbalance {analysis.get('direction_balance', {})} — more fallback for diversity",
+                }
+            )
         # Low max tile → faster theta decay to let procedures develop
         if analysis.get("max_tile", 0) < 128 and total_steps > 50:
-            changes.append({
-                "type": "param",
-                "target": "macla_theta_decay",
-                "action": "increase",
-                "step": 0.001,
-                "max": 0.008,
-                "reason": f"Max tile {analysis.get('max_tile', 0)} — faster procedure activation",
-            })
+            changes.append(
+                {
+                    "type": "param",
+                    "target": "macla_theta_decay",
+                    "action": "increase",
+                    "step": 0.001,
+                    "max": 0.008,
+                    "reason": f"Max tile {analysis.get('max_tile', 0)} — faster procedure activation",
+                }
+            )
 
     elif game == "pokemon_red":
         # Map stagnation → lower warmup so procedures activate sooner
         if analysis.get("map_stuck"):
-            changes.append({
-                "type": "param",
-                "target": "macla_warmup_steps",
-                "action": "decrease",
-                "step": 3,
-                "min": 0,
-                "reason": f"Stuck on {analysis.get('map_count', 0)} maps — reduce warmup",
-            })
+            changes.append(
+                {
+                    "type": "param",
+                    "target": "macla_warmup_steps",
+                    "action": "decrease",
+                    "step": 3,
+                    "min": 0,
+                    "reason": f"Stuck on {analysis.get('map_count', 0)} maps — reduce warmup",
+                }
+            )
         # No flags → increase theta base (more LLM fallback, less bad procedures)
         if analysis.get("max_flags", 0) <= 1 and total_steps > 100:
-            changes.append({
-                "type": "param",
-                "target": "macla_theta_base",
-                "action": "increase",
-                "step": 0.05,
-                "max": 0.50,
-                "reason": f"Only {analysis.get('max_flags', 0)} flags — prefer LLM fallback",
-            })
+            changes.append(
+                {
+                    "type": "param",
+                    "target": "macla_theta_base",
+                    "action": "increase",
+                    "step": 0.05,
+                    "max": 0.50,
+                    "reason": f"Only {analysis.get('max_flags', 0)} flags — prefer LLM fallback",
+                }
+            )
 
     return changes
 
@@ -414,7 +438,7 @@ def _apply_prompt_change(game: str, change: dict) -> bool:
         match = re.search(pattern, content, re.DOTALL)
 
     if match:
-        new_content = content[:match.end(2)] + text + content[match.end(2):]
+        new_content = content[: match.end(2)] + text + content[match.end(2) :]
         adapter_path.write_text(new_content)
         print(f"  [APPLIED] {target} += '{text[:60]}...'")
         return True
@@ -471,8 +495,8 @@ PARAM_BOUNDS = {
         # best at iter 6 hit 3 of 4 OLD ceilings); pushing max_theta further
         # up gives the search room to find LLM-heavy variants.
         "macla_theta_base": (0.20, 0.50),
-        "macla_max_theta":  (0.40, 0.75),
-        "macla_min_theta":  (0.08, 0.25),
+        "macla_max_theta": (0.40, 0.75),
+        "macla_min_theta": (0.08, 0.25),
         "macla_warmup_steps": (5, 15),
     },
     "pokemon_red": {
@@ -542,7 +566,9 @@ def get_current_params(game: str, config_type: str = "unified_macla") -> dict[st
     return {k: v for k, v in config.items() if k.startswith("macla_")}
 
 
-def propose_next_params(game: str, results: list[dict], config_type: str = "unified_macla") -> dict[str, float]:
+def propose_next_params(
+    game: str, results: list[dict], config_type: str = "unified_macla"
+) -> dict[str, float]:
     """Propose next theta params for a game based on experiment history.
 
     Strategy: look at last 2 experiments for this game.
@@ -593,18 +619,18 @@ def propose_next_params(game: str, results: list[dict], config_type: str = "unif
 # fine. Default applies to games not explicitly listed.
 TRIAGE_SCORE_PLATEAU_STEPS_PER_GAME = {"pokemon_red": 200}
 TRIAGE_SCORE_PLATEAU_STEPS_DEFAULT = 80
-TRIAGE_SCORE_PLATEAU_STEPS = 80    # Kept as fallback for code paths that don't pass game
-TRIAGE_NO_LEARN_EPISODES = 8       # Kill if no episode score improvement for N episodes.
-                                   # Bumped 5 -> 8 after iter 4 of PR #20 sweep
-                                   # (wandb run https://wandb.ai/chaleong/orak-super-mario/runs/20260427_174648_orak-super-mario):
-                                   # super_mario set a new best of 51.87% in episode 1,
-                                   # then was killed in episodes 2-6 before MACLA's
-                                   # procedure-learning could compound — even though
-                                   # the iter was healthy. 5 was too tight; 8 gives
-                                   # one-shot bests room to consolidate.
-TRIAGE_BASELINE_FACTOR = 0.5       # Kill if max_eval < baseline * factor after 100 steps
-TRIAGE_POLL_INTERVAL = 5           # Seconds between game_states.jsonl checks
-ITER_TIMEOUT_MIN = 30              # Hard wall-clock cap per iteration; SIGINT subprocess if exceeded
+TRIAGE_SCORE_PLATEAU_STEPS = 80  # Kept as fallback for code paths that don't pass game
+TRIAGE_NO_LEARN_EPISODES = 8  # Kill if no episode score improvement for N episodes.
+# Bumped 5 -> 8 after iter 4 of PR #20 sweep
+# (wandb run https://wandb.ai/chaleong/orak-super-mario/runs/20260427_174648_orak-super-mario):
+# super_mario set a new best of 51.87% in episode 1,
+# then was killed in episodes 2-6 before MACLA's
+# procedure-learning could compound — even though
+# the iter was healthy. 5 was too tight; 8 gives
+# one-shot bests room to consolidate.
+TRIAGE_BASELINE_FACTOR = 0.5  # Kill if max_eval < baseline * factor after 100 steps
+TRIAGE_POLL_INTERVAL = 5  # Seconds between game_states.jsonl checks
+ITER_TIMEOUT_MIN = 30  # Hard wall-clock cap per iteration; SIGINT subprocess if exceeded
 
 
 def _find_run_id(games: list[str]) -> str:
@@ -675,7 +701,9 @@ def _triage_check(
             episode_scores.append(cur_max)
 
         # Triage 1: Score plateau — max eval unchanged for N steps (per-game)
-        plateau_steps = TRIAGE_SCORE_PLATEAU_STEPS_PER_GAME.get(game, TRIAGE_SCORE_PLATEAU_STEPS_DEFAULT)
+        plateau_steps = TRIAGE_SCORE_PLATEAU_STEPS_PER_GAME.get(
+            game, TRIAGE_SCORE_PLATEAU_STEPS_DEFAULT
+        )
         if total >= plateau_steps:
             recent = evals[-plateau_steps:]
             if max(recent) == min(recent):
@@ -684,7 +712,11 @@ def _triage_check(
         # Triage 2: No episode improvement for N episodes
         if len(episode_scores) >= TRIAGE_NO_LEARN_EPISODES:
             last_n = episode_scores[-TRIAGE_NO_LEARN_EPISODES:]
-            best_before = max(episode_scores[:-TRIAGE_NO_LEARN_EPISODES]) if len(episode_scores) > TRIAGE_NO_LEARN_EPISODES else 0
+            best_before = (
+                max(episode_scores[:-TRIAGE_NO_LEARN_EPISODES])
+                if len(episode_scores) > TRIAGE_NO_LEARN_EPISODES
+                else 0
+            )
             if max(last_n) <= best_before:
                 return f"{game}: no improvement for {TRIAGE_NO_LEARN_EPISODES} episodes (best={normalize_score(game, best_before):.2f}%)"
 
@@ -696,7 +728,9 @@ def _triage_check(
     return None
 
 
-def _relabel_last_as_early_kill(tag: str, kill_reason: str, games: list[str], triggered_game: str | None = None):
+def _relabel_last_as_early_kill(
+    tag: str, kill_reason: str, games: list[str], triggered_game: str | None = None
+):
     """Patch the triggering game's result row to EARLY_KILL.
 
     Only relabels the game that triggered the triage kill, NOT all games.
@@ -721,19 +755,25 @@ def _relabel_last_as_early_kill(tag: str, kill_reason: str, games: list[str], tr
             lines[idx] = json.dumps(entry)
             patched += 1
     results_file.write_text("\n".join(lines) + "\n")
-    print(f"  Relabelled {patched} entr{'y' if patched==1 else 'ies'} as EARLY_KILL ({', '.join(games_to_kill)}): {kill_reason}")
+    print(
+        f"  Relabelled {patched} entr{'y' if patched == 1 else 'ies'} as EARLY_KILL ({', '.join(games_to_kill)}): {kill_reason}"
+    )
 
 
 def _write_sidecar(tag: str, run_id: str, description: str, games: list[str]):
     """Write current_run.json sidecar for live chart updates."""
     sidecar_dir = ROOT / "experiments" / tag
     sidecar_dir.mkdir(parents=True, exist_ok=True)
-    (sidecar_dir / "current_run.json").write_text(json.dumps({
-        "run_id": run_id,
-        "started_at": datetime.now().isoformat(),
-        "games": games,
-        "description": description,
-    }))
+    (sidecar_dir / "current_run.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "started_at": datetime.now().isoformat(),
+                "games": games,
+                "description": description,
+            }
+        )
+    )
 
 
 def _clear_sidecar(tag: str):
@@ -756,7 +796,9 @@ def _cleanup_threads():
         try:
             result = subprocess.run(
                 ["pgrep", "-f", pat],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             for pid_str in result.stdout.strip().split("\n"):
                 if not pid_str.strip():
@@ -1033,16 +1075,11 @@ class OrakPlanner:
                 print(f"  [{f.severity.upper()}] [{f.detector}] {f.summary}")
             blocks = filter_by_severity(findings, "block")
             if blocks:
-                print(
-                    f"\nEarly stop: retrospective produced {len(blocks)} "
-                    f"block-level finding(s)."
-                )
+                print(f"\nEarly stop: retrospective produced {len(blocks)} block-level finding(s).")
                 self.state.stop_after_iter = True
                 return False
             for f in filter_by_severity(findings, "warn"):
-                self.state.pending_warns.append(
-                    f"{f.detector}={f.suggested_action}"
-                )
+                self.state.pending_warns.append(f"{f.detector}={f.suggested_action}")
 
         if any_improved:
             self.no_improve_streak = 0
@@ -1053,10 +1090,7 @@ class OrakPlanner:
                 f"(streak={self.no_improve_streak}/{self.patience})."
             )
             if self.patience > 0 and self.no_improve_streak >= self.patience:
-                print(
-                    f"\nEarly stop: no improvement for "
-                    f"{self.patience} consecutive iterations."
-                )
+                print(f"\nEarly stop: no improvement for {self.patience} consecutive iterations.")
                 return False
         return True
 
@@ -1117,9 +1151,7 @@ class OrakPlanner:
             if self.state.pending_warns:
                 # Surface previous iter's retrospective warnings into this iter's
                 # description so reviewers see them inline on the chart / PR.
-                desc_parts.append(
-                    "retrospective: " + "; ".join(self.state.pending_warns[:3])
-                )
+                desc_parts.append("retrospective: " + "; ".join(self.state.pending_warns[:3]))
                 self.state.pending_warns = []
             description = " | ".join(desc_parts)
             print(f"\nDescription: {description}")
@@ -1213,7 +1245,9 @@ class OrakTriageMonitor:
 
     def teardown(self) -> None:
         _cleanup_threads()
-        self.state.last_runtime_min = (time.time() - self.started_at) / 60 if self.started_at else 0.0
+        self.state.last_runtime_min = (
+            (time.time() - self.started_at) / 60 if self.started_at else 0.0
+        )
 
 
 class OrakResultExtractor:
@@ -1247,9 +1281,7 @@ class OrakResultExtractor:
             and self.state.last_kill_reason is None
             and self.state.last_runtime_min >= ITER_TIMEOUT_MIN * 0.95
         ):
-            self.state.last_kill_reason = (
-                f"iteration timeout ({ITER_TIMEOUT_MIN}min wall-clock)"
-            )
+            self.state.last_kill_reason = f"iteration timeout ({ITER_TIMEOUT_MIN}min wall-clock)"
             # Wall-clock timeouts aren't game-specific; leave triggered_game
             # None so all games in the iter get relabelled as EARLY_KILL.
             self.state.last_triggered_game = None
@@ -1272,7 +1304,9 @@ class OrakResultExtractor:
             config_name=self.config_name,
         )
         self.state.last_run_results = run_results
-        self.state.last_run_failed = exit_code not in (0, None) and self.state.last_kill_reason is None
+        self.state.last_run_failed = (
+            exit_code not in (0, None) and self.state.last_kill_reason is None
+        )
 
         print("\n--- Trajectory Analysis ---")
         change_summaries = []
@@ -1462,10 +1496,7 @@ def run(
     )
     result = runner.run()
     elapsed_total = (time.time() - sweep_start) / 60
-    print(
-        f"\nAutoresearch complete after {result.iterations} iterations "
-        f"({elapsed_total:.1f}min)"
-    )
+    print(f"\nAutoresearch complete after {result.iterations} iterations ({elapsed_total:.1f}min)")
     plot_progress(tag=tag, config_type=config_type, config_name=cfg)
 
 
@@ -1482,9 +1513,9 @@ def analyze(
             print(f"\n{game}: {analysis['error']}")
             continue
 
-        print(f"\n{'='*50}")
+        print(f"\n{'=' * 50}")
         print(f"  {game.upper()}")
-        print(f"{'='*50}")
+        print(f"{'=' * 50}")
         print(f"  Steps: {analysis['total_steps']}, Episodes: {analysis['episodes']}")
         print(f"  Max eval: {analysis['max_eval']:.2f}")
         print(f"  Top action: {analysis['top_action']} ({analysis['top_action_pct']:.0%})")
@@ -1494,7 +1525,9 @@ def analyze(
 
         if game == "super_mario":
             if analysis.get("failure_zone"):
-                print(f"  Death cluster: {analysis['failure_zone']} ({analysis['failure_zone_deaths']}/{analysis['failure_zone_total_deaths']} deaths)")
+                print(
+                    f"  Death cluster: {analysis['failure_zone']} ({analysis['failure_zone_deaths']}/{analysis['failure_zone_total_deaths']} deaths)"
+                )
             if analysis.get("death_positions"):
                 print(f"  Death positions: {analysis['death_positions'][:10]}...")
 

@@ -5,11 +5,12 @@ Usage:
     result, usage = safe_structured_invoke(llm, messages, GameAction)
     # Works with Gemini, OpenAI (native), and Ollama/vLLM (JSON fallback)
 """
+
 import json
 import re
 from typing import Any
 
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage
 from loguru import logger
 from pydantic import BaseModel
 
@@ -49,8 +50,7 @@ def _extract_usage(raw: Any) -> dict | None:
                 "tokens_completion": token_usage.get("completion_tokens", 0),
                 "tokens_total": token_usage.get(
                     "total_tokens",
-                    token_usage.get("prompt_tokens", 0)
-                    + token_usage.get("completion_tokens", 0),
+                    token_usage.get("prompt_tokens", 0) + token_usage.get("completion_tokens", 0),
                 ),
                 "raw_usage_metadata": token_usage,
             }
@@ -147,6 +147,4 @@ def _parse_json_response(content: str, schema: type[BaseModel]) -> BaseModel:
         except Exception:
             pass
 
-    raise ValueError(
-        f"Could not parse {schema.__name__} from LLM response:\n{content[:500]}"
-    )
+    raise ValueError(f"Could not parse {schema.__name__} from LLM response:\n{content[:500]}")

@@ -20,11 +20,11 @@ agent yaml `reward_shaping:` block, e.g.:
 Missing keys fall back to the per-game DEFAULT_SHAPING entry. Useful for
 ablation sweeps over shaping values without editing source.
 """
+
 import re
 from collections import deque
 
 from loguru import logger
-
 
 # ── Shaping defaults ────────────────────────────────────────
 
@@ -79,6 +79,7 @@ DEFAULT_SHAPING: dict[str, dict[str, float]] = {
 
 # ── Regex helpers (stateless) ───────────────────────────────
 
+
 def _find_float(pattern: str, text: str) -> float | None:
     m = re.search(pattern, text, re.IGNORECASE)
     return float(m.group(1)) if m else None
@@ -95,6 +96,7 @@ def _find_str(pattern: str, text: str) -> str | None:
 
 
 # ── Shaper protocol ─────────────────────────────────────────
+
 
 class RewardShaper:
     """Base class — game shapers extract metrics and compute rewards.
@@ -124,6 +126,7 @@ class RewardShaper:
 
 
 # ── Mario ───────────────────────────────────────────────────
+
 
 class MarioShaper(RewardShaper):
     def extract_metrics(self, state: str) -> dict:
@@ -162,6 +165,7 @@ class MarioShaper(RewardShaper):
 
 # ── 2048 ────────────────────────────────────────────────────
 
+
 class TwentyFortyEightShaper(RewardShaper):
     _BOARD_RE = re.compile(
         r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]"
@@ -176,7 +180,9 @@ class TwentyFortyEightShaper(RewardShaper):
     def extract_metrics(self, state: str) -> dict:
         score = _find_float(r"[Ss]core:?\s*(\d+\.?\d*)", state) or 0
         max_tile = _find_int(r"[Mm]ax.?[Tt]ile:?\s*(\d+)", state) or 0
-        empty_cells = state.count(", 0,") + state.count("[0,") + state.count(", 0]") + state.count("[0]")
+        empty_cells = (
+            state.count(", 0,") + state.count("[0,") + state.count(", 0]") + state.count("[0]")
+        )
         return {
             "score": score,
             "max_tile": max_tile,
@@ -243,6 +249,7 @@ class TwentyFortyEightShaper(RewardShaper):
 
 # ── Pokemon Red ─────────────────────────────────────────────
 
+
 class PokemonShaper(RewardShaper):
     def __init__(self, shaping: dict):
         super().__init__(shaping)
@@ -296,6 +303,7 @@ class PokemonShaper(RewardShaper):
 
 # ── Generic fallback ────────────────────────────────────────
 
+
 class GenericShaper(RewardShaper):
     def extract_metrics(self, state: str) -> dict:
         return {"score": _find_float(r"[Ss]core:?\s*(\d+\.?\d*)", state) or 0}
@@ -343,7 +351,9 @@ class OnlineAgentEvaluator:
 
         self._prev_metrics = cur_metrics
         self._step_rewards.append(reward)
-        logger.debug(f"[Evaluator] {self._game_name} shaped_reward={reward:.3f} metrics={cur_metrics}")
+        logger.debug(
+            f"[Evaluator] {self._game_name} shaped_reward={reward:.3f} metrics={cur_metrics}"
+        )
         return reward
 
     def mean_reward(self) -> float:

@@ -15,12 +15,14 @@ Embedding backends, in priority order:
    degrades semantic similarity to exact-string overlap but keeps dedup,
    retrieval lifecycle, and stats working without crashing.
 """
+
 from __future__ import annotations
 
 import hashlib
 import os
 import time
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import openai
@@ -52,7 +54,7 @@ class VectorMemoryProvider(MemoryProvider):
 
     def __init__(
         self,
-        embedding_fn: Optional[Callable[[str], np.ndarray]] = None,
+        embedding_fn: Callable[[str], np.ndarray] | None = None,
         *,
         embedding_model: str = "text-embedding-3-small",
         local_model: str = "sentence-transformers/all-MiniLM-L6-v2",
@@ -96,8 +98,8 @@ class VectorMemoryProvider(MemoryProvider):
         self,
         query: str,
         *,
-        top_k: Optional[int] = None,
-        threshold: Optional[float] = None,
+        top_k: int | None = None,
+        threshold: float | None = None,
     ) -> str:
         """Retrieve top matching memories for ``query`` and format for injection."""
         if not query or not query.strip():
@@ -179,9 +181,7 @@ class VectorMemoryProvider(MemoryProvider):
                         f"{self._local_model_name!r} (first call only)"
                     )
                     self._local_model = SentenceTransformer(self._local_model_name)
-                vec = self._local_model.encode(
-                    text, convert_to_numpy=True, show_progress_bar=False
-                )
+                vec = self._local_model.encode(text, convert_to_numpy=True, show_progress_bar=False)
                 self._backend_in_use = "local"
                 return np.asarray(vec)
             except Exception as e:
@@ -216,15 +216,17 @@ class VectorMemoryProvider(MemoryProvider):
 
     def _add_memory(self, content: str, metadata: dict[str, Any] | None) -> None:
         embedding = self._embed(content)
-        self._memories.append({
-            "content": content,
-            "embedding": embedding,
-            "metadata": metadata or {},
-            "timestamp": time.time(),
-        })
+        self._memories.append(
+            {
+                "content": content,
+                "embedding": embedding,
+                "metadata": metadata or {},
+                "timestamp": time.time(),
+            }
+        )
         self._stats["adds"] += 1
         if len(self._memories) > self._max_memories:
-            self._memories = self._memories[-self._max_memories:]
+            self._memories = self._memories[-self._max_memories :]
 
     def _retrieve_similar(
         self, query: str, *, top_k: int, threshold: float
@@ -237,11 +239,13 @@ class VectorMemoryProvider(MemoryProvider):
         for m in self._memories:
             sim = self._cosine(q, m["embedding"])
             if sim >= threshold:
-                hits.append({
-                    "content": m["content"],
-                    "metadata": m["metadata"],
-                    "similarity": sim,
-                })
+                hits.append(
+                    {
+                        "content": m["content"],
+                        "metadata": m["metadata"],
+                        "similarity": sim,
+                    }
+                )
         if hits:
             self._stats["hits"] += 1
         hits.sort(key=lambda x: x["similarity"], reverse=True)

@@ -11,6 +11,7 @@ We don't construct a full ``PokemonRedEnv`` (constructor starts a PyBoy
 thread). Instead we drive ``evaluate`` directly against a minimal
 state-dict harness.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -78,33 +79,21 @@ class _PyBoyRunner:
 
 
 _runner_stub.PyBoyRunner = _PyBoyRunner
-sys.modules.setdefault(
-    "mcp_game_servers.pokemon_red.game.pyboy_runner", _runner_stub
-)
+sys.modules.setdefault("mcp_game_servers.pokemon_red.game.pyboy_runner", _runner_stub)
 
 _utils_stub = types.ModuleType("mcp_game_servers.pokemon_red.game.utils")
 _utils_stub.__path__ = []
 sys.modules.setdefault("mcp_game_servers.pokemon_red.game.utils", _utils_stub)
-_tools_stub = types.ModuleType(
-    "mcp_game_servers.pokemon_red.game.utils.pokemon_tools"
-)
+_tools_stub = types.ModuleType("mcp_game_servers.pokemon_red.game.utils.pokemon_tools")
 _tools_stub.PokemonToolset = object
 _tools_stub.execute_action_response = lambda *a, **kw: None
-sys.modules.setdefault(
-    "mcp_game_servers.pokemon_red.game.utils.pokemon_tools", _tools_stub
-)
-_map_utils_stub = types.ModuleType(
-    "mcp_game_servers.pokemon_red.game.utils.map_utils"
-)
+sys.modules.setdefault("mcp_game_servers.pokemon_red.game.utils.pokemon_tools", _tools_stub)
+_map_utils_stub = types.ModuleType("mcp_game_servers.pokemon_red.game.utils.map_utils")
 _map_utils_stub.construct_init_map = lambda *a, **kw: ""
 _map_utils_stub.refine_current_map = lambda *a, **kw: ""
-sys.modules.setdefault(
-    "mcp_game_servers.pokemon_red.game.utils.map_utils", _map_utils_stub
-)
+sys.modules.setdefault("mcp_game_servers.pokemon_red.game.utils.map_utils", _map_utils_stub)
 
-_ENV_PATH = (
-    _REPO / "evaluation_utils/mcp_game_servers/pokemon_red/game/pokemon_red_env.py"
-)
+_ENV_PATH = _REPO / "evaluation_utils/mcp_game_servers/pokemon_red/game/pokemon_red_env.py"
 _spec = importlib.util.spec_from_file_location("pokemon_red_env_under_test", _ENV_PATH)
 _module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_module)
@@ -130,8 +119,12 @@ class _MilestoneHarness:
 
 
 def _state(
-    *, map_name: str = "RedsHouse1f", map_screen_raw: str = "", state: str = "Field",
-    your_party: str = "", inventory: str = "",
+    *,
+    map_name: str = "RedsHouse1f",
+    map_screen_raw: str = "",
+    state: str = "Field",
+    your_party: str = "",
+    inventory: str = "",
 ) -> dict:
     return {
         "state": state,

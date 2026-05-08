@@ -7,6 +7,7 @@ OaksLab ↔ PalletTown 14 times. The thresholds and signal shapes here
 are pinned to catch that trajectory while staying quiet during normal
 exploration (e.g. a corridor walked once).
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -15,9 +16,7 @@ from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
 _MOD_NAME = "agents_loop_detector_under_test"
-_spec = importlib.util.spec_from_file_location(
-    _MOD_NAME, _REPO / "agents/loop_detector.py"
-)
+_spec = importlib.util.spec_from_file_location(_MOD_NAME, _REPO / "agents/loop_detector.py")
 _mod = importlib.util.module_from_spec(_spec)
 # Must register before exec_module so @dataclass can resolve cls.__module__.
 sys.modules[_MOD_NAME] = _mod
@@ -36,8 +35,7 @@ def test_silent_during_warmup_window():
     when the agent is feeling out the room."""
     d = LoopDetector(min_steps_before_firing=10)
     for _ in range(8):
-        sig = d.observe(state=("RedsHouse2f", 4, 6), score=0,
-                        action_class="move_to")
+        sig = d.observe(state=("RedsHouse2f", 4, 6), score=0, action_class="move_to")
     assert d.render(sig) is None
 
 
@@ -47,8 +45,7 @@ def test_silent_during_clean_pathfinding():
     detector should NOT fire — nothing's actually wrong."""
     d = LoopDetector()
     for x in range(15):
-        sig = d.observe(state=("Corridor", x, 0), score=0,
-                        action_class="move_to")
+        sig = d.observe(state=("Corridor", x, 0), score=0, action_class="move_to")
     assert d.render(sig) is None
 
 
@@ -71,8 +68,7 @@ def test_state_recurrence_fires_when_position_revisited():
     d = LoopDetector(state_repeat_threshold=3, min_steps_before_firing=0)
     sig = None
     for _ in range(5):
-        sig = d.observe(state=("OaksLab", 4, 1), score=2,
-                        action_class="interact_with_object")
+        sig = d.observe(state=("OaksLab", 4, 1), score=2, action_class="interact_with_object")
     assert sig.state_repeats == 5
     block = d.render(sig)
     assert block is not None
@@ -83,8 +79,7 @@ def test_state_repeats_only_count_within_window():
     """A revisit outside the sliding window shouldn't count toward the
     repeat tally — the detector is a *recent* loop catcher, not lifetime
     history."""
-    d = LoopDetector(window_size=10, state_repeat_threshold=3,
-                     min_steps_before_firing=0)
+    d = LoopDetector(window_size=10, state_repeat_threshold=3, min_steps_before_firing=0)
     # Visit position twice
     d.observe(state=("X", 0, 0), score=0, action_class="move_to")
     d.observe(state=("X", 0, 0), score=0, action_class="move_to")
@@ -103,8 +98,9 @@ def test_action_repetition_streak_increments_on_same_class():
     d = LoopDetector(action_repeat_threshold=5, min_steps_before_firing=0)
     sig = None
     for i in range(7):
-        sig = d.observe(state=("OaksLab", 4 + i % 2, 1), score=2,
-                        action_class="interact_with_object")
+        sig = d.observe(
+            state=("OaksLab", 4 + i % 2, 1), score=2, action_class="interact_with_object"
+        )
     assert sig.action_repeat_streak == 7
     block = d.render(sig)
     assert "Same action class (`interact_with_object`)" in block
@@ -135,8 +131,7 @@ def test_action_class_none_does_not_disturb_streak():
 def test_oscillation_detects_abab_pattern():
     """The exact OaksLab ↔ PalletTown bounce from the failed run."""
     d = LoopDetector(oscillation_threshold=3, min_steps_before_firing=0)
-    maps = ["OaksLab", "PalletTown", "OaksLab", "PalletTown",
-            "OaksLab", "PalletTown"]
+    maps = ["OaksLab", "PalletTown", "OaksLab", "PalletTown", "OaksLab", "PalletTown"]
     sig = None
     for m in maps:
         sig = d.observe(state=(m, 0, 0), score=2, action_class="warp_with_warp_point")
@@ -188,8 +183,12 @@ def test_render_includes_steps_since_score_gain():
 def test_render_silent_when_only_score_stagnation_no_loop_signal():
     """``steps_since_score_gain`` going up alone shouldn't fire — that's
     just a hard exploration phase. We need a concrete loop signal too."""
-    d = LoopDetector(min_steps_before_firing=0, state_repeat_threshold=10,
-                     action_repeat_threshold=10, oscillation_threshold=10)
+    d = LoopDetector(
+        min_steps_before_firing=0,
+        state_repeat_threshold=10,
+        action_repeat_threshold=10,
+        oscillation_threshold=10,
+    )
     for x in range(15):
         sig = d.observe(state=("Path", x, 0), score=0, action_class="move_to")
     assert sig.steps_since_score_gain == 15
@@ -254,6 +253,5 @@ def test_pokemon_failed_run_replay_triggers_detector():
     # At least one of the three signals should be in the block.
     assert any(
         keyword in block
-        for keyword in ("Visited current position", "Same action class",
-                        "Oscillating")
+        for keyword in ("Visited current position", "Same action class", "Oscillating")
     )

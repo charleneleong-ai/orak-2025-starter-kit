@@ -10,6 +10,7 @@ mimics the surface PyBoyRunner uses (``self.pyboy.memory`` indexable +
 ``self.map_names`` dict) and ``_enrich_warp_label`` directly since it's a
 pure function.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -66,11 +67,13 @@ def _make_layout(warps: list[tuple[int, int, int, int]]) -> dict[int, int]:
 
 def test_get_warp_destinations_resolves_dest_map_id():
     """Each warp entry's dest_map_id resolves via ``map_names``."""
-    layout = _make_layout([
-        (1, 7, 0, 38),  # RedsHouse2f staircase → RedsHouse1f (map id 38)
-        (7, 2, 1, 0),   # exit door → PalletTown (map id 0)
-        (7, 3, 2, 0),   # exit door → PalletTown (map id 0)
-    ])
+    layout = _make_layout(
+        [
+            (1, 7, 0, 38),  # RedsHouse2f staircase → RedsHouse1f (map id 38)
+            (7, 2, 1, 0),  # exit door → PalletTown (map id 0)
+            (7, 3, 2, 0),  # exit door → PalletTown (map id 0)
+        ]
+    )
     runner = _StubRunner(layout, map_names={"0": "PalletTown", "38": "RedsHouse1f"})
     dests = PyBoyRunner.get_warp_destinations(runner)
     assert dests == {
@@ -110,14 +113,8 @@ def test_get_warp_destinations_empty_when_no_warps():
 
 def test_enrich_warp_label_rewrites_warppoint_with_destination():
     dests = {(7, 1): "RedsHouse1f", (2, 7): "PalletTown"}
-    assert (
-        PyBoyRunner._enrich_warp_label("WarpPoint", (7, 1), dests)
-        == "Warp→RedsHouse1f"
-    )
-    assert (
-        PyBoyRunner._enrich_warp_label("WarpPoint", (2, 7), dests)
-        == "Warp→PalletTown"
-    )
+    assert PyBoyRunner._enrich_warp_label("WarpPoint", (7, 1), dests) == "Warp→RedsHouse1f"
+    assert PyBoyRunner._enrich_warp_label("WarpPoint", (2, 7), dests) == "Warp→PalletTown"
 
 
 def test_enrich_warp_label_passes_through_non_warp_cells():
@@ -136,7 +133,4 @@ def test_enrich_warp_label_leaves_warppoint_alone_if_no_dest():
     """A WarpPoint with no matching memory entry (shouldn't happen on a real
     map, but be defensive) keeps the bare 'WarpPoint' string so the obs
     schema is preserved for downstream consumers like pokemon_tools."""
-    assert (
-        PyBoyRunner._enrich_warp_label("WarpPoint", (5, 5), {})
-        == "WarpPoint"
-    )
+    assert PyBoyRunner._enrich_warp_label("WarpPoint", (5, 5), {}) == "WarpPoint"

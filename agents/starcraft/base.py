@@ -1,16 +1,16 @@
-import traceback
 import base64
 import io
-from typing import Any, Optional
+import traceback
+from typing import Any
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+import weave
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
 
-from agents.base import BaseOrakAgent
 from agents._harness import structured_invoke_with_usage, with_retries
-import weave
+from agents.base import BaseOrakAgent
 
 GAME_RULES = """
 ### StarCraft II Game Rules ###
@@ -110,8 +110,7 @@ class StarCraftAction(BaseModel):
 
 
 class StarCraftAgent(BaseOrakAgent):
-
-    _llm: Optional[BaseChatModel] = PrivateAttr(default=None)
+    _llm: BaseChatModel | None = PrivateAttr(default=None)
     _action_counts: dict[str, int] = PrivateAttr(default_factory=dict)
 
     def calculate_metrics(self, game_info: dict[str, Any]) -> dict[str, Any]:
@@ -139,9 +138,7 @@ class StarCraftAgent(BaseOrakAgent):
             metrics["evaluation_score"] = float(game_info["evaluation_score"])
 
         # Add action distribution counts (top 10 most used)
-        sorted_actions = sorted(
-            self._action_counts.items(), key=lambda x: x[1], reverse=True
-        )
+        sorted_actions = sorted(self._action_counts.items(), key=lambda x: x[1], reverse=True)
         for action, count in sorted_actions[:10]:
             # Sanitize action name for wandb (replace spaces with underscores)
             safe_action = action.replace(" ", "_").replace("-", "_")
@@ -191,9 +188,7 @@ class StarCraftAgent(BaseOrakAgent):
             obs_image.save(buffered, format="JPEG")
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
             image_url = f"data:image/jpeg;base64,{img_str}"
-            user_content.append(
-                {"type": "image_url", "image_url": {"url": image_url}}
-            )
+            user_content.append({"type": "image_url", "image_url": {"url": image_url}})
 
         messages.append(HumanMessage(content=user_content))
 
@@ -217,9 +212,7 @@ class StarCraftAgent(BaseOrakAgent):
                 self._action_counts[action] += 1
 
             # Format actions as numbered list
-            action_lines = [
-                f"{i+1}: {action}" for i, action in enumerate(actions_list)
-            ]
+            action_lines = [f"{i + 1}: {action}" for i, action in enumerate(actions_list)]
             action = "\n".join(action_lines)
 
             output_text = f"Goal: {current_goal}\n\nReasoning: {reasoning}\n\nActions:\n{action}"

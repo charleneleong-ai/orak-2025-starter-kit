@@ -9,16 +9,15 @@ Verifies the harness actually wires correctly into BaseOrakAgent:
 
 No real LLM call. No GPU. No game env. ~1 second runtime.
 """
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from agents._harness import StepRecord, TrajectoryWriter, with_retries
-
+from agents._harness import with_retries
 
 # ── Minimal fake usage objects for the cache-stats path ──────────────────
 
@@ -39,6 +38,7 @@ class _FakeChatCompletionUsage:
 def _make_minimal_agent(tmp_path: Path):
     """Build a BaseOrakAgent subclass that doesn't need a real LLM or wandb."""
     from typing import ClassVar
+
     from agents.base import BaseOrakAgent
     from config.agent_config import LocalConfig
     from config.base import WandbConfig
@@ -50,7 +50,14 @@ def _make_minimal_agent(tmp_path: Path):
             cfg = LocalConfig(class_name="stub", model="stub-model", temperature=0.0)
             wandb_cfg = WandbConfig(mode="disabled")
             super().__init__(config=cfg, wandb_config=wandb_cfg)
-            self._next_response = ("up", "fake reasoning", "fake goal", "Action: up", None, "fake prompt")
+            self._next_response = (
+                "up",
+                "fake reasoning",
+                "fake goal",
+                "Action: up",
+                None,
+                "fake prompt",
+            )
             self._raise_next = False
 
         def _get_action(self, task_description, cur_state_str, obs_image=None):
@@ -79,7 +86,10 @@ def test_act_records_step_in_trajectory(tmp_path: Path):
 
     # Set a usage object with cached_tokens=42 to verify the cache pathway
     agent._next_response = (
-        "up", "reasoning", "goal", "Action: up",
+        "up",
+        "reasoning",
+        "goal",
+        "Action: up",
         _FakeChatCompletionUsage(prompt=100, completion=10, cached=42),
         "user prompt",
     )
@@ -98,7 +108,10 @@ def test_act_records_step_in_trajectory(tmp_path: Path):
 def test_episode_end_flushes_to_trajectory_samples(tmp_path: Path):
     agent = _make_minimal_agent(tmp_path)
     agent._next_response = (
-        "up", "r", "g", "out",
+        "up",
+        "r",
+        "g",
+        "out",
         _FakeChatCompletionUsage(prompt=50, completion=5, cached=0),
         "p",
     )
@@ -121,7 +134,10 @@ def test_mark_fallback_routes_to_failed_trajectories(tmp_path: Path):
     """Simulate the silent-fallback path: agent gets an error, marks fallback."""
     agent = _make_minimal_agent(tmp_path)
     agent._next_response = (
-        "up", "r", "g", "out",
+        "up",
+        "r",
+        "g",
+        "out",
         _FakeChatCompletionUsage(prompt=50, completion=5),
         "p",
     )
@@ -144,7 +160,12 @@ def test_pending_fallback_consumed_per_step(tmp_path: Path):
     """_pending_fallback should reset after one step — not stick to subsequent ones."""
     agent = _make_minimal_agent(tmp_path)
     agent._next_response = (
-        "up", "r", "g", "out", _FakeChatCompletionUsage(prompt=50, completion=5), "p",
+        "up",
+        "r",
+        "g",
+        "out",
+        _FakeChatCompletionUsage(prompt=50, completion=5),
+        "p",
     )
     agent._mark_fallback("llm_error")
     agent.act({"obs_str": "x", "game_info": {"score": 0}}, step=1)
@@ -160,9 +181,11 @@ def test_pending_fallback_consumed_per_step(tmp_path: Path):
 def test_with_retries_works_in_agent_context(tmp_path: Path, monkeypatch):
     """Realistic: simulate a transient 503 → retry → success on attempt 2."""
     import time as _time
+
     monkeypatch.setattr(_time, "sleep", lambda *_: None)
 
     calls = {"n": 0}
+
     def llm_call():
         calls["n"] += 1
         if calls["n"] < 2:
@@ -183,7 +206,9 @@ def test_parser_handles_5_tuple_super_mario_shape(tmp_path: Path):
     """SuperMarioAgent returns (action, reasoning, output_text, usage, prompt) — 5 elements."""
     agent = _make_minimal_agent(tmp_path)
     agent._next_response = (
-        "Jump Level: 0", "fake reasoning", "fake output",
+        "Jump Level: 0",
+        "fake reasoning",
+        "fake output",
         _FakeChatCompletionUsage(prompt=80, completion=8, cached=20),
         "fake prompt",
     )
@@ -199,9 +224,13 @@ def test_parser_handles_7_tuple_2048_shape(tmp_path: Path):
     """TwentyFourtyEightAgent: (action, reasoning, output_text, usage, prompt, game_phase, update_type)."""
     agent = _make_minimal_agent(tmp_path)
     tup = (
-        "left", "r", "out",
+        "left",
+        "r",
+        "out",
         _FakeChatCompletionUsage(prompt=50, completion=5, cached=10),
-        "p", "MID-CRITICAL", "atomic_entry",
+        "p",
+        "MID-CRITICAL",
+        "atomic_entry",
     )
     parsed = agent._parse_get_action_result(tup)
     assert parsed["game_phase"] == "MID-CRITICAL"
@@ -213,9 +242,14 @@ def test_parser_handles_8_tuple_macla_shape(tmp_path: Path):
     """UnifiedMaclaAgent: 4th slot is memory_stats, not usage."""
     agent = _make_minimal_agent(tmp_path)
     tup = (
-        "up", "r", "out",
+        "up",
+        "r",
+        "out",
         {"method_counts": {"bayesian_procedure": 3}},
-        "Goal: x", "EARLY", "macla_update", {"type": "atomic"},
+        "Goal: x",
+        "EARLY",
+        "macla_update",
+        {"type": "atomic"},
     )
     parsed = agent._parse_get_action_result(tup)
     assert parsed["memory_stats"]["method_counts"]["bayesian_procedure"] == 3
@@ -240,7 +274,9 @@ def test_5_tuple_agent_flows_cache_stats_through_act(tmp_path: Path):
     """End-to-end: a 5-tuple agent (mario shape) now records cached_tokens."""
     agent = _make_minimal_agent(tmp_path)
     agent._next_response = (
-        "Jump Level: 1", "r", "out",
+        "Jump Level: 1",
+        "r",
+        "out",
         _FakeChatCompletionUsage(prompt=100, completion=10, cached=33),
         "p",
     )
@@ -256,7 +292,10 @@ def test_5_tuple_agent_flows_cache_stats_through_act(tmp_path: Path):
 def test_legacy_raw_requests_log_still_written(tmp_path: Path):
     agent = _make_minimal_agent(tmp_path)
     agent._next_response = (
-        "up", "r", "g", "out",
+        "up",
+        "r",
+        "g",
+        "out",
         _FakeChatCompletionUsage(prompt=10, completion=2, cached=5),
         "p",
     )

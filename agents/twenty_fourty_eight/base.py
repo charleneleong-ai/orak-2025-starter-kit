@@ -1,23 +1,19 @@
-import traceback
+import ast
 import base64
 import io
 import re
-import ast
-from typing import Any,  Optional
+import traceback
+from typing import Any
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+import weave
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
 
-from agents.base import BaseOrakAgent
 from agents._harness import structured_invoke_with_usage, with_retries
+from agents.base import BaseOrakAgent
 from agents.twenty_fourty_eight._metrics import normalize_2048_score
-
-
-import weave
-
-
 
 GAME_RULES = """
 ### 2048 Game Rules ### 
@@ -70,10 +66,13 @@ USER_PROMPT_TEMPLATE = """
 {cur_state_str}
 """
 
+
 class GameAction(BaseModel):
     """Structured output for 2048 game actions"""
+
     reasoning: str = Field(description="Detailed explanation of why this action was chosen")
     action: str = Field(description="The action to take: up, down, left, or right")
+
 
 def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
     """Recursively flatten a nested dictionary."""
@@ -86,9 +85,9 @@ def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
             items.append((new_key, v))
     return dict(items)
 
+
 class TwentyFourtyEightAgent(BaseOrakAgent):
-    
-    _llm: Optional[BaseChatModel] = PrivateAttr(default=None)
+    _llm: BaseChatModel | None = PrivateAttr(default=None)
     _game_phase: str = PrivateAttr(default="UNKNOWN")
     _last_valid_game_phase: str = PrivateAttr(default="EARLY")
     _last_update_type: str = PrivateAttr(default="atomic_entry")
@@ -107,35 +106,32 @@ class TwentyFourtyEightAgent(BaseOrakAgent):
         """
         Extract domain-specific postconditions (state changes) from success contexts.
         To be used by learning agents (like MACLA) to refine procedures.
-        
+
         Args:
             success_contexts: List of ContrastiveContext objects containing init/term observations.
-            
+
         Returns:
             dict: Updates to be merged into discriminative_patterns (e.g. {'postconditions_added': [...]})
             or None to use default generic extraction.
         """
-        # Default 2048 logic: 
+        # Default 2048 logic:
         # Added = Emergent tiles (higher value)
         # Removed = Vanished tiles (merged)
         if not success_contexts:
             return None
-            
+
         success_init_vocab = set()
         success_term_vocab = set()
-        
+
         for ctx in success_contexts:
             if hasattr(ctx, "observation_init") and hasattr(ctx, "observation_term"):
                 success_init_vocab.update(ctx.observation_init.lower().split())
                 success_term_vocab.update(ctx.observation_term.lower().split())
-            
+
         emergent = list(success_term_vocab - success_init_vocab)[:3]
         vanished = list(success_init_vocab - success_term_vocab)[:3]
-        
-        return {
-            "postconditions_added": emergent,
-            "postconditions_removed": vanished
-        }
+
+        return {"postconditions_added": emergent, "postconditions_removed": vanished}
 
     @staticmethod
     def _extract_context(observation: str) -> str:
@@ -158,61 +154,65 @@ class TwentyFourtyEightAgent(BaseOrakAgent):
         try:
             nums = []
             # Only parse lines that look like rows [x, x, x, x] to avoid Score or other numbers
-            for line in observation.split('\n'):
-                if line.strip().startswith('[') and ']' in line:
-                    nums.extend([int(n) for n in re.findall(r'\d+', line)])
-            
+            for line in observation.split("\n"):
+                if line.strip().startswith("[") and "]" in line:
+                    nums.extend([int(n) for n in re.findall(r"\d+", line)])
+
             if len(nums) != 16:
                 # Fallback to loose searching if strict parsing fails
-                all_nums = [int(n) for n in re.findall(r'\d+', observation)]
+                all_nums = [int(n) for n in re.findall(r"\d+", observation)]
                 # If we have 16+ numbers, assume the first 16 are the board or try heuristics
                 # Note: Score is usually at the end.
                 if len(all_nums) >= 16:
-                     # Heuristic: usually board comes first. 
-                     # But let's check for "Score:" label
-                     if "Score:" in observation:
-                         # Exclude the score from the numbers if possible 
-                         pass
-                     nums = all_nums[:16] # simplified fallback
+                    # Heuristic: usually board comes first.
+                    # But let's check for "Score:" label
+                    if "Score:" in observation:
+                        # Exclude the score from the numbers if possible
+                        pass
+                    nums = all_nums[:16]  # simplified fallback
 
             if len(nums) == 16:
                 # Density
                 empty_count = nums.count(0)
-                if empty_count >= 8: density = "sparse"
-                elif empty_count >= 4: density = "medium"
-                else: density = "dense"
+                if empty_count >= 8:
+                    density = "sparse"
+                elif empty_count >= 4:
+                    density = "medium"
+                else:
+                    density = "dense"
 
                 # Max Tile Location
                 max_val = max(nums)
-                if max_val == 0: return "general"
-                
+                if max_val == 0:
+                    return "general"
+
                 idx = nums.index(max_val)
                 r, c = idx // 4, idx % 4
-                
+
                 # Geometric Classification
                 loc_type = "inner"
-                
+
                 # Corners: (0,0), (0,3), (3,0), (3,3)
                 is_corner = (r in [0, 3]) and (c in [0, 3])
-                
+
                 if is_corner:
                     v = "top" if r == 0 else "btm"
                     h = "left" if c == 0 else "right"
                     loc_type = f"corner_{v}_{h}"
-                elif r in [0, 3]: # Edge Top/Bottom
+                elif r in [0, 3]:  # Edge Top/Bottom
                     v = "top" if r == 0 else "btm"
                     loc_type = f"edge_{v}"
-                elif c in [0, 3]: # Edge Left/Right
+                elif c in [0, 3]:  # Edge Left/Right
                     h = "left" if c == 0 else "right"
                     loc_type = f"edge_{h}"
                 else:
-                    loc_type = "inner" # The "danger zone"
-                
+                    loc_type = "inner"  # The "danger zone"
+
                 return f"{loc_type}_{density}{last_action_suffix}"
 
         except Exception:
             pass
-            
+
         return "general"
 
     # NOTE: get_action is inherited from BaseOrakAgent; the lenient parser
@@ -238,7 +238,7 @@ class TwentyFourtyEightAgent(BaseOrakAgent):
         - Board density (empty spaces)
         - Score progression
         - Strategic readiness (corner anchor established)
-        
+
         Returns:
             Tuple of (phase_name, phase_hint)
             phase_name: Short identifier like "EARLY", "MID", "LATE", etc.
@@ -248,61 +248,66 @@ class TwentyFourtyEightAgent(BaseOrakAgent):
             # Extract board values using ast.literal_eval
             # Board format: [val, val, val, val] on separate lines
             board = []
-            for line in cur_state_str.split('\n'):
+            for line in cur_state_str.split("\n"):
                 stripped = line.strip()
-                if stripped.startswith('[') and stripped.endswith(']'):
+                if stripped.startswith("[") and stripped.endswith("]"):
                     try:
                         row = ast.literal_eval(stripped)
                         if isinstance(row, list):
                             board.extend(row)
                     except (ValueError, SyntaxError):
                         continue
-            
+
             if len(board) != 16:
                 # Fallback to last valid phase
-                return (self._last_valid_game_phase, self._get_phase_hint(self._last_valid_game_phase))
-            
+                return (
+                    self._last_valid_game_phase,
+                    self._get_phase_hint(self._last_valid_game_phase),
+                )
+
             current_max = max(board)
             empty_count = board.count(0)
             board_density = (16 - empty_count) / 16.0
-            
+
             # Multi-factor phase determination
             phase_name = ""
-            
+
             # EARLY: Focus on getting first high tile (target 64-128)
             if current_max < 64:
                 phase_name = "EARLY"
-            
+
             # EARLY-MID: Has decent progress, but board still flexible
             elif current_max < 128 and board_density < 0.75:
                 phase_name = "EARLY-MID"
-            
+
             # MID: Good progress, board getting full, need to be strategic
             elif current_max >= 128 and current_max < 512:
                 if board_density > 0.85:
                     phase_name = "MID-CRITICAL"
                 else:
                     phase_name = "MID"
-            
+
             # LATE: Very high tiles, extreme caution needed
             elif current_max >= 512:
                 phase_name = "LATE"
-            
+
             # Store the valid phase for future fallback
             if phase_name:
                 self._last_valid_game_phase = phase_name
                 return (phase_name, self._get_phase_hint(phase_name))
-            
+
         except Exception as e:
             logger.warning(f"Error determining game phase: {e}")
-        
+
         # Fallback to last valid phase
         return (self._last_valid_game_phase, self._get_phase_hint(self._last_valid_game_phase))
 
     @weave.op()
-    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, Any, str, str, str]:
+    def _get_action(
+        self, task_description: str, cur_state_str: str, obs_image: Any = None
+    ) -> tuple[str, str, str, Any, str, str, str]:
         """Get action from LLM. This method is tracked by Weave for observability."""
-        
+
         if not self._llm:
             raise ValueError("LLM not initialised")
 
@@ -312,18 +317,16 @@ class TwentyFourtyEightAgent(BaseOrakAgent):
 
         prompt_text = USER_PROMPT_TEMPLATE.format(
             task_description=task_description + phase_hint,
-            prev_state_str=self._prev_state_str, 
-            action=self._last_action, 
-            cur_state_str=cur_state_str
+            prev_state_str=self._prev_state_str,
+            action=self._last_action,
+            cur_state_str=cur_state_str,
         )
 
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT)
-        ]
+        messages = [SystemMessage(content=SYSTEM_PROMPT)]
 
         user_content = []
         user_content.append({"type": "text", "text": prompt_text})
-        
+
         if obs_image:
             # Convert PIL to base64
             buffered = io.BytesIO()
@@ -333,7 +336,7 @@ class TwentyFourtyEightAgent(BaseOrakAgent):
             user_content.append({"type": "image_url", "image_url": {"url": image_url}})
 
         messages.append(HumanMessage(content=user_content))
-        
+
         # Invoke LLM (structured_invoke_with_usage preserves token usage)
         usage = None
         output_text = ""
@@ -355,10 +358,10 @@ class TwentyFourtyEightAgent(BaseOrakAgent):
             reasoning = f"Error: {e}"
             output_text = str(e)
             raise ValueError(f"LLM invocation failed: {traceback.format_exc()}")
-        
+
         # Validate action
         if action not in ["left", "right", "up", "down"]:
             logger.warning(f"Invalid action '{action}', defaulting to 'left'")
             action = "left"
-            
+
         return action, reasoning, output_text, usage, prompt_text, phase_name, "atomic_entry"

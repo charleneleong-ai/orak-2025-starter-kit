@@ -14,11 +14,10 @@ Key Design Principles:
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from functools import wraps
-from typing import Optional, Callable, Any
 
 import grpc
-
 
 # Module-level constants
 SESSION_TIMEOUT_SECONDS = 120  # 2 minutes
@@ -51,7 +50,7 @@ class SessionManager:
         Args:
             timeout_seconds: Session expiry timeout (default: 120 seconds)
         """
-        self._token: Optional[str] = None
+        self._token: str | None = None
         self._last_activity: float = 0.0
         self._timeout: int = timeout_seconds
         self._lock = threading.Lock()
@@ -166,7 +165,7 @@ class IdempotencyTracker:
 
     def __init__(self):
         """Initialize idempotency tracker with no stored request."""
-        self._last_request_id: Optional[str] = None
+        self._last_request_id: str | None = None
         self._lock = threading.Lock()
 
     def is_duplicate(self, request_id: str) -> bool:
@@ -230,15 +229,15 @@ def require_session(session_manager: SessionManager):
     Thread Safety:
         Session validation is atomic via SessionManager's internal locking.
     """
+
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(self, request, context, *args, **kwargs):
             # Extract token from request
-            token = getattr(request, 'session_token', None)
+            token = getattr(request, "session_token", None)
             if token is None:
                 context.abort(
-                    grpc.StatusCode.UNAUTHENTICATED,
-                    "Request missing session_token field"
+                    grpc.StatusCode.UNAUTHENTICATED, "Request missing session_token field"
                 )
 
             # Validate session
@@ -247,18 +246,15 @@ def require_session(session_manager: SessionManager):
                 if session_manager._token is None:
                     context.abort(
                         grpc.StatusCode.UNAUTHENTICATED,
-                        "No active session. Call RegisterSession first."
+                        "No active session. Call RegisterSession first.",
                     )
                 elif session_manager.is_expired():
                     context.abort(
                         grpc.StatusCode.UNAUTHENTICATED,
-                        f"Session expired (timeout: {session_manager._timeout}s)"
+                        f"Session expired (timeout: {session_manager._timeout}s)",
                     )
                 else:
-                    context.abort(
-                        grpc.StatusCode.UNAUTHENTICATED,
-                        "Invalid session token"
-                    )
+                    context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid session token")
 
             # Touch session to extend lifetime
             session_manager.touch()
@@ -267,6 +263,7 @@ def require_session(session_manager: SessionManager):
             return func(self, request, context, *args, **kwargs)
 
         return wrapper
+
     return decorator
 
 
@@ -310,6 +307,7 @@ def require_lock(lock: threading.Lock, operation_name: str = "operation"):
         If using multiple locks, always acquire in consistent global order
         to prevent deadlocks. Example: session_lock before action_lock.
     """
+
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(self, request, context, *args, **kwargs):
@@ -322,7 +320,7 @@ def require_lock(lock: threading.Lock, operation_name: str = "operation"):
                 context.abort(
                     grpc.StatusCode.ABORTED,
                     f"Busy: {operation_name} already in progress "
-                    f"(attempted by thread: {current_thread.name})"
+                    f"(attempted by thread: {current_thread.name})",
                 )
 
             try:
@@ -333,13 +331,12 @@ def require_lock(lock: threading.Lock, operation_name: str = "operation"):
                 lock.release()
 
         return wrapper
+
     return decorator
 
 
 def validate_session_and_acquire_lock(
-    session_manager: SessionManager,
-    lock: threading.Lock,
-    operation_name: str = "operation"
+    session_manager: SessionManager, lock: threading.Lock, operation_name: str = "operation"
 ):
     """
     Combined decorator for session validation + fail-fast lock acquisition.
@@ -380,6 +377,7 @@ def validate_session_and_acquire_lock(
         Session validation is atomic. Lock acquisition is fail-fast.
         Lock is always released in finally block.
     """
+
     def decorator(func: Callable) -> Callable:
         # Apply decorators in order: session first, then lock
         @require_session(session_manager)
@@ -389,4 +387,5 @@ def validate_session_and_acquire_lock(
             return func(self, request, context, *args, **kwargs)
 
         return wrapper
+
     return decorator

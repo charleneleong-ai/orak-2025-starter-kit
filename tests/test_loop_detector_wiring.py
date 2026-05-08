@@ -12,6 +12,7 @@ end-to-end injection in ``BaseMaclaAgent.get_action`` is provable by
 inspection (one new line that prepends ``stuck_block`` to
 ``cur_state_str``); the helpers are the parts that can break silently.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -50,7 +51,7 @@ def _extract_action_class(action_str):
         return None
     s = action_str.strip()
     if s.startswith("use_tool("):
-        inner = s[len("use_tool("):]
+        inner = s[len("use_tool(") :]
         for sep in (",", " ", ")"):
             if sep in inner:
                 inner = inner.split(sep, 1)[0]
@@ -59,15 +60,15 @@ def _extract_action_class(action_str):
 
 
 def test_extract_action_class_pulls_tool_name():
-    assert _extract_action_class(
-        'use_tool(interact_with_object, (object_name="OBJ_1_1"))'
-    ) == "interact_with_object"
-    assert _extract_action_class(
-        "use_tool(move_to, (x_dest=4, y_dest=11))"
-    ) == "move_to"
-    assert _extract_action_class(
-        "use_tool(warp_with_warp_point, (x_dest=12, y_dest=11))"
-    ) == "warp_with_warp_point"
+    assert (
+        _extract_action_class('use_tool(interact_with_object, (object_name="OBJ_1_1"))')
+        == "interact_with_object"
+    )
+    assert _extract_action_class("use_tool(move_to, (x_dest=4, y_dest=11))") == "move_to"
+    assert (
+        _extract_action_class("use_tool(warp_with_warp_point, (x_dest=12, y_dest=11))")
+        == "warp_with_warp_point"
+    )
 
 
 def test_extract_action_class_returns_raw_input_for_button_actions():
@@ -103,9 +104,7 @@ def _extract_loop_state(obs_str):
     if not obs_str:
         return None
     m_map = re.search(r"Map Name:\s*([^,\s]+)", obs_str)
-    m_pos = re.search(
-        r"Your position \(x, y\):\s*\((\d+),\s*(\d+)\)", obs_str
-    )
+    m_pos = re.search(r"Your position \(x, y\):\s*\((\d+),\s*(\d+)\)", obs_str)
     if not m_map or not m_pos:
         return None
     return (m_map.group(1), int(m_pos.group(1)), int(m_pos.group(2)))
@@ -190,8 +189,7 @@ def test_detector_fires_on_replayed_pokemon_failure_with_real_extractor():
     assert "[Stuck Detector]" in block
     # At least one of the three concrete signals should appear in text.
     assert any(
-        kw in block
-        for kw in ("Visited current position", "Same action class", "Oscillating")
+        kw in block for kw in ("Visited current position", "Same action class", "Oscillating")
     )
 
 

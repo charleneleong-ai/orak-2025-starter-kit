@@ -6,21 +6,20 @@ to mutate display state; the Renderer owns the single Live context and
 manages responsive layout, throttling, and visual composition.
 """
 
-import time
 import os
-from typing import Literal, Optional
+import time
 from dataclasses import dataclass, field
+from typing import Literal
+
+from rich import box
 from rich.console import Console
-from rich.live import Live
 from rich.layout import Layout
+from rich.live import Live
 from rich.padding import Padding
 from rich.panel import Panel
+from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
-from rich.spinner import Spinner
-from rich.columns import Columns
-from rich import box
-
 
 ServerStatus = Literal["queued", "launching", "running", "completed", "failed", "stopped"]
 
@@ -28,18 +27,19 @@ ServerStatus = Literal["queued", "launching", "running", "completed", "failed", 
 @dataclass
 class RendererState:
     """Internal state cache for all displayed information."""
+
     # Global config
     show_local_mode: bool = False
-    session_id: Optional[str] = None
-    submission_id: Optional[str] = None
+    session_id: str | None = None
+    submission_id: str | None = None
     game_data_path: str = ""
     warnings: list[str] = field(default_factory=list)
 
     # Game servers - supports parallel execution
     server_status_by_game: dict[str, ServerStatus] = field(default_factory=dict)
     scores_by_game: dict[str, int] = field(default_factory=dict)
-    game_start_times: dict[str, Optional[float]] = field(default_factory=dict)
-    elapsed_times: dict[str, Optional[float]] = field(default_factory=dict)
+    game_start_times: dict[str, float | None] = field(default_factory=dict)
+    elapsed_times: dict[str, float | None] = field(default_factory=dict)
 
     # Evaluation completion
     evaluation_completed: bool = False
@@ -68,15 +68,20 @@ class Renderer:
     def __init__(self):
         self.console = Console()
         self.state = RendererState()
-        self.live: Optional[Live] = None
+        self.live: Live | None = None
         self.last_render_time = 0.0
         self.throttle_ms = 50  # Minimum time between renders
         self._started = False
         # Plain logs mode (disables Rich Live UI) controlled via env var ORAK_PLAIN_LOGS
         self.headless = os.getenv("ORAK_PLAIN_LOGS", "").lower() in ("1", "true", "yes", "y")
 
-    def start(self, local: bool = False, session_id: Optional[str] = None,
-              game_data_path: str = "", submission_id: Optional[str] = None):
+    def start(
+        self,
+        local: bool = False,
+        session_id: str | None = None,
+        game_data_path: str = "",
+        submission_id: str | None = None,
+    ):
         """Initialize the Live display and show header."""
         if self._started:
             return
@@ -91,12 +96,7 @@ class Renderer:
             return
         # Start Live context (header is now part of the layout)
         layout = self._build_layout()
-        self.live = Live(
-            layout,
-            console=self.console,
-            refresh_per_second=10,
-            screen=False
-        )
+        self.live = Live(layout, console=self.console, refresh_per_second=10, screen=False)
         self.live.start()
         self._started = True
 
@@ -106,7 +106,7 @@ class Renderer:
             self.live.stop()
             self._started = False
 
-    def set_session_info(self, session_id: Optional[str] = None, submission_id: Optional[str] = None):
+    def set_session_info(self, session_id: str | None = None, submission_id: str | None = None):
         """Update session/submission identifiers and refresh UI."""
         if session_id is not None:
             self.state.session_id = session_id
@@ -154,7 +154,9 @@ class Renderer:
         if self.state.evaluation_completed:
             table_rows += 1  # total row
         table_size = table_rows + 4  # +4 for padding and spacing
-        parts.append(Padding(Layout(self._build_merged_table(), name="table", size=table_size), (1, 0, 1, 0)))
+        parts.append(
+            Padding(Layout(self._build_merged_table(), name="table", size=table_size), (1, 0, 1, 0))
+        )
 
         # Events panel takes all remaining space (no size specified)
         parts.append(Layout(self._build_messages_panel(), name="messages"))
@@ -166,22 +168,13 @@ class Renderer:
         """Build the full-width banner with title only."""
         title = Text("AIcrowd Orak 2025 Evaluation", style="bold", justify="center")
         title.stylize("#fffafa", 0, len(title))
-        return Panel(
-            title,
-            border_style="#fffafa",
-            padding=(0, 1)
-        )
+        return Panel(title, border_style="#fffafa", padding=(0, 1))
 
     def _build_config(self) -> Panel:
         """Build the game config panel."""
         from rich.table import Table as ConfigTable
 
-        config_table = ConfigTable(
-            show_header=False,
-            box=None,
-            padding=(0, 2),
-            show_edge=False
-        )
+        config_table = ConfigTable(show_header=False, box=None, padding=(0, 2), show_edge=False)
         config_table.add_column("Key", style="dim", no_wrap=True)
         config_table.add_column("Value", style="bold")
 
@@ -217,22 +210,16 @@ class Renderer:
             config_table.add_row("Session #:", self.state.session_id or "N/A")
 
         return Panel(
-            config_table,
-            title="[bold]Game Config[/bold]",
-            border_style="dim",
-            padding=(0, 1)
+            config_table, title="[bold]Game Config[/bold]", border_style="dim", padding=(0, 1)
         )
 
     def _build_merged_table(self) -> Table:
         """Build the merged game servers and scores table."""
-        table = Table(
-            show_header=True,
-            box=box.SIMPLE_HEAD,
-            show_edge=False,
-            padding=(0, 1)
-        )
+        table = Table(show_header=True, box=box.SIMPLE_HEAD, show_edge=False, padding=(0, 1))
         table.add_column("Game", style="green", no_wrap=True, header_style="bold green")
-        table.add_column("Status", justify="center", style="bright_black", header_style="bold bright_black")
+        table.add_column(
+            "Status", justify="center", style="bright_black", header_style="bold bright_black"
+        )
         table.add_column("Score", justify="right", style="blue", header_style="bold blue")
         table.add_column("Elapsed", justify="right", style="cyan", header_style="bold cyan")
 
@@ -263,13 +250,7 @@ class Renderer:
         # Add total row if evaluation is completed
         if self.state.evaluation_completed:
             total_score = sum(self.state.scores_by_game.values())
-            table.add_row(
-                "[bold]TOTAL[/bold]",
-                "",
-                f"[bold]{total_score}[/bold]",
-                "",
-                style="bold"
-            )
+            table.add_row("[bold]TOTAL[/bold]", "", f"[bold]{total_score}[/bold]", "", style="bold")
 
         return table
 
@@ -419,7 +400,7 @@ class Renderer:
 
 
 # Global renderer instance
-_renderer: Optional[Renderer] = None
+_renderer: Renderer | None = None
 
 
 def get_renderer() -> Renderer:

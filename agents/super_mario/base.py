@@ -1,16 +1,16 @@
-import traceback
 import base64
 import io
-from typing import Any,  Optional
+import traceback
+from typing import Any
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+import weave
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
 
-from agents.base import BaseOrakAgent
 from agents._harness import structured_invoke_with_usage, with_retries
-import weave
+from agents.base import BaseOrakAgent
 
 GAME_RULES = """
 ### Super Mario Bros Game Rules ###
@@ -74,23 +74,26 @@ USER_PROMPT_TEMPLATE = """
 {cur_state_str}
 """
 
+
 class GameAction(BaseModel):
     """Structured output for Super Mario game actions"""
+
     reasoning: str = Field(description="Detailed explanation of why this action was chosen")
     jump_level: int = Field(description="The jump level to take: 0 to 6", ge=0, le=6)
 
-class SuperMarioAgent(BaseOrakAgent):
-    
-    _llm: Optional[BaseChatModel] = PrivateAttr(default=None)
-    _jump_level_counts: dict[int, int] = PrivateAttr(default_factory=lambda: {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0})
 
+class SuperMarioAgent(BaseOrakAgent):
+    _llm: BaseChatModel | None = PrivateAttr(default=None)
+    _jump_level_counts: dict[int, int] = PrivateAttr(
+        default_factory=lambda: {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
+    )
 
     def calculate_metrics(self, game_info: dict[str, Any]) -> dict[str, Any]:
         """
         Calculate custom metrics based on game info.
         """
         metrics = {}
-        
+
         # Extract relevant metrics
         for key in ["coins", "lives", "time", "world", "stage", "x_pos"]:
             if key in game_info:
@@ -104,34 +107,34 @@ class SuperMarioAgent(BaseOrakAgent):
             x_pos = float(game_info.get("x_pos", 40))
             x_start = 40
             x_flag = 3161
-            
+
             metrics["evaluation_score"] = (x_pos - x_start) / (x_flag - x_start) * 100.0
-        
+
         metrics["score"] = float(game_info.get("score", 0))
-        
+
         return metrics
+
     @weave.op()
-    def _get_action(self, task_description: str, cur_state_str: str, obs_image: Any = None) -> tuple[str, str, str, Any, str]:
+    def _get_action(
+        self, task_description: str, cur_state_str: str, obs_image: Any = None
+    ) -> tuple[str, str, str, Any, str]:
         """Get action from LLM. This method is tracked by Weave for observability."""
-        
+
         if not self._llm:
             raise ValueError("LLM not initialized")
 
         prompt_text = USER_PROMPT_TEMPLATE.format(
-            last_action=self._last_action, 
-            cur_state_str=cur_state_str
+            last_action=self._last_action, cur_state_str=cur_state_str
         )
-        
+
         if task_description:
             prompt_text = f"### Task\n{task_description}\n\n" + prompt_text
 
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT)
-        ]
+        messages = [SystemMessage(content=SYSTEM_PROMPT)]
 
         user_content = []
         user_content.append({"type": "text", "text": prompt_text})
-        
+
         if obs_image:
             # Convert PIL to base64
             buffered = io.BytesIO()
@@ -141,7 +144,7 @@ class SuperMarioAgent(BaseOrakAgent):
             user_content.append({"type": "image_url", "image_url": {"url": image_url}})
 
         messages.append(HumanMessage(content=user_content))
-        
+
         usage = None
         output_text = ""
 
@@ -168,5 +171,5 @@ class SuperMarioAgent(BaseOrakAgent):
             action = "Jump Level: 0"
             reasoning = f"Error: {e}"
             output_text = str(e)
-            
+
         return action, reasoning, output_text, usage, prompt_text

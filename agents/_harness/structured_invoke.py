@@ -10,6 +10,7 @@ The fix is simple: pass ``include_raw=True``, which returns
 This helper hides the boilerplate so every game-base call site can keep
 the previous one-liner shape.
 """
+
 from __future__ import annotations
 
 from typing import Any

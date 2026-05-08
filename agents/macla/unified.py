@@ -7,26 +7,25 @@ Game-specific behavior imported from per-game adapter modules:
 Each adapter exports: action schema, valid actions, prompts, context config,
 success detection params, and an extract_action() function.
 """
+
+import base64
 import importlib
 import io
-import base64
 import re
 from types import ModuleType
 from typing import Any
 
 import weave
-
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 from pydantic import BaseModel
 
-from agents.base import BaseOrakAgent
 from agents._cognitive import LLMSubtaskPlanner, VectorMemoryProvider
 from agents._harness import with_retries
+from agents.base import BaseOrakAgent
 from agents.macla.base import BaseMaclaAgent
 from agents.macla.context_extractors import build_context_extractor
 from agents.macla.structured_output import safe_structured_invoke
-
 
 # ── Game adapter registry ────────────────────────────────────────────
 
@@ -45,6 +44,7 @@ def _load_adapter(game_name: str) -> ModuleType:
 
 
 # ── Config-driven success detection ──────────────────────────────────
+
 
 class ConfigSuccessDetector:
     def __init__(self, adapter: ModuleType):
@@ -97,6 +97,7 @@ class ConfigSuccessDetector:
 
 # ── The unified agent ────────────────────────────────────────────────
 
+
 class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
     """
     Single MACLA agent for all games.
@@ -124,7 +125,8 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         self._success_detector = ConfigSuccessDetector(self._adapter)
         # Find the game-specific action schema (a BaseModel subclass, not BaseModel itself)
         self._action_schema = next(
-            v for v in self._adapter.__dict__.values()
+            v
+            for v in self._adapter.__dict__.values()
             if isinstance(v, type) and issubclass(v, BaseModel) and v is not BaseModel
         )
 
@@ -207,11 +209,13 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         action = self._validate_action(action)
 
         # 5. Build output with LLM reasoning
-        avg_exec_time = sum(self._execution_times) / len(self._execution_times) if self._execution_times else 0
-        method = execution_result.get('method', 'unknown')
-        confidence = execution_result.get('confidence', 0.0)
-        llm_reasoning = execution_result.get('reasoning', '') or getattr(self, '_llm_reasoning', '')
-        selected_proc = execution_result.get('selected_procedure', '')
+        avg_exec_time = (
+            sum(self._execution_times) / len(self._execution_times) if self._execution_times else 0
+        )
+        method = execution_result.get("method", "unknown")
+        confidence = execution_result.get("confidence", 0.0)
+        llm_reasoning = execution_result.get("reasoning", "") or getattr(self, "_llm_reasoning", "")
+        selected_proc = execution_result.get("selected_procedure", "")
 
         reasoning_parts = [f"[{method}] conf={confidence:.3f} time={avg_exec_time:.1f}s"]
         if selected_proc:
@@ -219,7 +223,9 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         if llm_reasoning:
             reasoning_parts.append(f"\n{llm_reasoning}")
 
-        reasoning = " | ".join(reasoning_parts[:2]) + (f"\n{llm_reasoning}" if llm_reasoning else "")
+        reasoning = " | ".join(reasoning_parts[:2]) + (
+            f"\n{llm_reasoning}" if llm_reasoning else ""
+        )
         output_text = f"Action: {action}\nMethod: {method}\nConfidence: {confidence:.3f}\nReasoning: {llm_reasoning}"
         goal = self._get_task_description({"task_description": task_description})
         game_phase, _ = self._determine_game_phase(cur_state_str)
@@ -257,7 +263,9 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
 
         # Use the actual injected prompt if _base_fallback was called this
         # step; otherwise fall back to the synthetic stub.
-        prompt_for_log = getattr(self, "_last_llm_user_text", None) or f"Goal: {goal}\nObs: {cur_state_str}"
+        prompt_for_log = (
+            getattr(self, "_last_llm_user_text", None) or f"Goal: {goal}\nObs: {cur_state_str}"
+        )
         # Reset so a step that hits procedure cache (no LLM) shows the stub
         self._last_llm_user_text = None
 
@@ -271,7 +279,16 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                 memory_stats.setdefault("usage", last_usage)
             self._last_llm_usage = None
 
-        return action, reasoning, output_text, memory_stats, prompt_for_log, game_phase, self._last_update_type, update_info
+        return (
+            action,
+            reasoning,
+            output_text,
+            memory_stats,
+            prompt_for_log,
+            game_phase,
+            self._last_update_type,
+            update_info,
+        )
 
     # ── Abstract method implementations ──────────────────────────────
 
@@ -312,7 +329,9 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             return {"postconditions_added": [context]} if context else {}
         return context if isinstance(context, dict) else {}
 
-    def _detect_success(self, execution_result: dict, prev_state: str, cur_state: str) -> tuple[bool, bool]:
+    def _detect_success(
+        self, execution_result: dict, prev_state: str, cur_state: str
+    ) -> tuple[bool, bool]:
         return self._success_detector.detect(execution_result, prev_state, cur_state)
 
     def _validate_action(self, action: str) -> str:
@@ -344,12 +363,14 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             def __missing__(self, key):
                 return ""
 
-        user_text = self._adapter.USER_PROMPT_TEMPLATE.format_map(SafeDict(
-            last_action=getattr(self, "_last_action", "none"),
-            cur_state_str=observation,
-            task_description=goal,
-            prev_state_str=getattr(self, "_prev_state_str", ""),
-        ))
+        user_text = self._adapter.USER_PROMPT_TEMPLATE.format_map(
+            SafeDict(
+                last_action=getattr(self, "_last_action", "none"),
+                cur_state_str=observation,
+                task_description=goal,
+                prev_state_str=getattr(self, "_prev_state_str", ""),
+            )
+        )
 
         # Stage C: prepend retrieved memories to the user prompt when the
         # vector-memory provider is active. Query is the goal + a slice of
@@ -358,11 +379,7 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             query = f"{goal} | {observation[:300]}"
             recalled = self._memory_provider.prefetch(query)
             if recalled:
-                user_text = (
-                    "[Recalled memories from prior steps]\n"
-                    f"{recalled}\n\n"
-                    f"{user_text}"
-                )
+                user_text = f"[Recalled memories from prior steps]\n{recalled}\n\n{user_text}"
 
         # Stage D: ask the subtask planner for a near-term sub-goal and
         # prepend it. For long-horizon games (pokemon) this is the missing
@@ -392,10 +409,12 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             buffered = io.BytesIO()
             obs_image.save(buffered, format="JPEG")
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-            user_content.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{img_str}"},
-            })
+            user_content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{img_str}"},
+                }
+            )
             human_content = user_content
         else:
             human_content = user_text

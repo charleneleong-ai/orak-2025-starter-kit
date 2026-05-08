@@ -16,16 +16,14 @@ Two bugs combined:
 These tests pin both contracts so a future refactor doesn't silently
 regress token telemetry again.
 """
+
 from __future__ import annotations
 
 import importlib.util
 import sys
-import types
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
-
-import pytest
 
 _REPO = Path(__file__).resolve().parent.parent
 

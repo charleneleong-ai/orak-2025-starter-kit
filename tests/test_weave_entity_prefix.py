@@ -10,14 +10,11 @@ step. A 300-step run produced 4,507 of these errors in the log.
 We test the resolver directly to keep the test free of weave/wandb
 network calls and pydantic-model boilerplate.
 """
+
 from __future__ import annotations
 
-import importlib.util
-import sys
-import types
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 _REPO = Path(__file__).resolve().parent.parent
 

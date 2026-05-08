@@ -2,6 +2,7 @@ import ast
 from dataclasses import dataclass
 from typing import Any
 
+
 @dataclass
 class TwentyFourtyEightEnvConfig:
     show_graphic: bool = True
@@ -15,13 +16,14 @@ class TwentyFourtyEightEnvConfig:
     initial_board: Any = None
     initial_score: float = 0
     initial_step: int = 0
-    
+
     def __post_init__(self):
         if self.initial_board and isinstance(self.initial_board, str):
             try:
                 self.initial_board = ast.literal_eval(self.initial_board)
             except Exception:
                 pass
+
 
 @dataclass
 class PokemonRedEnvConfig:
@@ -34,6 +36,7 @@ class PokemonRedEnvConfig:
     max_episodes: int = 3
     max_steps: int = 200
 
+
 @dataclass
 class SuperMarioEnvConfig:
     env_name: str = "SuperMario"
@@ -43,6 +46,7 @@ class SuperMarioEnvConfig:
     logging: bool = False
     max_episodes: int = 3
     max_steps: int = 100
+
 
 @dataclass
 class StarCraftEnvConfig:
@@ -60,4 +64,3 @@ class StarCraftEnvConfig:
     num_actions: int = 5
     max_episodes: int = 3
     max_steps: int = 1000
-

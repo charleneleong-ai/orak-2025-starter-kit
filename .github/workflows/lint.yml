@@ -1,0 +1,25 @@
+name: Lint
+
+# Runs ruff (lint + format check) on every PR and on pushes to master.
+# Config lives in pyproject.toml under [tool.ruff].
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  ruff:
+    name: ruff (lint + format check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/ruff-action@v3
+        with:
+          # Use the same ruff version everywhere (CI + local) to avoid
+          # "passes locally, fails in CI" drift on rule-set changes.
+          version: "0.14.5"
+
+      - run: ruff check .
+      - run: ruff format --check .

@@ -13,17 +13,15 @@ audit (game_logs/pokemon_red/20260506_221856/) where the agent saw
 This pins the resolver so the asm checkout's casing convention is
 decoupled from the map_names.json convention.
 """
+
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
 
 # Load just the resolver — pulling in PyBoy + pyboy_runner is too heavy.
 _REPO = Path(__file__).resolve().parent.parent
 _RUNNER_SRC = (
-    _REPO
-    / "evaluation_utils/mcp_game_servers/pokemon_red/game/pyboy_runner.py"
+    _REPO / "evaluation_utils/mcp_game_servers/pokemon_red/game/pyboy_runner.py"
 ).read_text()
 
 
@@ -117,6 +115,4 @@ def test_resolver_handles_every_floor_suffix_pattern(tmp_path):
 
     for actual, requested in cases:
         resolved = _resolve(str(tmp_path / requested))
-        assert resolved == str(tmp_path / actual), (
-            f"failed to resolve {requested} → {actual}"
-        )
+        assert resolved == str(tmp_path / actual), f"failed to resolve {requested} → {actual}"

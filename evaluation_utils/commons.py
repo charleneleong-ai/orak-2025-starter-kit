@@ -2,7 +2,6 @@ import logging
 import os
 import random
 
-
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GAME_DATA_DIR = os.getenv("GAME_DATA_DIR", os.path.join(REPO_ROOT, "game_logs"))
 GAME_RESULTS_PATH = os.path.join(GAME_DATA_DIR, "game_results.json")

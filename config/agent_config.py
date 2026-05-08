@@ -5,7 +5,8 @@ All agent configurations are defined here and can be logged to wandb.
 
 import os
 from dataclasses import dataclass, field
-from typing import Literal, Optional, Any
+from typing import Any, Literal
+
 from pydantic import ConfigDict
 
 
@@ -25,7 +26,7 @@ class GeminiConfig(AgentConfig):
     model: str = "gemini-pro-3-preview"
     refinement_model: str = ""  # optional separate model for MACLA refinement (e.g. gemini-2.5-pro)
     temperature: float = 0.1
-    gcp_project: Optional[str] = None
+    gcp_project: str | None = None
     gcp_location: str = "us-central1"
     thinking_level: str = "high"  # low, high
     game_config_path: str = ""  # path to game config YAML for UnifiedMaclaAgent
@@ -77,7 +78,7 @@ class OpenAIConfig(AgentConfig):
     model: str = "gpt-5-nano"
     temperature: float = 0.1
     reasoning_effort: str = "high"  # low, medium, high
-    max_tokens: Optional[int] = None
+    max_tokens: int | None = None
     track: str = "TRACK1"
     api_key: str = os.environ.get("OPENAI_API_KEY")
     # MACLA tuning (per-game overrides via YAML)
@@ -231,6 +232,7 @@ class LocalConfig(AgentConfig):
 @dataclass
 class PoetiqConfig(GeminiConfig):
     """Configuration for Poetiq self-evolving agent."""
+
     # Evolution parameters
     max_iterations: int = 10  # Max evolution cycles per episode
     max_solutions: int = 5  # Number of solutions to keep in history

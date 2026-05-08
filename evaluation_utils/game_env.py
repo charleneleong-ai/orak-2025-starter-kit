@@ -1,13 +1,14 @@
-import grpc
-import time
-import logging
 import io
+import logging
+import time
 import uuid
+
+import grpc
+import numpy as np
 from PIL import Image
 
 from evaluation_utils.protos import game_service_pb2 as pb2
 from evaluation_utils.protos import game_service_pb2_grpc as pb2_grpc
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +38,9 @@ class GameEnv:
         self.channel = grpc.insecure_channel(
             grpc_address,
             options=[
-                ('grpc.max_receive_message_length', 50 * 1024 * 1024),  # 50MB
-                ('grpc.max_send_message_length', 50 * 1024 * 1024),
-            ]
+                ("grpc.max_receive_message_length", 50 * 1024 * 1024),  # 50MB
+                ("grpc.max_send_message_length", 50 * 1024 * 1024),
+            ],
         )
         self.stub = pb2_grpc.GameEnvServiceStub(self.channel)
         self.session_token = None
@@ -51,7 +52,11 @@ class GameEnv:
         last_exception = None
 
         # Get method name for logging (gRPC callables don't have __name__)
-        method_name = getattr(method, '_method', 'unknown').decode('utf-8') if hasattr(method, '_method') else str(method)
+        method_name = (
+            getattr(method, "_method", "unknown").decode("utf-8")
+            if hasattr(method, "_method")
+            else str(method)
+        )
 
         while attempt < MAX_RETRIES and (time.time() - start_time) < MAX_RETRY_TIME:
             attempt += 1
@@ -72,7 +77,7 @@ class GameEnv:
 
                 # Transient errors: retry with backoff
                 if status_code in TRANSIENT_CODES:
-                    backoff = min(BACKOFF_BASE ** attempt, MAX_BACKOFF_INTERVAL)
+                    backoff = min(BACKOFF_BASE**attempt, MAX_BACKOFF_INTERVAL)
                     logger.warning(
                         f"Transient error {status_code.name} on {method_name}, "
                         f"retry {attempt}/{MAX_RETRIES} in {backoff:.1f}s"
@@ -87,18 +92,14 @@ class GameEnv:
 
     def connect(self):
         """Establish session with server."""
-        response = self._call_with_retry(
-            self.stub.RegisterSession,
-            pb2.Empty()
-        )
+        response = self._call_with_retry(self.stub.RegisterSession, pb2.Empty())
         self.session_token = response.session_token
         logger.info(f"Connected with session: {self.session_token}")
 
     def get_game_config(self) -> dict:
         """Get game configuration."""
         response = self._call_with_retry(
-            self.stub.GetGameConfig,
-            pb2.SessionRequest(session_token=self.session_token)
+            self.stub.GetGameConfig, pb2.SessionRequest(session_token=self.session_token)
         )
         return {
             "game_id": response.game_id,
@@ -111,13 +112,13 @@ class GameEnv:
     def load_obs(self) -> dict:
         """Get current observation."""
         response = self._call_with_retry(
-            self.stub.GetObservation,
-            pb2.SessionRequest(session_token=self.session_token)
+            self.stub.GetObservation, pb2.SessionRequest(session_token=self.session_token)
         )
         return self._parse_observation(response)
 
     def dispatch_final_action(self, action: str, request_id: str = None) -> dict:
         """Execute action and return result with new observation."""
+
         def convert_numpy(obj):
             if isinstance(obj, np.integer):
                 return int(obj)

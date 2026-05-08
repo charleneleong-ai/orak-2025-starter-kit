@@ -1,19 +1,18 @@
-from multiprocessing import Process
+import json
 import os
+import shutil
 import subprocess
 import sys
 import time
-import shutil
-import json
+
 import omegaconf
 from dotenv import load_dotenv
 
-from evaluation_utils.commons import GAME_SERVER_PORTS, GAME_DATA_DIR
-from evaluation_utils.renderer import get_renderer, Renderer
-from evaluation_utils.live_export import live_export_enabled
 from config.base import Settings
 from config.utils import load_hydra_settings
-
+from evaluation_utils.commons import GAME_DATA_DIR, GAME_SERVER_PORTS
+from evaluation_utils.live_export import live_export_enabled
+from evaluation_utils.renderer import Renderer, get_renderer
 
 LIVE_EXPORT_ENABLED = live_export_enabled()
 if LIVE_EXPORT_ENABLED:
@@ -23,8 +22,15 @@ else:
 
 load_dotenv()
 
+
 class GameLauncher:
-    def __init__(self, renderer: Renderer, settings: Settings | None = None, run_id: str | None = None, games: list[str] | None = None):
+    def __init__(
+        self,
+        renderer: Renderer,
+        settings: Settings | None = None,
+        run_id: str | None = None,
+        games: list[str] | None = None,
+    ):
         self.renderer = renderer
         self.settings = settings
         self.run_id = run_id
@@ -58,7 +64,7 @@ class GameLauncher:
 
     def __del__(self):
         self.force_stop_all_games()
-        
+
     def load_games(self) -> list[str]:
         self.games = []
         for g in list(GAME_SERVER_PORTS.keys()):
@@ -68,7 +74,7 @@ class GameLauncher:
                     self.renderer.event(f"Adding game {g} to game launcher")
                     self.games.append(g)
         return self.games
-    
+
     def clean_game_data_dir(self):
         if os.path.exists(GAME_DATA_DIR):
             shutil.rmtree(GAME_DATA_DIR)
@@ -84,13 +90,13 @@ class GameLauncher:
             score_val = 0
             try:
                 if os.path.exists(results_path):
-                    with open(results_path, "r", encoding="utf-8") as f:
+                    with open(results_path, encoding="utf-8") as f:
                         data = json.load(f)
                         score_val = int(data.get("score", 0))
             except Exception:
                 score_val = 0
             self.renderer.set_score(game, score_val)
-    
+
     def launch_game_server(self, game_name: str):
         if game_name in self.game_servers_procs:
             return self.game_servers_procs[game_name]
@@ -109,7 +115,7 @@ class GameLauncher:
             os.makedirs(game_data_dir)
 
         # Clean frames directory when live export is enabled
-        if getattr(self, '_live_export_enabled', False):
+        if getattr(self, "_live_export_enabled", False):
             frames_dir = os.path.join(game_data_dir, "frames")
             if os.path.exists(frames_dir):
                 shutil.rmtree(frames_dir, ignore_errors=True)
@@ -129,6 +135,7 @@ class GameLauncher:
                     data = env_config.model_dump()
                 else:
                     from dataclasses import asdict
+
                     data = asdict(env_config)
 
                 common_fields = ["env_name", "log_path"]
@@ -140,15 +147,17 @@ class GameLauncher:
                 self.renderer.event(f"Generated config for {game_name} at {config_path}...")
 
         if not config_path:
-             raise ValueError(f"Configuration for {game_name} is missing in settings. Cannot start game server.")
+            raise ValueError(
+                f"Configuration for {game_name} is missing in settings. Cannot start game server."
+            )
 
         cmd = [
             sys.executable,
             game_server_script,
         ]
-        
+
         cmd.extend(["--config", config_path])
-            
+
         env = os.environ.copy()
         env["PORT"] = str(GAME_SERVER_PORTS[game_name])
         env["GAME_DATA_DIR"] = game_data_dir
@@ -160,7 +169,9 @@ class GameLauncher:
         log_file_path = os.path.join(game_data_dir, "game_server.log")
         self.output_files[game_name] = open(log_file_path, "w")
 
-        proc = subprocess.Popen(cmd, env=env, stdout=self.output_files[game_name], stderr=self.output_files[game_name])
+        proc = subprocess.Popen(
+            cmd, env=env, stdout=self.output_files[game_name], stderr=self.output_files[game_name]
+        )
         self.game_servers_procs[game_name] = proc
         self.proc_start_times[game_name] = time.time()
 
@@ -181,7 +192,7 @@ class GameLauncher:
         self.renderer.event("All game servers launched successfully")
         if self._live_export_aggregator:
             self._live_export_aggregator.start()
-    
+
     def clean_up_game_server(self, game_name: str):
         """
         Terminate a game server process and close any associated resources.
@@ -217,7 +228,7 @@ class GameLauncher:
                 f.close()
             except Exception:
                 pass
-    
+
     def stop_game_server(self, game_name: str, silent: bool = False):
         if game_name in self.game_servers_procs:
             if self.game_servers_procs[game_name].poll() is not None:
@@ -237,7 +248,7 @@ class GameLauncher:
             self.stop_game_server(game_name, silent=True)
         if self._live_export_aggregator:
             self._live_export_aggregator.stop()
-    
+
     def wait_for_games_to_finish(self):
         completed_games: set[str] = set()
         total_games = len(self.game_servers_procs)
@@ -261,7 +272,9 @@ class GameLauncher:
                             time.sleep(0.1)
 
                     if return_code != 0 or not os.path.exists(results_path):
-                        self.renderer.warn(f"Game server {game_name} crashed with return code {return_code}")
+                        self.renderer.warn(
+                            f"Game server {game_name} crashed with return code {return_code}"
+                        )
                         self.renderer.set_server_status(game_name, "failed")
                         self.force_stop_all_games()
                         return
@@ -282,13 +295,13 @@ class GameLauncher:
 if __name__ == "__main__":
     renderer = get_renderer()
     renderer.start(local=True)
-    
+
     # Load settings for standalone execution
     settings = load_hydra_settings("gemini")
 
     try:
         game_launcher = GameLauncher(renderer, settings=settings)
-       
+
         renderer.event(f"Starting game servers for games: {game_launcher.games}...")
         game_launcher.start_game_servers()
         game_launcher.wait_for_games_to_finish()

@@ -1,25 +1,26 @@
 import asyncio
+import base64
+import json
 import os
 from datetime import datetime
-import json
-import backoff
-from typing import Any
-
-import base64
 from io import BytesIO
 from pathlib import Path
+from typing import Any
+
+import backoff
+from loguru import logger
+
+from config.base import Settings
+from config.utils import load_agent_map
 
 # from evaluation_utils.sessions import Session
 from evaluation_utils.checkpoint_manager import CheckpointManager
+from evaluation_utils.commons import GAME_DATA_DIR, GAME_SERVER_PORTS
 from evaluation_utils.game_env import GameEnv
-from evaluation_utils.commons import GAME_SERVER_PORTS, GAME_DATA_DIR
 from evaluation_utils.game_server_launcher import GameLauncher
 from evaluation_utils.renderer import Renderer
 from evaluation_utils.sessions import Session
-from config.base import Settings
-from config.utils import load_agent_map
-from loguru import logger
-from evaluation_utils.checkpointable import Checkpointable
+
 
 def act_with_weave_context(agent, obs, step):
     """Run ``agent.act`` under the agent's weave project, but only re-init
@@ -40,11 +41,10 @@ def act_with_weave_context(agent, obs, step):
     if not weave_project:
         return agent.act(obs, step=step)
     from weave.trace.context import weave_client_context as wcc
+
     cur = wcc.get_weave_client()
     cur_full = (
-        f"{cur.entity}/{cur.project}"
-        if cur is not None and getattr(cur, "entity", None)
-        else None
+        f"{cur.entity}/{cur.project}" if cur is not None and getattr(cur, "entity", None) else None
     )
     if cur_full == weave_project:
         return agent.act(obs, step=step)
@@ -62,15 +62,15 @@ def pil_image_to_base64(image_object):
     # Create a buffer in memory
     buffered = BytesIO()
     # Save the image object to the buffer in JPEG format
-    # Note: If the original image has an RGBA mode, convert it to RGB first 
+    # Note: If the original image has an RGBA mode, convert it to RGB first
     # if saving as JPEG, as JPEG does not support the alpha channel.
-    if image_object.mode == 'RGBA':
-        image_object = image_object.convert('RGB')
-        
+    if image_object.mode == "RGBA":
+        image_object = image_object.convert("RGB")
+
     image_object.save(buffered, format="JPEG")
     # Get the value from the buffer and encode it in base64
     img_bytes = buffered.getvalue()
-    encoded_string = base64.b64encode(img_bytes).decode('utf-8')
+    encoded_string = base64.b64encode(img_bytes).decode("utf-8")
     return encoded_string
 
 
@@ -122,7 +122,7 @@ class Runner:
         else:
             # Remote mode: always run all games; per-game selection is only supported locally
             self.games = list(GAME_SERVER_PORTS.keys())
-        
+
         # Load agents only for selected games
         self.agent_map = load_agent_map(self.settings, self.games)
 
@@ -132,7 +132,9 @@ class Runner:
         self._should_delete_session_file = False
 
         if self.local:
-            mode_suffix = " (managing servers)" if self.manage_local_game_servers else " (attach mode)"
+            mode_suffix = (
+                " (managing servers)" if self.manage_local_game_servers else " (attach mode)"
+            )
             self.renderer.event(f"Running in LOCAL mode{mode_suffix}")
 
             ports = grpc_ports or GAME_SERVER_PORTS
@@ -141,7 +143,11 @@ class Runner:
                 raise ValueError(f"Missing port(s) for game(s): {', '.join(missing)}")
 
             self.grpc_addresses = {game: f"{grpc_host}:{ports[game]}" for game in self.games}
-            self.game_launcher = GameLauncher(renderer, settings=self.settings, run_id=self.run_id, games=self.games) if self.manage_local_game_servers else None
+            self.game_launcher = (
+                GameLauncher(renderer, settings=self.settings, run_id=self.run_id, games=self.games)
+                if self.manage_local_game_servers
+                else None
+            )
         else:
             self.renderer.event("Running in REMOTE mode")
             self.session = Session(session_id=session_id, renderer=self.renderer)
@@ -155,7 +161,7 @@ class Runner:
             # If no session-id provided, check persisted session file
             if self.session.session_id is None and os.path.exists(session_file):
                 try:
-                    with open(session_file, "r", encoding="utf-8") as f:
+                    with open(session_file, encoding="utf-8") as f:
                         previous_session_id = f.read().strip()
                 except Exception:
                     previous_session_id = ""
@@ -163,7 +169,7 @@ class Runner:
                 if previous_session_id:
                     if self.renderer.confirm(
                         f"Found previous session [bold]{previous_session_id}[/bold]. Continue it?",
-                        default=True
+                        default=True,
                     ):
                         self.renderer.event(f"Continuing previous session: {previous_session_id}")
                         self.session.session_id = previous_session_id
@@ -196,7 +202,7 @@ class Runner:
             self.renderer.event(f"Waiting for session {self.session.session_id} to start...")
             self.session.wait_for_start()
             self.renderer.event(f"Session {self.session.session_id} is ready")
-    
+
     async def evaluate_all_games(self):
         if self.local:
             ## Load initial board states from checkpoint if set
@@ -213,9 +219,13 @@ class Runner:
                                 score = gs.get("game_score")
                                 if score is None:
                                     score = gs.get("score", 0)
-                                total_steps=gs.get("total_steps", 0)
-                                logger.info(f"Injecting initial board state for {game_name} from checkpoint")
-                                logger.debug(f"Board state: {board}; score: {score}, step: {total_steps}")
+                                total_steps = gs.get("total_steps", 0)
+                                logger.info(
+                                    f"Injecting initial board state for {game_name} from checkpoint"
+                                )
+                                logger.debug(
+                                    f"Board state: {board}; score: {score}, step: {total_steps}"
+                                )
                                 if board:
                                     g_settings = getattr(self.settings, game_name)
                                     # Assuming env config is mutable
@@ -296,7 +306,7 @@ class Runner:
             if hasattr(agent, "set_log_dir"):
                 game_log_dir = self._get_game_log_dir(game_name)
                 agent.set_log_dir(game_log_dir)
-            
+
             if hasattr(agent, "get_model_declaration"):
                 try:
                     model_decl = agent.get_model_declaration()
@@ -309,11 +319,15 @@ class Runner:
             states_f = open(game_states_path, "a", encoding="utf-8")
 
             game_config = await self._call_in_thread(env.get_game_config)
-            
+
             # Prefer max_episodes from settings if available
             if self.settings:
                 game_settings = getattr(self.settings, game_name, None)
-                if game_settings and hasattr(game_settings, "env") and hasattr(game_settings.env, "max_episodes"):
+                if (
+                    game_settings
+                    and hasattr(game_settings, "env")
+                    and hasattr(game_settings.env, "max_episodes")
+                ):
                     max_episodes = game_settings.env.max_episodes
                 else:
                     max_episodes = game_config.get("max_episodes")
@@ -324,7 +338,11 @@ class Runner:
             max_steps = None
             if self.settings:
                 game_settings = getattr(self.settings, game_name, None)
-                if game_settings and hasattr(game_settings, "env") and hasattr(game_settings.env, "max_steps"):
+                if (
+                    game_settings
+                    and hasattr(game_settings, "env")
+                    and hasattr(game_settings.env, "max_steps")
+                ):
                     max_steps = game_settings.env.max_steps
             if max_steps is None:
                 max_steps = game_config.get("max_steps")
@@ -338,24 +356,30 @@ class Runner:
                 episode = game_config.get("current_episode", 0)
                 # Load checkpoint if enabled
                 total_steps = 0
-                if self.load_checkpoint and hasattr(agent, 'load_state'):
+                if self.load_checkpoint and hasattr(agent, "load_state"):
                     try:
                         # If prev_run_id is set, load from that run's checkpoint dir
                         # rather than this (empty) run's. Used by autoresearch.py
                         # to carry MACLA's learned procedures across iterations.
                         if self.prev_run_id:
-                            prev_dir = self._get_game_run_dir(game_name).parent / self.prev_run_id / "checkpoints"
+                            prev_dir = (
+                                self._get_game_run_dir(game_name).parent
+                                / self.prev_run_id
+                                / "checkpoints"
+                            )
                             if prev_dir.exists():
                                 checkpoint_manager = CheckpointManager(checkpoint_dir=str(prev_dir))
                                 logger.info(f"Loading checkpoint from prev run: {prev_dir}")
                             else:
-                                logger.warning(f"prev_run_id={self.prev_run_id} but {prev_dir} does not exist; falling back to current run")
+                                logger.warning(
+                                    f"prev_run_id={self.prev_run_id} but {prev_dir} does not exist; falling back to current run"
+                                )
                                 checkpoint_manager = self._get_checkpoint_manager(game_name)
                         else:
                             checkpoint_manager = self._get_checkpoint_manager(game_name)
                         checkpoint_data = checkpoint_manager.load_latest_agent_checkpoint(agent)
                         if checkpoint_data:
-                            game_state = checkpoint_data.get('game_state', {})
+                            game_state = checkpoint_data.get("game_state", {})
                             if self.prev_run_id:
                                 # Cross-iter load: keep MACLA learned state (already
                                 # restored by agent.load_state above) but reset
@@ -364,33 +388,49 @@ class Runner:
                                 # max_steps guard and inherit a stale last_score
                                 # that biases the first reward delta.
                                 for attr, val in (
-                                    ('_step_count', 0),
-                                    ('_episode_stats', []),
-                                    ('_last_score', 0),
-                                    ('_prev_state_str', 'N/A'),
-                                    ('_last_action', 'No action yet'),
-                                    ('_current_episode_stats', {'inference_calls': 0, 'input_tokens': 0, 'output_tokens': 0, 'tokens': 0}),
+                                    ("_step_count", 0),
+                                    ("_episode_stats", []),
+                                    ("_last_score", 0),
+                                    ("_prev_state_str", "N/A"),
+                                    ("_last_action", "No action yet"),
+                                    (
+                                        "_current_episode_stats",
+                                        {
+                                            "inference_calls": 0,
+                                            "input_tokens": 0,
+                                            "output_tokens": 0,
+                                            "tokens": 0,
+                                        },
+                                    ),
                                 ):
                                     if hasattr(agent, attr):
                                         setattr(agent, attr, val)
-                                self.renderer.event(f"{game_display_name}: Inherited MACLA state from prev run, starting fresh episode")
+                                self.renderer.event(
+                                    f"{game_display_name}: Inherited MACLA state from prev run, starting fresh episode"
+                                )
                             else:
-                                episode = game_state.get('episode', episode)
-                                iteration = game_state.get('iteration', iteration)
-                                total_steps = game_state.get('total_steps', 0)
-                                current_score = game_state.get('score', 0)
-                                evaluation_score = game_state.get('evaluation_score', 0)
-                                game_score = game_state.get('game_score', 0)
-                                if hasattr(agent, '_step_count'):
+                                episode = game_state.get("episode", episode)
+                                iteration = game_state.get("iteration", iteration)
+                                total_steps = game_state.get("total_steps", 0)
+                                current_score = game_state.get("score", 0)
+                                evaluation_score = game_state.get("evaluation_score", 0)
+                                game_score = game_state.get("game_score", 0)
+                                if hasattr(agent, "_step_count"):
                                     agent._step_count = total_steps
-                                    logger.info(f'Synced agent step count to: {total_steps}')
-                                self.renderer.event(f"{game_display_name}: Resuming from checkpoint at episode {episode + 1}, step {total_steps}")
+                                    logger.info(f"Synced agent step count to: {total_steps}")
+                                self.renderer.event(
+                                    f"{game_display_name}: Resuming from checkpoint at episode {episode + 1}, step {total_steps}"
+                                )
                         else:
-                            self.renderer.event(f"{game_display_name}: No checkpoint found, starting fresh")
+                            self.renderer.event(
+                                f"{game_display_name}: No checkpoint found, starting fresh"
+                            )
                     except Exception as e:
                         logger.error(f"Failed to load checkpoint: {e}")
-                        self.renderer.event(f"{game_display_name}: Warning: Failed to load checkpoint: {e}")
-                        
+                        self.renderer.event(
+                            f"{game_display_name}: Warning: Failed to load checkpoint: {e}"
+                        )
+
                 avg_score = 0
                 while episode < max_episodes:
                     # Max steps guard (prevents endless single-episode games like Pokemon)
@@ -404,7 +444,9 @@ class Runner:
                     total_steps += 1
                     obs = await self._call_in_thread(env.load_obs)
 
-                    act_result = await self._call_in_thread(act_with_weave_context, agent, obs, total_steps)
+                    act_result = await self._call_in_thread(
+                        act_with_weave_context, agent, obs, total_steps
+                    )
                     action = act_result.get("action")
 
                     result = await self._call_in_thread(env.dispatch_final_action, action)
@@ -413,7 +455,9 @@ class Runner:
                     game_score = evaluation_score
                     if "obs" in result and "game_info" in result["obs"]:
                         try:
-                            game_score = float(result["obs"]["game_info"].get("score", evaluation_score))
+                            game_score = float(
+                                result["obs"]["game_info"].get("score", evaluation_score)
+                            )
                         except (ValueError, TypeError):
                             pass
                     current_score = evaluation_score
@@ -430,41 +474,48 @@ class Runner:
                             "result": result,
                             "current_score": current_score,
                             "evaluation_score": evaluation_score,
-                            "game_score": game_score
+                            "game_score": game_score,
                         }
-                        
+
                         # Add game_phase if available
-                        if hasattr(agent, '_game_phase'):
+                        if hasattr(agent, "_game_phase"):
                             log_entry["game_phase"] = agent._game_phase
-                        
+
                         states_f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
-                        states_f.flush()   
+                        states_f.flush()
                         # Save checkpoint if enabled (step-based)
-                        if self.save_checkpoints and hasattr(agent, 'get_state'):
+                        if self.save_checkpoints and hasattr(agent, "get_state"):
                             if total_steps % self.checkpoint_frequency == 0:
                                 try:
                                     checkpoint_manager = self._get_checkpoint_manager(game_name)
                                     checkpoint_manager.save_agent_checkpoint(
                                         agent=agent,
                                         game_state={
-                                            'current_episode': episode,
-                                            'score': game_score,
-                                            'game_score': game_score,
-                                            'evaluation_score': evaluation_score,
-                                            'iteration': iteration,
-                                            'steps_this_episode': iteration,
-                                            'total_steps': total_steps,
-                                            'board_state': obs['game_info'].get('board_state', []) if obs and 'game_info' in obs else [],
+                                            "current_episode": episode,
+                                            "score": game_score,
+                                            "game_score": game_score,
+                                            "evaluation_score": evaluation_score,
+                                            "iteration": iteration,
+                                            "steps_this_episode": iteration,
+                                            "total_steps": total_steps,
+                                            "board_state": obs["game_info"].get("board_state", [])
+                                            if obs and "game_info" in obs
+                                            else [],
                                         },
                                     )
-                                    logger.info(f"Saved checkpoint for {game_name} at step {total_steps}")
+                                    logger.info(
+                                        f"Saved checkpoint for {game_name} at step {total_steps}"
+                                    )
                                 except Exception as e:
                                     logger.error(f"Failed to save checkpoint: {e}")
                     except Exception as e:
                         # Do not fail the game loop on logging issues
                         import traceback
+
                         traceback.format_exc()
-                        self.renderer.event(f"{game_display_name}: Error writing game states: {e}, traceback: {traceback.format_exc()}, obs: {obs.keys()}, result: {result.keys()}")
+                        self.renderer.event(
+                            f"{game_display_name}: Error writing game states: {e}, traceback: {traceback.format_exc()}, obs: {obs.keys()}, result: {result.keys()}"
+                        )
                         pass
 
                     # Update game progress (score and elapsed time)
@@ -472,23 +523,25 @@ class Runner:
 
                     # Log every 10 iterations or on score changes
                     # if iteration % 10 == 0 or (iteration > 1 and current_score != self.scores.get(game_name, 0)):
-                    self.renderer.event(f"{game_display_name}: Step {iteration}, Episode: {episode+1}, Score: {current_score}")
+                    self.renderer.event(
+                        f"{game_display_name}: Step {iteration}, Episode: {episode + 1}, Score: {current_score}"
+                    )
 
                     if finished:
                         steps_this_episode = iteration
-                        
+
                         # Record episode stats
                         if hasattr(agent, "record_episode_end"):
                             seed = "unknown"
                             # Try to find seed in game info
                             final_game_info = result.get("obs", {}).get("game_info", {})
                             current_game_info = obs.get("game_info", {})
-                            
+
                             if "seed" in final_game_info:
                                 seed = final_game_info["seed"]
                             elif "seed" in current_game_info:
                                 seed = current_game_info["seed"]
-                                
+
                             agent.record_episode_end(episode + 1, game_name, seed, current_score)
 
                         episode += 1
@@ -498,9 +551,13 @@ class Runner:
                             f"{game_display_name}: Game finished after {steps_this_episode} steps with final score: {current_score}"
                         )
                         if episode < max_episodes:
-                            self.renderer.event(f"{game_display_name}: Starting new episode... ({episode+1}/{max_episodes})")
+                            self.renderer.event(
+                                f"{game_display_name}: Starting new episode... ({episode + 1}/{max_episodes})"
+                            )
                         else:
-                            self.renderer.event(f"{game_display_name}: Max episodes reached. Game finished.")
+                            self.renderer.event(
+                                f"{game_display_name}: Max episodes reached. Game finished."
+                            )
 
                 self.scores[game_name] = avg_score
 
@@ -551,50 +608,49 @@ class Runner:
         """
         Get the run directory for a specific game.
         Creates: game_logs/<game_name>/<run_id>/
-        
+
         Args:
             game_name: Name of the game
-            
+
         Returns:
             Path to game run directory
         """
-        
+
         game_run_dir = Path(GAME_DATA_DIR) / game_name / self.run_id
         game_run_dir.mkdir(parents=True, exist_ok=True)
         return game_run_dir
-    
+
     def _get_checkpoint_manager(self, game_name: str) -> "CheckpointManager":
         """
         Get or create checkpoint manager for a specific game.
         Creates: game_logs/<game_name>/<run_id>/checkpoints/
-        
+
         Args:
             game_name: Name of the game
-            
+
         Returns:
             CheckpointManager instance for the game
         """
         if game_name not in self.game_checkpoint_managers:
-            
             game_run_dir = self._get_game_run_dir(game_name)
             checkpoint_dir = game_run_dir / "checkpoints"
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            
+
             self.game_checkpoint_managers[game_name] = CheckpointManager(
                 checkpoint_dir=str(checkpoint_dir)
             )
             logger.info(f"Checkpoint directory for {game_name}: {checkpoint_dir}")
-        
+
         return self.game_checkpoint_managers[game_name]
-    
+
     def _get_game_log_dir(self, game_name: str) -> str:
         """
         Get the log directory for a specific game.
         Creates: game_logs/<game_name>/<run_id>/logs/
-        
+
         Args:
             game_name: Name of the game
-            
+
         Returns:
             Path to game log directory (as string for compatibility)
         """
