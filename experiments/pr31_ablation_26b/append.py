@@ -76,7 +76,7 @@ def append(
         ),
         "tags": ["pr31_ablation_26b", variant],
         "wandb_url": wandb_url or "",
-        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "timestamp": dt.datetime.now(dt.UTC).isoformat(),
         "config_name": "gemma_26b",
     }
     SWEEP_DIR.mkdir(parents=True, exist_ok=True)
@@ -87,6 +87,11 @@ def append(
 
 
 def render() -> Path:
+    from experiments.pr31_ablation_26b.render_progress import render as _render_custom
+    return _render_custom()
+
+
+def _legacy_render() -> Path:
     from autoresearch import render as ar
     PNG_OUT.parent.mkdir(parents=True, exist_ok=True)
     out = ar.render(
