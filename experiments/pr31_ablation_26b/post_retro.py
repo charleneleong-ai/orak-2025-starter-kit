@@ -24,7 +24,7 @@ RESULTS = SWEEP_DIR / "gemma_26b/results.jsonl"
 COMMENT_ID_FILE = SWEEP_DIR / ".retro_comment_id"
 PR_NUM = 31
 GH_REPO = "charleneleong-ai/orak-2025-starter-kit"
-PLOT_URL = f"https://github.com/{GH_REPO}/blob/feat/pokemon-planner-prompt/docs/experiments/gemma/plots/pr31_ablation_26b.png?raw=true"
+_PLOT_BASE = f"https://github.com/{GH_REPO}/blob/feat/pokemon-planner-prompt/docs/experiments/gemma/plots/pr31_ablation_26b.png?raw=true"
 
 ORDER = ["stage_a_26b", "stage_c_26b", "stage_b_26b", "stage_d_26b", "stage_d_plus_26b"]
 LABELS = {
@@ -176,7 +176,7 @@ def build_comment(rows: list[dict]) -> str:
     body = [
         "## PR #31 ablation — comparative retrospective",
         "",
-        f"![Progress]({PLOT_URL})",
+        f"![Progress]({_PLOT_BASE}&v={int(dt.datetime.now().timestamp())})",
         "",
         f"_Auto-updated **{ts}** · **{len(completed)}/{len(ORDER)}** stages complete_  ",
         f"_Pending: {', '.join(LABELS[v][0] for v in pending) or 'none'}_",
