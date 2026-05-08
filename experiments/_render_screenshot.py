@@ -19,14 +19,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-from autoresearch.results import (
-    KILL_GPU_SLOW,
-    KILL_GPU_SPIKE,
-    KILL_LOSS_BLOWUP,
-    KILL_NO_LEARNING,
-    KILL_POLICY_DIVERGENCE,
-    categorize_kill_reason,
-)
+from autoresearch.render import _kill_tag as _upstream_kill_tag
+from autoresearch.results import KILL_NO_LEARNING, categorize_kill_reason
 
 # ────────────────────────── EDIT FOR YOUR PROJECT ──────────────────────────
 TAG = "unified_macla"
@@ -110,11 +104,15 @@ def _orak_kill_classifier(kr: str) -> tuple[str, dict[str, str]] | None:
 def _kill_tag(kill_reason: str) -> str:
     """Map a long triage reason to a short category for the inline label.
 
-    Pure dispatcher over `categorize_kill_reason` — all string matching
-    lives in either upstream's builtin patterns or
-    `_orak_kill_classifier` (passed via the `extra_classifier=` hook).
-    Adding a new orak triage trigger means adding a branch to the
-    classifier, not to this function.
+    Dispatches orak-specific categories (returned by `_orak_kill_classifier`)
+    locally; delegates everything else to upstream's `_kill_tag`, so new
+    upstream KILL_* categories (e.g. GPU_HANG / GPU_WASTED / GPU_UNDERSIZED
+    / TIMEOUT) get canonical labels for free without per-consumer plumbing.
+
+    KILL_NO_LEARNING is kept locally because `_orak_kill_classifier` extends
+    upstream's matcher with orak's "no improvement" / "no_learn" wording —
+    delegating to `_upstream_kill_tag` would re-classify without the hook
+    and miss those phrasings.
     """
     if not (kill_reason or "").strip():
         return "killed early"
@@ -122,27 +120,15 @@ def _kill_tag(kill_reason: str) -> str:
         kill_reason,
         extra_classifier=_orak_kill_classifier,
     )
-
-    # Orak-specific categories (returned by _orak_kill_classifier).
     if category == _ORAK_KILL_PLATEAU:
         return f"killed: plateau {extras['plateau_pct']}%" if extras else "killed: plateau"
     if category == _ORAK_KILL_BELOW_BASELINE:
         return "killed: below baseline"
     if category == _ORAK_KILL_ITER_TIMEOUT:
         return "killed: iter timeout"
-
-    # Upstream categories (matched in autoresearch.results.categorize_kill_reason).
-    if category == KILL_POLICY_DIVERGENCE:
-        return f"killed: kl={extras['kl']} (policy)" if extras else "killed: policy divergence"
-    if category == KILL_LOSS_BLOWUP:
-        return f"killed: |loss|={extras['loss']}" if extras else "killed: loss blow-up"
-    if category == KILL_GPU_SPIKE:
-        return f"killed: {extras['step_time']}s GPU spike" if extras else "killed: GPU spike"
-    if category == KILL_GPU_SLOW:
-        return f"killed: {extras['step_time']}s/step (slow)" if extras else "killed: GPU slow"
     if category == KILL_NO_LEARNING:
         return "killed: no learning"
-    return f"killed: {kill_reason[:30]}"
+    return _upstream_kill_tag(kill_reason)
 
 
 def _load(path: Path) -> list[dict]:
