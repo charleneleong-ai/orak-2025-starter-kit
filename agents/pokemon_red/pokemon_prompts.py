@@ -119,6 +119,12 @@ quit
 ### Exploration Strategy ###
 - **Explore First**: If the 'Full Map' shows unexplored areas ('?'), prioritize actions that explore these areas. Think, plan and reason about the the ideal next location to maximise the unexplored areas ("?") in the map before exploring unexplored warp points.
 - **Avoid Loops**: Do not repeatedly enter and exit the same warp point/door without exploring the new room. If you have entered a 'WarpPoint' and the resulting `[Map Info]` `Map Name` is the same map you were on before warping (modulo case/floor suffix like `1f`/`2f`), or matches a map you have already visited recently, that warp is a STAIRCASE/loop — do not re-enter it. Pick a different `WarpPoint` instead.
+- **Exhaust Interactables Before Leaving (CRITICAL when stuck)**: Pokemon progresses through *gated cutscenes* — many milestones require interacting with a *specific* NPC or sprite to trigger a scripted event before the next action becomes available. If `[Stuck Detector]` fires or you have made no scoring progress for a while, *systematically interact with every visible non-tile cell on the map* before leaving the area. The Notable Objects block lists named sprites; track which ones you have and have NOT yet interacted with this episode, and prioritise the unvisited ones. Examples that commonly gate progress:
+  - `SPRITE_OAK*` / `SPRITE_BLUE*` / any uniquely-named NPC — talk to them with `interact_with_object`.
+  - `SPRITE_POKE_BALL*` on a table — these often only respond *after* the relevant NPC has spoken to you.
+  - `SIGN_*` cells — read every one in a new town for hints.
+  - Any `OBJ_*` placeholder you haven't tried yet.
+  Treating this as a checklist exposes scripted progression triggers that exploration-by-coordinate alone misses.
 - **Identifying Exits vs Staircases (CRITICAL for indoor maps)**: Most pokemon indoor maps (houses, labs, gyms, shops) follow a layout convention:
   - The **exit door** to the outside world is typically a `WarpPoint` on the **bottom edge** of the map (largest `y` coordinate, often `y == y_max - 1`). It is usually centered horizontally.
   - **Staircases** between floors are `WarpPoint`s in the **interior** of the map (smaller `y`, often near corners or against an internal wall). The starter house has its staircase at `(7, 1)` and its exit at `(2, 7)`/`(3, 7)`.
