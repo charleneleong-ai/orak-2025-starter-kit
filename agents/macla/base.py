@@ -45,7 +45,9 @@ class BaseMaclaAgent(BaseModel):
     _method_counters: dict = PrivateAttr(default_factory=lambda: {})
     _last_update_type: str = PrivateAttr(default="atomic_entry")
     _llm_reasoning: str = PrivateAttr(default="")  # Store LLM reasoning from fallback
-    _loop_detector: LoopDetector = PrivateAttr(default_factory=LoopDetector)
+    _loop_detector: LoopDetector = PrivateAttr(
+        default_factory=lambda: LoopDetector(score_grace_steps=10),
+    )
 
     def _init_macla_agent(self):
         """Initialize the MACLA agent based on config type."""

@@ -59,6 +59,54 @@ def test_silent_after_score_gain_resets_stagnation():
     assert sig.steps_since_score_gain == 0
 
 
+def test_score_grace_period_suppresses_render_after_recent_progress():
+    """``render()`` returns None for ``score_grace_steps`` after the
+    last score gain, even if the loop signal would otherwise fire.
+
+    From the PR #31 Stage D rerun retro: 64% of frames had Stuck Detector
+    firing even while the agent was actively progressing. The grace
+    period suppresses noise on the steps immediately following a score
+    bump (when the agent is mid-cutscene-chain and looks "stuck" on a
+    tile but is actually advancing the script).
+    """
+    d = LoopDetector(
+        state_repeat_threshold=3,
+        min_steps_before_firing=0,
+        score_grace_steps=5,
+    )
+    # Build a clear loop signal: 5 visits to the same tile, score 0.
+    sig = None
+    for _ in range(5):
+        sig = d.observe(state=("OaksLab", 4, 1), score=0, action_class="interact_with_object")
+    assert sig.is_loop()
+    assert d.render(sig) is not None  # fires before any score gain
+
+    # Score bumps to 1 — grace period kicks in.
+    sig = d.observe(state=("OaksLab", 4, 1), score=1, action_class="interact_with_object")
+    assert sig.steps_since_score_gain == 0
+    assert d.render(sig) is None  # suppressed despite is_loop() still true
+
+    # Stay on the tile through the grace window.
+    for _ in range(4):
+        sig = d.observe(state=("OaksLab", 4, 1), score=1, action_class="interact_with_object")
+        assert d.render(sig) is None
+
+    # Grace window over (steps_since_score_gain == 5) — fires again.
+    sig = d.observe(state=("OaksLab", 4, 1), score=1, action_class="interact_with_object")
+    assert sig.steps_since_score_gain == 5
+    assert d.render(sig) is not None
+
+
+def test_score_grace_default_zero_keeps_legacy_behavior():
+    """Existing callers that don't pass ``score_grace_steps`` get the
+    pre-grace behavior (fires the moment ``is_loop()`` is true)."""
+    d = LoopDetector(state_repeat_threshold=3, min_steps_before_firing=0)
+    sig = None
+    for _ in range(5):
+        sig = d.observe(state=("OaksLab", 4, 1), score=0, action_class="interact_with_object")
+    assert d.render(sig) is not None
+
+
 # ── state-recurrence detector ────────────────────────────────────────────
 
 

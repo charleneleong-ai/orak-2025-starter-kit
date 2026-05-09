@@ -40,6 +40,7 @@ DEFAULT_STATE_REPEAT_THRESHOLD = 3
 DEFAULT_ACTION_REPEAT_THRESHOLD = 5
 DEFAULT_OSCILLATION_THRESHOLD = 3  # min A→B→A→B switches to flag
 DEFAULT_MIN_STEPS_BEFORE_FIRING = 10  # don't nag during opening exploration
+DEFAULT_SCORE_GRACE_STEPS = 0  # opt-in suppression: don't fire for N steps after a score gain
 
 
 @dataclass
@@ -104,6 +105,7 @@ class LoopDetector:
     action_repeat_threshold: int = DEFAULT_ACTION_REPEAT_THRESHOLD
     oscillation_threshold: int = DEFAULT_OSCILLATION_THRESHOLD
     min_steps_before_firing: int = DEFAULT_MIN_STEPS_BEFORE_FIRING
+    score_grace_steps: int = DEFAULT_SCORE_GRACE_STEPS
 
     _states: deque = field(init=False)
     _maps: deque = field(init=False)  # for oscillation detection
@@ -242,6 +244,8 @@ class LoopDetector:
             )
 
         if self._step < self.min_steps_before_firing:
+            return None
+        if signal.steps_since_score_gain < self.score_grace_steps:
             return None
         if not signal.is_loop(
             state_repeat_threshold=self.state_repeat_threshold,
