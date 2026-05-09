@@ -62,6 +62,10 @@ class VectorMemoryProvider(MemoryProvider):
         default_top_k: int = 3,
         default_threshold: float = 0.5,
         dim: int = 1536,
+        use_mmr: bool = False,
+        mmr_lambda: float = 0.5,
+        repetition_decay_alpha: float = 0.0,
+        repetition_decay_window: int = 20,
     ) -> None:
         self._embedding_fn = embedding_fn
         self._embedding_model = embedding_model
@@ -70,6 +74,14 @@ class VectorMemoryProvider(MemoryProvider):
         self._default_top_k = default_top_k
         self._default_threshold = default_threshold
         self._dim = dim
+        # MMR rerank: λ=1 → relevance only (default top-k), λ=0 → diversity only.
+        self._use_mmr = use_mmr
+        self._mmr_lambda = mmr_lambda
+        # Repetition decay: each retrieval call multiplies every memory's
+        # recent_hits by (1 - 1/W); selected memories get +1. Effective score
+        # = sim / (1 + α · recent_hits). α=0 disables.
+        self._repetition_decay_alpha = repetition_decay_alpha
+        self._repetition_decay_window = max(1, repetition_decay_window)
         self._memories: list[dict[str, Any]] = []
         self._client = None  # lazy — only when OpenAI backend is used
         self._client_unavailable = False
@@ -222,6 +234,7 @@ class VectorMemoryProvider(MemoryProvider):
                 "embedding": embedding,
                 "metadata": metadata or {},
                 "timestamp": time.time(),
+                "recent_hits": 0.0,
             }
         )
         self._stats["adds"] += 1
@@ -234,22 +247,77 @@ class VectorMemoryProvider(MemoryProvider):
         self._stats["retrievals"] += 1
         if not self._memories:
             return []
+
+        # Decay every memory's recent-hit count once per retrieval call.
+        # Done before scoring so the call that follows a long absence sees
+        # near-zero penalty even on memories that were heavily retrieved.
+        if self._repetition_decay_alpha > 0:
+            decay = 1.0 - 1.0 / self._repetition_decay_window
+            for m in self._memories:
+                m["recent_hits"] *= decay
+
         q = self._embed(query)
-        hits = []
+        candidates = []
         for m in self._memories:
             sim = self._cosine(q, m["embedding"])
-            if sim >= threshold:
-                hits.append(
-                    {
-                        "content": m["content"],
-                        "metadata": m["metadata"],
-                        "similarity": sim,
-                    }
-                )
-        if hits:
+            penalty = 1.0 + self._repetition_decay_alpha * m.get("recent_hits", 0.0)
+            score = sim / penalty if penalty > 0 else sim
+            if score >= threshold:
+                candidates.append({"_memory": m, "similarity": sim, "score": score})
+
+        if candidates:
             self._stats["hits"] += 1
-        hits.sort(key=lambda x: x["similarity"], reverse=True)
-        return hits[:top_k]
+
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        selected = (
+            self._mmr_rerank(candidates, q, top_k=top_k) if self._use_mmr else candidates[:top_k]
+        )
+
+        # Mark every memory we are about to surface as recently retrieved so
+        # the next call sees its decay applied.
+        if self._repetition_decay_alpha > 0:
+            for c in selected:
+                c["_memory"]["recent_hits"] += 1.0
+
+        return [
+            {
+                "content": c["_memory"]["content"],
+                "metadata": c["_memory"]["metadata"],
+                "similarity": c["similarity"],
+            }
+            for c in selected
+        ]
+
+    def _mmr_rerank(
+        self,
+        candidates: list[dict[str, Any]],
+        query_emb: np.ndarray,
+        *,
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        """Greedy maximal-marginal-relevance rerank over already-scored candidates.
+
+        Each step picks the candidate maximising
+        ``λ·score(c) − (1−λ)·max_sim(c, already_selected)`` —
+        keeps the high-score winners but penalises clustering near them.
+        """
+        if not candidates or top_k <= 0:
+            return []
+        remaining = candidates[:]
+        selected: list[dict[str, Any]] = [remaining.pop(0)]  # global max first
+        lam = self._mmr_lambda
+        while remaining and len(selected) < top_k:
+            best_idx, best_mmr = 0, -float("inf")
+            for i, c in enumerate(remaining):
+                max_div = max(
+                    self._cosine(c["_memory"]["embedding"], s["_memory"]["embedding"])
+                    for s in selected
+                )
+                mmr = lam * c["score"] - (1.0 - lam) * max_div
+                if mmr > best_mmr:
+                    best_mmr, best_idx = mmr, i
+            selected.append(remaining.pop(best_idx))
+        return selected
 
     @staticmethod
     def _format_for_prompt(memories: list[dict[str, Any]]) -> str:
