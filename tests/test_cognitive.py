@@ -271,3 +271,142 @@ def test_local_sentence_transformers_backend(monkeypatch):
     out = p.prefetch("brown fox")
     assert "brown fox" in out  # semantic match should succeed
     assert p.stats()["backend"] == "local"
+
+
+# ── MMR diversity reranking ──────────────────────────────────────────────
+#
+# Vmem-only retrieval can collapse: the agent stalls in one state, every
+# retrieval returns near-duplicate stuck-state memories, reinforcing the
+# same dead-end action. MMR breaks that by penalising candidates that
+# are too similar to ones already selected.
+
+
+def _embed_table(table: dict[str, list[float]]):
+    """Embedding-fn factory: keys → fixed vectors. Unknown text → zero vector."""
+
+    def _fn(text: str):
+        return np.array(table.get(text, [0.0, 0.0, 0.0, 0.0]))
+
+    return _fn
+
+
+def test_mmr_disabled_preserves_top_k_by_similarity():
+    """Default behaviour (use_mmr=False) is unchanged — top_k by similarity."""
+    embed = _embed_table(
+        {
+            "query": [1.0, 0.0, 0.0, 0.0],
+            "near_a": [0.99, 0.01, 0.0, 0.0],
+            "near_b": [0.98, 0.02, 0.0, 0.0],
+            "near_c": [0.97, 0.03, 0.0, 0.0],
+            "diff": [0.6, 0.0, 0.8, 0.0],
+        }
+    )
+    p = VectorMemoryProvider(embedding_fn=embed)
+    for k in ("near_a", "near_b", "near_c", "diff"):
+        p.add_memory(k)
+    hits = p.retrieve_similar("query", top_k=3, threshold=0.0)
+    contents = [h["content"] for h in hits]
+    assert contents == ["near_a", "near_b", "near_c"]
+
+
+def test_mmr_diversity_breaks_near_duplicate_cluster():
+    """With MMR on, near-duplicates get crowded out by diverse high-sim picks."""
+    embed = _embed_table(
+        {
+            "query": [1.0, 0.0, 0.0, 0.0],
+            "near_a": [0.99, 0.01, 0.0, 0.0],
+            "near_b": [0.99, 0.01, 0.0, 0.0],  # near-identical to near_a
+            "near_c": [0.99, 0.01, 0.0, 0.0],  # near-identical to near_a
+            "diff_x": [0.7, 0.0, 0.7, 0.0],  # high q-sim, orthogonal to near_*
+            "diff_y": [0.7, 0.0, 0.0, 0.7],  # high q-sim, orthogonal to others
+        }
+    )
+    p = VectorMemoryProvider(embedding_fn=embed, use_mmr=True, mmr_lambda=0.5)
+    for k in ("near_a", "near_b", "near_c", "diff_x", "diff_y"):
+        p.add_memory(k)
+    hits = p.retrieve_similar("query", top_k=3, threshold=0.0)
+    contents = {h["content"] for h in hits}
+    # First pick is the global max (one of the near_* — they tie).
+    # MMR's job is to keep the *next* picks from being more near_*.
+    assert "diff_x" in contents or "diff_y" in contents, (
+        f"MMR failed to inject any diverse memory: {contents}"
+    )
+    near_count = sum(1 for c in contents if c.startswith("near_"))
+    assert near_count <= 1, f"MMR returned {near_count} near-duplicates, expected ≤1: {contents}"
+
+
+# ── repetition decay ─────────────────────────────────────────────────────
+#
+# Without a decay, a memory that was top-1 once stays top-1 forever — the
+# Stage C feedback loop. Decay lets the second-place candidate eventually
+# surface, breaking single-memory dominance.
+
+
+def test_repetition_decay_disabled_returns_same_memory():
+    """Default (alpha=0.0) is unchanged — every retrieval returns same order."""
+    embed = _embed_table(
+        {
+            "query": [1.0, 0.0, 0.0, 0.0],
+            "best": [0.9, 0.1, 0.0, 0.0],
+            "second": [0.8, 0.2, 0.0, 0.0],
+        }
+    )
+    p = VectorMemoryProvider(embedding_fn=embed)
+    p.add_memory("best")
+    p.add_memory("second")
+    for _ in range(5):
+        hits = p.retrieve_similar("query", top_k=1, threshold=0.0)
+        assert hits[0]["content"] == "best"
+
+
+def test_repetition_decay_downweights_recently_retrieved():
+    """With decay on, repeated retrieval rotates the top result."""
+    embed = _embed_table(
+        {
+            "query": [1.0, 0.0, 0.0, 0.0],
+            "best": [0.9, 0.1, 0.0, 0.0],
+            "second": [0.85, 0.15, 0.0, 0.0],
+        }
+    )
+    p = VectorMemoryProvider(
+        embedding_fn=embed,
+        repetition_decay_alpha=2.0,
+        repetition_decay_window=5,
+    )
+    p.add_memory("best")
+    p.add_memory("second")
+    seen = []
+    for _ in range(6):
+        hits = p.retrieve_similar("query", top_k=1, threshold=0.0)
+        seen.append(hits[0]["content"])
+    assert "second" in seen, f"decay never rotated to second: {seen}"
+    assert seen[0] == "best", f"first call should still pick best: {seen}"
+
+
+def test_decay_recovers_after_window():
+    """A memory that hasn't been retrieved for ~W calls should top the list again."""
+    embed = _embed_table(
+        {
+            "query_a": [1.0, 0.0, 0.0, 0.0],
+            "query_b": [0.0, 1.0, 0.0, 0.0],
+            "mem_a": [0.95, 0.0, 0.0, 0.0],
+            "mem_b": [0.0, 0.95, 0.0, 0.0],
+        }
+    )
+    p = VectorMemoryProvider(
+        embedding_fn=embed,
+        repetition_decay_alpha=2.0,
+        repetition_decay_window=5,
+    )
+    p.add_memory("mem_a")
+    p.add_memory("mem_b")
+    # Burn down mem_a's freshness with repeated query_a hits.
+    for _ in range(4):
+        p.retrieve_similar("query_a", top_k=1, threshold=0.0)
+    # Now retrieve mem_b a bunch of times — mem_a's recent_hits should decay.
+    for _ in range(20):
+        p.retrieve_similar("query_b", top_k=1, threshold=0.0)
+    hits = p.retrieve_similar("query_a", top_k=1, threshold=0.0)
+    assert hits[0]["content"] == "mem_a", (
+        "mem_a should top query_a again after long absence from retrieval"
+    )

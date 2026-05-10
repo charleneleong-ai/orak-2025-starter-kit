@@ -168,6 +168,10 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             max_memories=getattr(config, "vector_memory_max", 100),
             default_top_k=getattr(config, "vector_memory_top_k", 3),
             default_threshold=getattr(config, "vector_memory_threshold", 0.5),
+            use_mmr=getattr(config, "vector_memory_use_mmr", False),
+            mmr_lambda=getattr(config, "vector_memory_mmr_lambda", 0.5),
+            repetition_decay_alpha=getattr(config, "vector_memory_decay_alpha", 0.0),
+            repetition_decay_window=getattr(config, "vector_memory_decay_window", 20),
         )
         provider.initialize(
             session_id=str(getattr(self.wandb_config, "run_id", "") or ""),

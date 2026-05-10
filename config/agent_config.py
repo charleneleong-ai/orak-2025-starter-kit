@@ -180,6 +180,10 @@ class LocalConfig(AgentConfig):
     vector_memory_max: int = 100
     vector_memory_top_k: int = 3
     vector_memory_threshold: float = 0.5
+    vector_memory_use_mmr: bool = False
+    vector_memory_mmr_lambda: float = 0.5
+    vector_memory_decay_alpha: float = 0.0
+    vector_memory_decay_window: int = 20
 
     # Optional subtask planner (Stage D). When True, UnifiedMaclaAgent calls
     # an LLM-backed SubtaskPlanner before each LLM-fallback step and injects
