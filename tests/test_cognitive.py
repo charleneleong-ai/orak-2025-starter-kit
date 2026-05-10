@@ -275,10 +275,10 @@ def test_local_sentence_transformers_backend(monkeypatch):
 
 # ── MMR diversity reranking ──────────────────────────────────────────────
 #
-# Stage C of the PR #31 ablation collapsed to 0% because vmem-only retrieval
-# kept handing back near-duplicate stuck-state memories, reinforcing the same
-# dead-end action. MMR breaks that by penalising candidates that are too
-# similar to ones already selected.
+# Vmem-only retrieval can collapse: the agent stalls in one state, every
+# retrieval returns near-duplicate stuck-state memories, reinforcing the
+# same dead-end action. MMR breaks that by penalising candidates that
+# are too similar to ones already selected.
 
 
 def _embed_table(table: dict[str, list[float]]):
