@@ -70,3 +70,34 @@ wandb/
 experiments/**/progress.html
 experiments/**/progress.png
 experiments/**/progress_static.png
+
+# PR-specific rolling-comment pointer files (autoresearch convention):
+# stores the GitHub issue/PR comment ID that ``post_retro.py``-style scripts
+# PATCH each run. Per-PR — pointers go stale the moment the PR merges.
+experiments/**/.retro_comment_id
+
+# Per-PR ad-hoc orchestration scripts. These wrap ``uv run python run.py``
+# with sed-mutations of the agent/env configs for a single retest, then
+# call append.py + post_retro.py. They're useful while a PR's sweep chain
+# is in flight but become dead weight once the PR merges. Keep them in
+# the PR worktree only; don't commit to master.
+#
+# Pattern is intentionally broad (matches run_chain.sh, run_stage_*.sh,
+# validate_*.sh, run_baseline_*.sh, etc). If a script in this layer is
+# genuinely durable (i.e. callable across PRs), promote it to
+# ``experiments/scripts/`` or upstream into ``autoresearch.sweep_runner``
+# rather than overriding this rule.
+experiments/pr*/run_*.sh
+experiments/pr*/validate_*.sh
+experiments/pr*/**/run_*.sh
+experiments/pr*/**/validate_*.sh
+experiments/*_check*/run_*.sh
+experiments/v14*/run_*.sh
+
+# PR-specific post-retro / render / append scripts. Same rationale —
+# the autoresearch package + experiment_progress provide the durable
+# helpers; per-PR copies hardcode PR_NUM / ORDER / paths and break the
+# moment the PR closes.
+experiments/pr*/post_retro.py
+experiments/pr*/render_progress.py
+experiments/pr*/append.py
