@@ -198,13 +198,13 @@ class LocalConfig(AgentConfig):
     # actually see evidence (the legacy 1-line history made them inert).
     subtask_history_steps: int = 8
 
-    # Optional self-reflection module. When True, UnifiedMaclaAgent runs an
-    # LLM-backed reflector every reflection_every steps and injects the
-    # resulting critique into the action LLM's user prompt. Helps surface
-    # patterns (looping, missed opportunities) the action LLM loses across
-    # steps. Cost: 1 extra LLM call per reflection_every steps. Default off.
-    use_self_reflection: bool = False
-    reflection_every: int = 10
+    # Optional self-reflection module. Precedence: explicit YAML value >
+    # adapter ``RECOMMENDED_USE_SELF_REFLECTION`` / ``RECOMMENDED_REFLECTION_EVERY``
+    # (per-game cross-game-retro findings; see PR #64) > hardcoded fallback.
+    # Set the YAML key to ``null`` (or omit it) to let the adapter pick the
+    # per-game default; set ``true``/``false`` or an int to override.
+    use_self_reflection: bool | None = None
+    reflection_every: int | None = None
     reflection_max_chars: int = 600
 
     # Optional shaped-reward overrides. Keys are merged on top of

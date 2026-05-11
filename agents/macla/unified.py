@@ -144,15 +144,24 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         self._obs_preprocessor = factory() if factory is not None else None
 
     def _maybe_init_self_reflector(self, config: Any):
-        """Optional self-reflection module (every N steps). Activated by
-        ``config.use_self_reflection``; default off so existing runs are
-        unchanged. Adapters can override the system prompt via
-        ``SELF_REFLECTOR_SYSTEM_PROMPT`` exported on the adapter module."""
-        if not getattr(config, "use_self_reflection", False):
+        """Optional self-reflection module. Precedence:
+        config.use_self_reflection (explicit YAML) > adapter
+        RECOMMENDED_USE_SELF_REFLECTION (per-game retro finding) > False.
+
+        Adapters can also recommend ``RECOMMENDED_REFLECTION_EVERY`` and
+        override the critique prompt via ``SELF_REFLECTOR_SYSTEM_PROMPT``.
+        """
+        cfg_use = getattr(config, "use_self_reflection", None)
+        adapter_use = getattr(self._adapter, "RECOMMENDED_USE_SELF_REFLECTION", False)
+        use = cfg_use if cfg_use is not None else adapter_use
+        if not use:
             return None
+        adapter_every = getattr(self._adapter, "RECOMMENDED_REFLECTION_EVERY", 10)
+        cfg_every = getattr(config, "reflection_every", None)
+        reflect_every = cfg_every if cfg_every is not None else adapter_every
         adapter_system = getattr(self._adapter, "SELF_REFLECTOR_SYSTEM_PROMPT", None)
         kwargs: dict[str, Any] = dict(
-            reflect_every=getattr(config, "reflection_every", 10),
+            reflect_every=reflect_every,
             observation_chars=getattr(config, "reflection_max_chars", 600),
         )
         if adapter_system:
@@ -160,8 +169,9 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         reflector = LLMSelfReflector(self._llm, **kwargs)
         logger.info(
             f"[MACLA] self-reflector enabled "
-            f"(reflect_every={reflector._reflect_every}, "
-            f"observation_chars={reflector._observation_chars}, "
+            f"(use_source={'config' if cfg_use is not None else 'adapter'}, "
+            f"reflect_every={reflector._reflect_every} "
+            f"({'config' if cfg_every is not None else 'adapter'}), "
             f"adapter_system_prompt={'yes' if adapter_system else 'no'})"
         )
         return reflector

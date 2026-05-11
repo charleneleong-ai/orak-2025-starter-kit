@@ -663,3 +663,43 @@ def test_localconfig_declares_self_reflection_fields():
     assert c.use_self_reflection is True
     assert c.reflection_every == 5
     assert c.reflection_max_chars == 400
+
+
+def test_localconfig_self_reflection_defaults_to_none():
+    """Default LocalConfig leaves use_self_reflection / reflection_every as None
+    so the per-game adapter recommendation can win — see PR #64 cross-game retro."""
+    from config.agent_config import LocalConfig
+
+    c = LocalConfig(class_name="test", model="m", temperature=0.0)
+    assert c.use_self_reflection is None
+    assert c.reflection_every is None
+    assert c.reflection_max_chars == 600  # fallback char budget stays concrete
+
+
+def test_game_adapters_export_self_reflection_recommendations():
+    """Each game adapter publishes its per-game retro finding so the unified
+    agent can pick a sensible default when YAML doesn't override."""
+    from agents.pokemon_red import game_adapter as pkmn
+    from agents.super_mario import game_adapter as mario
+    from agents.twenty_fourty_eight import game_adapter as tfe
+
+    # Pokemon long-horizon dialog → reflection on, frequent ticks
+    assert pkmn.RECOMMENDED_USE_SELF_REFLECTION is True
+    assert pkmn.RECOMMENDED_REFLECTION_EVERY == 10
+    # Mario reactive but tied within noise → on, sparser ticks
+    assert mario.RECOMMENDED_USE_SELF_REFLECTION is True
+    assert mario.RECOMMENDED_REFLECTION_EVERY == 30
+    # 2048 reactive + measured regression → off
+    assert tfe.RECOMMENDED_USE_SELF_REFLECTION is False
+
+
+def test_unified_agent_self_reflector_factory_consults_adapter_recommendation():
+    """``_maybe_init_self_reflector`` reads the adapter's RECOMMENDED_*
+    constants when YAML doesn't explicitly set the keys."""
+    import inspect
+
+    from agents.macla import unified
+
+    src = inspect.getsource(unified.UnifiedMaclaAgent._maybe_init_self_reflector)
+    assert "RECOMMENDED_USE_SELF_REFLECTION" in src
+    assert "RECOMMENDED_REFLECTION_EVERY" in src

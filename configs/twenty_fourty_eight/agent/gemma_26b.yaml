@@ -23,7 +23,3 @@ subtask_observation_chars: 600
 macla_n_min_f: 1
 macla_n_min_s: 1
 macla_theta_decay: 0.001
-# Self-reflection (#62): periodic LLM critique injected into the action prompt
-use_self_reflection: true
-reflection_every: 10
-reflection_max_chars: 600

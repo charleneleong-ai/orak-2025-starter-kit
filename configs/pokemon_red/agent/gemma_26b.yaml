@@ -23,7 +23,3 @@ vector_memory_decay_window: 20
 use_subtask_planning: true
 subtask_replan_every: 5
 subtask_observation_chars: 600
-# Self-reflection (#62): periodic LLM critique injected into the action prompt
-use_self_reflection: true
-reflection_every: 10
-reflection_max_chars: 600

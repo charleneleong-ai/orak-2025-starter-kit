@@ -142,3 +142,11 @@ def calculate_metrics(game_info: dict) -> dict:
         metrics["evaluation_score"] = (raw_flags / 7.0) * 100.0
     metrics["score"] = float(game_info.get("score", 0))
     return metrics
+
+# ── Self-reflection recommendation (PR #64 cross-game retro) ──────────
+# Cross-game test (n=1, 300 steps) found self-reflection on pokemon enables
+# deeper stuck-state recoveries (Charmander naming + trainer-battle progression)
+# even when the headline score ties the Stage D baseline. Keep enabled for
+# long-horizon dialog-heavy progression.
+RECOMMENDED_USE_SELF_REFLECTION = True
+RECOMMENDED_REFLECTION_EVERY = 10

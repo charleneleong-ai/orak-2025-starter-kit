@@ -62,3 +62,12 @@ def calculate_metrics(game_info: dict) -> dict:
         metrics["evaluation_score"] = (x_pos - x_start) / (x_flag - x_start) * 100.0
     metrics["score"] = float(game_info.get("score", 0))
     return metrics
+
+
+# ── Self-reflection recommendation (PR #64 cross-game retro) ──────────
+# Mario is reactive; cross-game test (n=1, 300 steps) showed self-reflection
+# at reflect_every=10 ties Stage D baseline within noise (-0.38 pp), and
+# critiques are game-aware ("Goomba at (189, 47), stop jumping in place").
+# Keep enabled but sparser to amortise the extra LLM-call overhead.
+RECOMMENDED_USE_SELF_REFLECTION = True
+RECOMMENDED_REFLECTION_EVERY = 30
