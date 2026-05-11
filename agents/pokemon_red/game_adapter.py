@@ -142,3 +142,81 @@ def calculate_metrics(game_info: dict) -> dict:
         metrics["evaluation_score"] = (raw_flags / 7.0) * 100.0
     metrics["score"] = float(game_info.get("score", 0))
     return metrics
+
+
+# ── Action validators (PR #66 plan-do-check) ──────────────────────────
+# Per-game tool-gate. Validates that a proposed action references tiles
+# consistent with the current Map on Screen / Full Map block. Catches
+# the diagnosed Stage C′++ failure mode: agent emits move_to(3,7) instead
+# of warp_with_warp_point(3,7) — move_to to a WarpPoint doesn't trigger
+# the warp; tool-gating surfaces "this is a WarpPoint; use warp_with_warp_point
+# to actually travel through it".
+
+_MOVE_TO_RE = re.compile(r"move_to,\s*\(x_dest=(\d+),\s*y_dest=(\d+)", re.IGNORECASE)
+_WARP_RE = re.compile(r"warp_with_warp_point,\s*\(x_dest=(\d+),\s*y_dest=(\d+)", re.IGNORECASE)
+_TILE_RE = re.compile(r"\(\s*(\d+),\s*(\d+)\s*\):\s*([^\t\n]+?)(?=\t|$|\n)")
+
+_WALKABLE_VALUES = {"O", "G", "~"}
+_UNWALKABLE_VALUES = {"X", "-", "|", "?", "Cut", "TalkTo"}
+
+
+def _parse_tile_grid(obs: str) -> dict[tuple[int, int], str]:
+    """Extract ``(x, y) -> tile`` mapping from the obs's Map on Screen
+    or [Full Map] block. Returns empty dict if nothing parseable."""
+    grid: dict[tuple[int, int], str] = {}
+    for m in _TILE_RE.finditer(obs):
+        x, y, val = int(m.group(1)), int(m.group(2)), m.group(3).strip()
+        grid[(x, y)] = val
+    return grid
+
+
+def validate_action(action: str, observation: str) -> tuple[bool, str]:
+    """Adapter-side rule check for pokemon actions.
+
+    Returns ``(valid, reason)``. Reason is shown to the action LLM on
+    retry. Pass-through (True, "") for any action class without a
+    coordinate to check.
+    """
+    # warp_with_warp_point: target tile MUST be a WarpPoint in the obs.
+    m = _WARP_RE.search(action)
+    if m:
+        x, y = int(m.group(1)), int(m.group(2))
+        grid = _parse_tile_grid(observation)
+        tile = grid.get((x, y))
+        if tile is None:
+            return True, ""  # off-grid: can't decide, pass through
+        if "Warp" in tile or "WarpPoint" in tile:
+            return True, ""
+        return (
+            False,
+            f"Tile ({x}, {y}) is `{tile}`, not a WarpPoint. "
+            f"warp_with_warp_point only triggers when the target tile is a Warp; "
+            f"use move_to to walk to a non-warp tile.",
+        )
+
+    # move_to: target tile MUST be walkable.
+    m = _MOVE_TO_RE.search(action)
+    if m:
+        x, y = int(m.group(1)), int(m.group(2))
+        grid = _parse_tile_grid(observation)
+        tile = grid.get((x, y))
+        if tile is None:
+            return True, ""
+        if tile in _WALKABLE_VALUES or "Warp" in tile:
+            return True, ""
+        if tile in _UNWALKABLE_VALUES or tile.startswith("SPRITE_") or tile.startswith("SIGN"):
+            return (
+                False,
+                f"Tile ({x}, {y}) is `{tile}`, not walkable. "
+                f"move_to requires a walkable tile (O/G/Warp); pick another destination.",
+            )
+
+    # Anything else (interact_with_object, continue_dialog, battle tools) → pass through.
+    return True, ""
+
+
+# Adapter-recommended defaults (PR #66 retro). Pokemon's diagnosed failures
+# (tool-selection at RedsHouse exit; battle/dialog tool confusion) are exactly
+# what plan-do-check catches.
+RECOMMENDED_USE_TOOL_GATING = True
+RECOMMENDED_USE_PLAN_CHECK = True

@@ -207,6 +207,16 @@ class LocalConfig(AgentConfig):
     reflection_every: int = 10
     reflection_max_chars: int = 600
 
+    # Optional plan-do-check loop (PR #66). Precedence: explicit YAML value >
+    # adapter ``RECOMMENDED_USE_TOOL_GATING`` / ``RECOMMENDED_USE_PLAN_CHECK``
+    # > False. Tool gating is cheap (adapter-side rule check); plan check is
+    # an extra LLM call per step that validates subgoal alignment.
+    # validation_max_retries bounds how many times the action LLM is
+    # re-prompted with critique when validation rejects.
+    use_tool_gating: bool | None = None
+    use_plan_check: bool | None = None
+    validation_max_retries: int = 2
+
     # Optional shaped-reward overrides. Keys are merged on top of
     # `agents.macla.online_evaluator.DEFAULT_SHAPING[<game>]`. Useful for
     # ablation sweeps over shaping params without editing source. Example:

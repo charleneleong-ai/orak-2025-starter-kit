@@ -20,7 +20,14 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 from pydantic import BaseModel
 
-from agents._cognitive import LLMSelfReflector, LLMSubtaskPlanner, VectorMemoryProvider
+from agents._cognitive import (
+    CompositeValidator,
+    LLMPlanValidator,
+    LLMSelfReflector,
+    LLMSubtaskPlanner,
+    ToolGateValidator,
+    VectorMemoryProvider,
+)
 from agents._harness import format_recent_history, with_retries
 from agents.base import BaseOrakAgent
 from agents.macla.base import BaseMaclaAgent
@@ -134,6 +141,8 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         self._memory_provider = self._maybe_init_memory_provider(config)
         self._subtask_planner = self._maybe_init_subtask_planner(config)
         self._self_reflector = self._maybe_init_self_reflector(config)
+        self._action_validator = self._maybe_init_action_validator(config)
+        self._validation_max_retries = getattr(config, "validation_max_retries", 2) or 0
 
         # Game-specific observation preprocessor — pokemon needs the env's
         # screen-window 'Map on Screen' expanded to the full explored map,
@@ -142,6 +151,38 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         # ``make_observation_preprocessor``; mario / 2048 don't need this.
         factory = getattr(self._adapter, "make_observation_preprocessor", None)
         self._obs_preprocessor = factory() if factory is not None else None
+
+    def _maybe_init_action_validator(self, config: Any):
+        """Compose tool gate + plan check into a single validator.
+
+        Precedence per leg: explicit YAML ``use_tool_gating`` /
+        ``use_plan_check`` > adapter ``RECOMMENDED_USE_TOOL_GATING`` /
+        ``RECOMMENDED_USE_PLAN_CHECK`` > False. Returns ``None`` when both
+        legs are off (no overhead for runs that opted out).
+        """
+        cfg_tg = getattr(config, "use_tool_gating", None)
+        adapter_tg = getattr(self._adapter, "RECOMMENDED_USE_TOOL_GATING", False)
+        use_tool_gate = cfg_tg if cfg_tg is not None else adapter_tg
+
+        cfg_pc = getattr(config, "use_plan_check", None)
+        adapter_pc = getattr(self._adapter, "RECOMMENDED_USE_PLAN_CHECK", False)
+        use_plan_check = cfg_pc if cfg_pc is not None else adapter_pc
+
+        legs: list = []
+        if use_tool_gate:
+            adapter_check = getattr(self._adapter, "validate_action", None)
+            legs.append(ToolGateValidator(adapter_check=adapter_check))
+        if use_plan_check:
+            legs.append(LLMPlanValidator(self._llm))
+
+        if not legs:
+            return None
+        logger.info(
+            f"[MACLA] action validator enabled "
+            f"(tool_gate={use_tool_gate}, plan_check={use_plan_check}, "
+            f"max_retries={getattr(config, 'validation_max_retries', 2)})"
+        )
+        return CompositeValidator(legs)
 
     def _maybe_init_self_reflector(self, config: Any):
         """Optional self-reflection module (every N steps). Activated by
@@ -485,6 +526,8 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                     history=history_str,
                 )
                 if subtask:
+                    # Stash for the plan-do-check validator (see retry loop below).
+                    self._last_subtask = subtask
                     user_text = (
                         f"[Current sub-goal — focus on this for the next few steps]\n"
                         f"{subtask}\n\n"
@@ -521,11 +564,56 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         # whether vmem/subtask injections actually fire.
         self._last_llm_user_text = user_text
 
+        # Plan-do-check retry loop — when the action validator (tool gate +
+        # plan check) rejects the proposed action, append the critique to
+        # user_text and re-prompt the LLM. Bounded by validation_max_retries.
+        attempt = 0
+        last_critique = ""
+        result = None
+        usage = None
         try:
-            result, usage = with_retries(
-                lambda: safe_structured_invoke(self._llm, messages, self._action_schema),
-                label="macla_unified.llm",
-            )
+            while True:
+                # On retry, prepend the validator's critique so the LLM sees
+                # why its previous proposal was rejected.
+                current_messages = list(messages)
+                if last_critique and attempt > 0:
+                    current_messages = current_messages[:-1] + [
+                        HumanMessage(
+                            content=(
+                                f"[Validator rejected your previous action — retry]\n"
+                                f"{last_critique}\n\n"
+                                f"{user_text}"
+                            )
+                        )
+                    ]
+
+                result, usage = with_retries(
+                    lambda m=current_messages: safe_structured_invoke(
+                        self._llm, m, self._action_schema
+                    ),
+                    label="macla_unified.llm",
+                )
+                proposed_action = self._adapter.extract_action(result)
+
+                if self._action_validator is None:
+                    break  # no validation requested
+                valid, critique = self._action_validator.validate(
+                    action=proposed_action,
+                    observation=observation,
+                    subgoal=getattr(self, "_last_subtask", "") or "",
+                )
+                if valid:
+                    break
+                attempt += 1
+                last_critique = critique
+                if attempt > self._validation_max_retries:
+                    logger.info(
+                        f"[Validator] exhausted {self._validation_max_retries} retries; "
+                        f"accepting last proposal: {proposed_action!r}"
+                    )
+                    break
+                logger.info(f"[Validator] rejection #{attempt}: {critique[:120]}; re-prompting LLM")
+
             reasoning = getattr(result, "reasoning", "")
             action = self._adapter.extract_action(result)
             self._llm_reasoning = reasoning

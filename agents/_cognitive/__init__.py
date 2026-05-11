@@ -7,16 +7,26 @@
 Independent of the harness layer. Agents opt in à la carte.
 """
 
+from .action_validator import (
+    ActionValidator,
+    CompositeValidator,
+    LLMPlanValidator,
+    ToolGateValidator,
+)
 from .memory_provider import MemoryProvider
 from .self_reflector import LLMSelfReflector, SelfReflector
 from .subtask_planner import LLMSubtaskPlanner, SubtaskPlanner
 from .vector_memory import VectorMemoryProvider
 
 __all__ = [
-    "MemoryProvider",
-    "VectorMemoryProvider",
-    "SubtaskPlanner",
-    "LLMSubtaskPlanner",
-    "SelfReflector",
+    "ActionValidator",
+    "CompositeValidator",
+    "LLMPlanValidator",
     "LLMSelfReflector",
+    "LLMSubtaskPlanner",
+    "MemoryProvider",
+    "SelfReflector",
+    "SubtaskPlanner",
+    "ToolGateValidator",
+    "VectorMemoryProvider",
 ]
