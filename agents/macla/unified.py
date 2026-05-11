@@ -134,6 +134,14 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         self._memory_provider = self._maybe_init_memory_provider(config)
         self._subtask_planner = self._maybe_init_subtask_planner(config)
 
+        # Game-specific observation preprocessor — pokemon needs the env's
+        # screen-window 'Map on Screen' expanded to the full explored map,
+        # otherwise off-screen tiles (e.g. RedsHouse1f exit door at (3,7))
+        # are invisible to the LLM. Adapters opt in by exporting
+        # ``make_observation_preprocessor``; mario / 2048 don't need this.
+        factory = getattr(self._adapter, "make_observation_preprocessor", None)
+        self._obs_preprocessor = factory() if factory is not None else None
+
     def _build_subtask_history(self) -> str:
         """Build a compact history string for the subtask planner."""
         last_action = getattr(self, "_last_action", "none")
@@ -198,6 +206,9 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
     @weave.op()
     def _get_action(self, task_description: str, cur_state_str: str, obs_image=None):
         """MACLA action loop: feedback → execute → log → validate → return 8-tuple."""
+        if self._obs_preprocessor is not None:
+            cur_state_str = self._obs_preprocessor.preprocess(cur_state_str)
+
         # 1. Provide feedback on previous execution
         update_info = self._provide_feedback(self._prev_state_str, cur_state_str)
 
