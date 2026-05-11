@@ -410,3 +410,134 @@ def test_decay_recovers_after_window():
     assert hits[0]["content"] == "mem_a", (
         "mem_a should top query_a again after long absence from retrieval"
     )
+
+
+# ── Self-reflection (every-N-steps critique injected into next prompt) ──
+#
+# Generic critique module mirroring the legacy
+# ``OpenAIPokemonVectorMemoryAgent._module_self_reflection`` flow:
+# - The reflector reads recent history + observation + last action
+# - Calls an LLM with a critique prompt (game-agnostic default, adapter override allowed)
+# - Returns a short critique string that the action LLM gets injected into its next prompt
+# - Reflects every N steps to amortise the LLM cost
+
+
+def test_llm_self_reflector_calls_llm_on_first_reflect():
+    from agents._cognitive import LLMSelfReflector
+
+    fake = _FakeLLM("### Critique\nAgent is repeating the same warp tile.\n")
+    r = LLMSelfReflector(fake)
+    out = r.reflect(observation="obs", last_action="warp_with_warp_point", history="")
+    assert "repeating" in out
+    assert fake.invoke_count == 1
+    assert r.stats()["calls"] == 1
+
+
+def test_llm_self_reflector_caches_between_intervals():
+    """With reflect_every=3, calls 2 and 3 reuse the cached critique."""
+    from agents._cognitive import LLMSelfReflector
+
+    fake = _FakeLLM("### Critique\nStuck in starter house.\n")
+    r = LLMSelfReflector(fake, reflect_every=3)
+    r.reflect(observation="o", last_action="a", history="")  # call 1 → LLM
+    r.reflect(observation="o", last_action="a", history="")  # call 2 → cache
+    r.reflect(observation="o", last_action="a", history="")  # call 3 → cache
+    assert fake.invoke_count == 1
+
+
+def test_llm_self_reflector_recomputes_after_interval():
+    """The (reflect_every+1)-th call triggers a fresh LLM invocation."""
+    from agents._cognitive import LLMSelfReflector
+
+    fake = _FakeLLM("### Critique\nKeep going.\n")
+    r = LLMSelfReflector(fake, reflect_every=2)
+    r.reflect(observation="o", last_action="a", history="")  # call 1 → LLM
+    r.reflect(observation="o", last_action="a", history="")  # call 2 → cache
+    r.reflect(observation="o", last_action="a", history="")  # call 3 → LLM
+    assert fake.invoke_count == 2
+
+
+def test_llm_self_reflector_returns_empty_on_llm_failure():
+    """If invoke() raises, reflector silently returns empty (action loop continues)."""
+    from agents._cognitive import LLMSelfReflector
+
+    class _FailingLLM:
+        def invoke(self, messages):
+            raise RuntimeError("network error")
+
+    r = LLMSelfReflector(_FailingLLM())
+    out = r.reflect(observation="o", last_action="a", history="")
+    assert out == ""
+    assert r.stats()["parse_failures"] == 1
+
+
+def test_llm_self_reflector_accepts_adapter_override_system_prompt():
+    """A game adapter can pass system_prompt= to override the default critique style."""
+    from agents._cognitive import LLMSelfReflector
+
+    custom = "You are a game-specific reflection module for 2048."
+    fake = _FakeLLM("### Critique\nMerge tiles toward bottom-left.\n")
+    r = LLMSelfReflector(fake, system_prompt=custom)
+    out = r.reflect(observation="o", last_action="a", history="")
+    assert "Merge" in out
+    # Verify the custom system prompt was the one sent
+    # (LLMSelfReflector should expose the prompt on self._system_prompt)
+    assert r._system_prompt == custom
+
+
+# ── UnifiedMaclaAgent wiring (source-inspection contract tests) ──────────
+
+
+def test_unified_agent_init_skips_reflector_when_use_self_reflection_unset():
+    """Default config (no use_self_reflection key) → no reflector instantiated.
+
+    Backward-compat: existing PR #31 ablation runs (no use_self_reflection
+    in their gemma_26b.yaml) should not change behaviour.
+    """
+    import inspect
+
+    from agents.macla import unified
+
+    factory_src = inspect.getsource(unified.UnifiedMaclaAgent._maybe_init_self_reflector)
+    assert 'getattr(config, "use_self_reflection"' in factory_src, (
+        "_maybe_init_self_reflector must gate the reflector behind the config flag"
+    )
+    assert "return None" in factory_src, (
+        "factory must return None when the flag is unset (no-op default)"
+    )
+
+
+def test_unified_agent_init_wires_self_reflector():
+    """When use_self_reflection=True, UnifiedMaclaAgent instantiates LLMSelfReflector
+    and stores it on self._self_reflector for _get_action to call per step."""
+    import inspect
+
+    from agents.macla import unified
+
+    init_src = inspect.getsource(unified.UnifiedMaclaAgent.__init__)
+    get_action_src = inspect.getsource(unified.UnifiedMaclaAgent._get_action)
+
+    assert "_self_reflector" in init_src, (
+        "UnifiedMaclaAgent.__init__ must store the reflector on self._self_reflector"
+    )
+    assert "LLMSelfReflector" in init_src or "_self_reflector" in init_src
+    assert "_self_reflector" in get_action_src, (
+        "UnifiedMaclaAgent._get_action must call the reflector per step"
+    )
+
+
+def test_localconfig_declares_self_reflection_fields():
+    """pydantic extra='forbid' on LocalConfig — the new YAML keys must be declared."""
+    from config.agent_config import LocalConfig
+
+    c = LocalConfig(
+        class_name="test",
+        model="test-model",
+        temperature=0.0,
+        use_self_reflection=True,
+        reflection_every=5,
+        reflection_max_chars=400,
+    )
+    assert c.use_self_reflection is True
+    assert c.reflection_every == 5
+    assert c.reflection_max_chars == 400

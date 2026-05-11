@@ -20,7 +20,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 from pydantic import BaseModel
 
-from agents._cognitive import LLMSubtaskPlanner, VectorMemoryProvider
+from agents._cognitive import LLMSelfReflector, LLMSubtaskPlanner, VectorMemoryProvider
 from agents._harness import with_retries
 from agents.base import BaseOrakAgent
 from agents.macla.base import BaseMaclaAgent
@@ -133,6 +133,7 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         self._init_macla_agent()
         self._memory_provider = self._maybe_init_memory_provider(config)
         self._subtask_planner = self._maybe_init_subtask_planner(config)
+        self._self_reflector = self._maybe_init_self_reflector(config)
 
         # Game-specific observation preprocessor — pokemon needs the env's
         # screen-window 'Map on Screen' expanded to the full explored map,
@@ -141,6 +142,29 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         # ``make_observation_preprocessor``; mario / 2048 don't need this.
         factory = getattr(self._adapter, "make_observation_preprocessor", None)
         self._obs_preprocessor = factory() if factory is not None else None
+
+    def _maybe_init_self_reflector(self, config: Any):
+        """Optional self-reflection module (every N steps). Activated by
+        ``config.use_self_reflection``; default off so existing runs are
+        unchanged. Adapters can override the system prompt via
+        ``SELF_REFLECTOR_SYSTEM_PROMPT`` exported on the adapter module."""
+        if not getattr(config, "use_self_reflection", False):
+            return None
+        adapter_system = getattr(self._adapter, "SELF_REFLECTOR_SYSTEM_PROMPT", None)
+        kwargs: dict[str, Any] = dict(
+            reflect_every=getattr(config, "reflection_every", 10),
+            observation_chars=getattr(config, "reflection_max_chars", 600),
+        )
+        if adapter_system:
+            kwargs["system_prompt"] = adapter_system
+        reflector = LLMSelfReflector(self._llm, **kwargs)
+        logger.info(
+            f"[MACLA] self-reflector enabled "
+            f"(reflect_every={reflector._reflect_every}, "
+            f"observation_chars={reflector._observation_chars}, "
+            f"adapter_system_prompt={'yes' if adapter_system else 'no'})"
+        )
+        return reflector
 
     def _build_subtask_history(self) -> str:
         """Build a compact history string for the subtask planner."""
@@ -208,6 +232,20 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         """MACLA action loop: feedback → execute → log → validate → return 8-tuple."""
         if self._obs_preprocessor is not None:
             cur_state_str = self._obs_preprocessor.preprocess(cur_state_str)
+
+        # Refresh the self-reflection critique (cached between reflect_every
+        # invocations). _base_fallback reads self._last_critique to inject
+        # into the action LLM's user prompt.
+        if self._self_reflector is not None:
+            try:
+                self._last_critique = self._self_reflector.reflect(
+                    observation=cur_state_str,
+                    last_action=getattr(self, "_last_action", "none"),
+                    history=self._build_subtask_history(),
+                )
+            except Exception as e:
+                logger.warning(f"[MACLA] self-reflector failed; continuing without: {e}")
+                self._last_critique = getattr(self, "_last_critique", "")
 
         # 1. Provide feedback on previous execution
         update_info = self._provide_feedback(self._prev_state_str, cur_state_str)
@@ -386,6 +424,14 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                 prev_state_str=getattr(self, "_prev_state_str", ""),
             )
         )
+
+        # Prepend the latest self-reflection critique (refreshed in _get_action
+        # every reflect_every steps). Cheaper than a per-step LLM call and lets
+        # the action LLM see meta-feedback that the env doesn't surface.
+        if self._self_reflector is not None:
+            critique = getattr(self, "_last_critique", "") or ""
+            if critique:
+                user_text = f"[Recent critique]\n{critique}\n\n{user_text}"
 
         # Stage C: prepend retrieved memories to the user prompt when the
         # vector-memory provider is active. Query is the goal + a slice of

@@ -194,6 +194,15 @@ class LocalConfig(AgentConfig):
     subtask_replan_every: int = 1
     subtask_observation_chars: int = 600
 
+    # Optional self-reflection module. When True, UnifiedMaclaAgent runs an
+    # LLM-backed reflector every reflection_every steps and injects the
+    # resulting critique into the action LLM's user prompt. Helps surface
+    # patterns (looping, missed opportunities) the action LLM loses across
+    # steps. Cost: 1 extra LLM call per reflection_every steps. Default off.
+    use_self_reflection: bool = False
+    reflection_every: int = 10
+    reflection_max_chars: int = 600
+
     # Optional shaped-reward overrides. Keys are merged on top of
     # `agents.macla.online_evaluator.DEFAULT_SHAPING[<game>]`. Useful for
     # ablation sweeps over shaping params without editing source. Example:
