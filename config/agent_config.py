@@ -193,6 +193,10 @@ class LocalConfig(AgentConfig):
     use_subtask_planning: bool = False
     subtask_replan_every: int = 1
     subtask_observation_chars: int = 600
+    # Last-K trajectory steps formatted as outcome-tagged history for the
+    # planner. Lets the anti-loop / continue-what's-working heuristics
+    # actually see evidence (the legacy 1-line history made them inert).
+    subtask_history_steps: int = 8
 
     # Optional self-reflection module. When True, UnifiedMaclaAgent runs an
     # LLM-backed reflector every reflection_every steps and injects the

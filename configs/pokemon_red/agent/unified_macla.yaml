@@ -5,3 +5,5 @@ gcp_location: "europe-west1"
 thinking_level: "high"
 game_config_path: "pokemon_red"
 track: "TRACK2"
+macla_theta_base: 0.1
+macla_warmup_steps: 0

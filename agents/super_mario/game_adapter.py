@@ -2,6 +2,9 @@
 
 from pydantic import BaseModel, Field
 
+# Re-exports read by UnifiedMaclaAgent via self._adapter.<NAME>.
+from agents.super_mario.base import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE  # noqa: F401
+
 
 class MarioAction(BaseModel):
     reasoning: str = Field(description="Explanation of why this action was chosen")

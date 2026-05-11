@@ -165,3 +165,8 @@ ignore = [
     "E741",   # ambiguous-variable-name (`l`/`I`/`O` in matplotlib code)
     "W291",   # trailing-whitespace inside prompt strings (model wording is sacred)
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

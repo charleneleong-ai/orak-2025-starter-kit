@@ -4,6 +4,9 @@ from pydantic import BaseModel, Field
 
 from agents.twenty_fourty_eight._metrics import normalize_2048_score
 
+# Re-exports read by UnifiedMaclaAgent via self._adapter.<NAME>.
+from agents.twenty_fourty_eight.base import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE  # noqa: F401
+
 
 class TwentyFortyEightAction(BaseModel):
     reasoning: str = Field(description="Explanation of why this action was chosen")
