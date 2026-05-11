@@ -4,8 +4,13 @@ Model selection guide for the Orak game-playing agent stack.
 Hard constraints: **vision required** (game screenshots), **tool calling required**, serve on
 Cloud Run L4 (24GB VRAM), optionally train/fine-tune on A100 80GB.
 
-> **Current baseline:** `unsloth/gemma-4-E4B-it` — Gemma 4 E4B (released Mar 2026 by Google DeepMind).
-> This IS Gemma 4, not Gemma 3. The E4B has "effective" 4B active params via Per-Layer Embeddings (PLE).
+> **Current baseline (post-PR #31, May 2026):** `cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit`
+> — Gemma 4 26B A4B in AWQ 4-bit (~13GB on disk, ~14GB GPU). Replaces the
+> earlier E4B baseline because the AWQ-26B fits A100-40GB with KV cache headroom
+> and the tau2-bench jump (E4B 57.5% → 26B A4B 85.5%) was decisive in PR #31's
+> cross-game ablation (Stage D++ pokemon = 71.43% on AWQ-26B vs the 14.29%
+> plateau on E4B). E4B still useful for fast-iteration harness validation
+> runs (`serving/gemma_serve.sh unsloth/gemma-4-E4B-it`).
 
 ---
 
@@ -136,12 +141,12 @@ Prefer Qwen3-VL or Gemma 4 until this is verified.
 
 | Rank | Model | VRAM | tau2-bench | Maturity | Notes |
 |---|---|---|---|---|---|
-| **1** | **Gemma 4 26B A4B (AWQ)** | ~13GB | **85.5%** | Recipe on vllm.ai | Best agentic score |
+| **1** | **Gemma 4 26B A4B (AWQ) — current baseline** | ~13GB | **85.5%** | Shipped via PR #31 | PR #31 Stage D++ pokemon = 71.43% |
 | **2** | **Qwen3-VL-8B-FP8** | ~8GB | GUI-focused | 24M downloads | Safest swap, most context |
 | 3 | Gemma 4 31B (AWQ) | ~16GB | 76.9% | Good | High capability, tight |
 | 4 | Qwen3-VL-32B (AWQ) | ~17GB | — | Good | Best pure VLM quality |
 | 5 | InternVL3-8B | ~16GB | — | Good | Leaderboard strong |
-| 6 | Gemma 4 E4B (current) | ~16GB | 57.5% | Proven | Current baseline |
+| 6 | Gemma 4 E4B (legacy baseline) | ~16GB | 57.5% | Proven | Use for fast-iteration smoke runs |
 | 7 | Qwen3.6-35B-A3B (4-bit) | ~17.5GB | 81.7 MMMU | Very new | Wait for vLLM verify |
 
 ---
@@ -219,4 +224,4 @@ Phase 2 GRPO multiplier: ~10-20x SFT wall-clock (rollouts dominate).
 - Training pipeline: docs/experiments/gemma/training_plan.md
 - Experiment findings: docs/experiments/gemma/macla_findings.md
 
-Last updated: 2026-05-03
+Last updated: 2026-05-11 (post-PR #31 cross-game AWQ-26B ablation merge)

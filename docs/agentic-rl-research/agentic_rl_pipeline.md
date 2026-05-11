@@ -352,55 +352,102 @@ IF fine-tuning is warranted:
 
 ---
 
-## Per-game RL strategy (post-ablation, May 2026)
+## Per-game RL strategy (post-ablation, May 2026 — updated post-PR #31)
 
-### mario — do not train
+> **Update (post-PR #31 merge):** All numbers below are now from the AWQ-26B
+> A/B/C/D matrix shipped by PR #31. The PR #28 E4B verdicts are listed in
+> parentheses as "legacy" — they no longer drive strategy.
 
-Stage D ablation (PR #28): +25% lift from planner, vmem null (A == C).
-Bottleneck was MACLA procedure compounding via carry-over (PR #22), not model quality.
-Config locked to Stage D. Training mario trajectories risks overfitting to W1-1 layout.
+### mario — do not train (verdict holds, mechanism updated)
 
-### 2048 — GRPO target
+PR #31 AWQ-26B ablation: A=44.50%, **B=61.26%** (planner +16.76 pp),
+C=35.18% (**vmem hurts: −9.32 pp**), D=35.21% (vmem regression persists
+even with planner). Legacy PR #28 E4B verdict was "vmem null"; AWQ-26B
+shows vmem is actively negative on mario's reactive gameplay.
 
-Stage C ceiling: ~6-8% (vmem on, planner off per PR #28 verdict).
-Bottleneck: combinatorial state space means SFT from human trajectories has limited ceiling.
-The corner-anchor strategy needs consistent discovery, not just occasional imitation.
+Bottleneck was MACLA procedure compounding via carry-over (PR #22), not
+model quality. Config locked to **Stage B** (planner-only) post-PR #31 —
+turn vmem OFF for mario. Training mario trajectories still risks
+overfitting to W1-1 layout; do not train.
 
-GRPO reward design:
-1. `TwentyFortyEightShaper.compute_reward()` per step (base signal, already written)
+### 2048 — strategy pivots from "GRPO target" to "Stage D config-only"
+
+PR #31 AWQ-26B ablation: A=54.55%, **B=63.64%**, C=54.55% (parity),
+**D=63.64%** (vmem on top of planner adds nothing). Stage B = Stage D
+both at max_tile=128 (log2=7, score 7/11=63.64%). Legacy PR #28 E4B
+verdict was "Stage C wins for 2048 (vmem helps, planner hurts)" — the
+26B + new outcome-tagged history wiring flips this completely.
+
+GRPO is no longer the obvious next step — the planner alone delivers
+the full lift, and the ceiling at 300 steps is max_tile=128 (the
+Bayesian procedure selector is the harder problem, not reward shaping).
+If/when GRPO is revisited, the reward design stays the same:
+
+1. `TwentyFortyEightShaper.compute_reward()` per step (base signal)
 2. `+0.5` if max tile in any corner after move (corner-anchor bonus)
 3. `+0.2` per monotone row or column maintained (chain bonus)
 4. `-1.0` for `is_fallback=True` steps (silent fallback becomes penalty)
 
-Target: consistent 2048-tile achievement (~15–20% score).
-Stop training: score plateau over 3 consecutive eval checkpoints.
+Target now: consistent **max_tile=256** (would be 72.7%). Step budget
+likely the binding constraint before reward shaping.
 
-### pokemon — baseline first, then DPO/KTO
+### pokemon — Stage D shipping; D++ for the headline; SFT only if D++ plateaus
 
-Post-fix State A: 14.29% (n=2). Missing: post-fix Stage C (vmem) baseline.
+PR #31 AWQ-26B ablation: A=28.57% (model only), **B=57.14%** (planner
+alone), C=0.00% (vmem-only collapse — agent oscillates RedsHouse2f ↔ 1f
+re-reading SIGN_REDSHOUSE1F_TV), **D=57.14%** (vmem adds nothing on
+top of planner at 300 steps), **D++=71.43%** (Stage D at 600 steps +
+LoopDetector grace, banks milestone 5 = Gym Brock approach).
 
-Action sequence:
-1. Run post-fix Stage C sweep (2 episodes) — fills the missing scoreboard cell
-2. If Stage C > Stage A: DPO with map-discovery episodes as `chosen`
-3. If Stage C ≈ Stage A: KTO, label "reached PalletTown" as desirable
-4. GRPO only after dense reward confirmed working post-fix
+The 14.29% plateau the original report identified is **broken**.
+Pokemon Stage D-with-prompt-fix landed at 4× the pass criterion the
+postscript set out. Per-game `gemma_26b.yaml` ships Stage D + the
+adapter-specific `SUBTASK_PLANNER_SYSTEM` override (PR #31's planner
+fix).
 
-Orthogonal unlock: SFT on hand-written subgoal trajectories
-(house → route1 → lab waypoints) is probably faster than waiting for GRPO
-to discover the path via exploration from a cold start.
+PR #31's diagnostics also flagged three secondary failures worth tracking:
+- **Stage C-class variance is dominated by step-8 LLM sampling**
+  (T=0.7 hits the wrong WarpPoint half the time). Temperature 0.3
+  shifts spatial behaviour (move_to(3,7)×30 vs zero at T=0.7) but
+  exposes a tool-selection failure (`move_to` instead of
+  `warp_with_warp_point`). Not a training problem — a prompt /
+  tool-validator one.
+- **Obs preprocessor (PR #61)** is necessary but not sufficient — it
+  accumulates explored map across steps but can't reveal tiles never
+  observed. Pair with an exploration nudge or `WaypointGoalProvider`
+  before any SFT attempt.
+- **Self-reflection (PR #62)** at Stage D + n=1 tied score with Stage D
+  baseline (57.14%) but banked milestone 3 (Charmander) at step 203,
+  which most Stage D runs don't reach. Cross-game test on
+  `feat/self-reflection` in flight to determine if it lifts at n>1.
+
+If/when SFT is needed for pokemon: hand-written subgoal trajectories
+(house → route1 → lab waypoints) keyed against the now-tracked
+`game_states.jsonl` milestone events. DPO/KTO remain plausible only
+*after* a Stage D++ multi-episode sweep confirms a clear positive vs
+negative split — current single-episode runs are too noisy for
+preference labels.
 
 ---
 
 ## Infrastructure gaps to close before first training run
 
-In priority order — total is ~160 LOC of new code + 1 eval run:
+In priority order — total is ~160 LOC of new code (the eval-baseline gap is closed):
 
 | Item | LOC | Depends on | Blocks |
 |---|---|---|---|
 | `experiments/training/filter_top_k.py` | ~50 | trajectory JSONL on disk | SFT, DPO, KTO |
 | `experiments/training/game_reward_fns.py` | ~100 | `online_evaluator.RewardShaper` | GRPO |
 | `serving/gemma_serve.sh` with `--enable-lora` | ~10 | vLLM `--enable-lora` flag | Serving LoRA adapters |
-| Post-fix Stage C pokemon baseline | 0 LOC, 2 episodes | Fixed harness (PR #28) | pokemon DPO/KTO |
+| ~~Post-fix Stage C pokemon baseline~~ | ✅ done via PR #31 | — | unblocked |
+
+Post-PR #31 reality check: with **vmem now established as parity-or-negative
+cross-game** and **planner established as the universal lever**, the "pokemon
+DPO/KTO" path that the original training plan blocked on a Stage C baseline
+is no longer the primary lift candidate. The current scoreboard headline
+(Stage D++ 71.43%) suggests step budget + waypoint-aware planning beat
+preference learning at this stage. Training infra above is still useful
+once Stage D++ plateaus, but it's not in the critical path right now.
 
 Everything else (GRPO trainer, reward infrastructure, trajectory logging, eval harness)
 is already written and has been exercised in the `gemma4_rl/` workspace.
