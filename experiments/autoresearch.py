@@ -1029,7 +1029,7 @@ class OrakPlanner:
         self.sweep_start = time.time()
         self.no_improve_streak = 0
 
-    def _build_command(self) -> list[str]:
+    def _build_command(self, description: str | None = None) -> list[str]:
         cmd = [
             str(ROOT / ".venv" / "bin" / "python"),
             str(ROOT / "run.py"),
@@ -1038,6 +1038,10 @@ class OrakPlanner:
         ]
         for game in self.games:
             cmd.extend(["--games", game])
+        if description:
+            # Threads through to wandb notes (see run.py::main → settings.wandb.notes)
+            # so each iter's wandb run is searchable by sweep tag + iter description.
+            cmd.extend(["--experiment-description", f"[{self.tag}] {description}"])
         if self.state.prev_run_id:
             cmd.extend(["--load-checkpoint", "--prev-run-id", self.state.prev_run_id])
             print(f"  Loading MACLA checkpoint from prev run: {self.state.prev_run_id}")
@@ -1164,7 +1168,7 @@ class OrakPlanner:
             self.state.last_triggered_game = None
             self.state.last_runtime_min = 0.0
 
-            cmd = self._build_command()
+            cmd = self._build_command(description=description)
             print(f"\n{'=' * 60}")
             print(f"Running: {' '.join(cmd)}")
             print(

@@ -1,0 +1,25 @@
+# Gemma-4-26b-a4b-it (MoE, ~4B active) for 2048 — A100-80GB sized.
+# Mirrors pokemon_red/gemma_26b.yaml — same Stage D planner setup, only the
+# model changes. vLLM serves via ./serving/gemma_serve.sh unsloth/gemma-4-26b-a4b-it.
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "unsloth/gemma-4-26b-a4b-it"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: true
+max_tokens: 8192
+max_model_len: 16384
+game_config_path: "twenty_fourty_eight"
+track: "TRACK1"
+use_vector_memory: true
+vector_memory_max: 100
+vector_memory_top_k: 3
+vector_memory_threshold: 0.5
+# Stage D: enabled (overriding gemma.yaml's `false`). PR #28 ablation found
+# planner REGRESSED on E4B 2048 (−23% vs C). Retesting at 26B with v13's
+# outcome-tagged history to see whether the new arch flips that verdict.
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600
+macla_n_min_f: 1
+macla_n_min_s: 1
+macla_theta_decay: 0.001
