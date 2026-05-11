@@ -25,9 +25,15 @@ def append(game: str, game_logs_dir: str, runtime_min: float) -> dict:
     summary = json.loads(summary_path.read_text())
     eps = summary.get("episodes", [])
     scores = [float(e.get("final_score", 0.0)) for e in eps] if eps else [0.0]
-    final = max(scores)
+    raw = max(scores)
     n_eps = len(eps)
     steps = int(summary.get("total_inference_calls", 0))
+
+    # Pokemon's final_score is raw milestone count (0..7); other games already
+    # report eval-% directly. Match PR #31's results.jsonl convention where
+    # evaluation_score is the eval-% and game_score is the raw value.
+    eval_score = (raw / 7.0) * 100.0 if game == "pokemon_red" else raw
+    raw_score = raw
 
     SWEEP_DIR.mkdir(parents=True, exist_ok=True)
     rows = (
@@ -39,8 +45,8 @@ def append(game: str, game_logs_dir: str, runtime_min: float) -> dict:
         "experiment": len(rows) + 1,
         "variant": f"stage_d_self_reflect_{game}",
         "game": game,
-        "evaluation_score": final,
-        "game_score": final,
+        "evaluation_score": eval_score,
+        "game_score": raw_score,
         "steps": steps,
         "runtime_min": runtime_min,
         "status": "KEEP",
@@ -48,7 +54,7 @@ def append(game: str, game_logs_dir: str, runtime_min: float) -> dict:
             f"stage_d_self_reflect_{game}: Stage D + self-reflection ({game}) — "
             "vmem ON, planner ON, reflect_every=10. PR #62 cross-game test."
         ),
-        "notes": f"max_eval={final:.2f}, {n_eps} ep, {steps} steps",
+        "notes": f"max_eval={eval_score:.2f}, {n_eps} ep, {steps} steps",
         "tags": ["cross_game_self_reflect", f"stage_d_self_reflect_{game}"],
         "wandb_url": "",
         "timestamp": dt.datetime.now(dt.UTC).isoformat(),
@@ -57,7 +63,7 @@ def append(game: str, game_logs_dir: str, runtime_min: float) -> dict:
     with RESULTS.open("a") as f:
         f.write(json.dumps(row) + "\n")
     print(
-        f"Appended {row['experiment']}: {row['variant']} score={final:.2f} "
+        f"Appended {row['experiment']}: {row['variant']} score={eval_score:.2f} "
         f"({n_eps} eps, {steps} steps)"
     )
     return row
