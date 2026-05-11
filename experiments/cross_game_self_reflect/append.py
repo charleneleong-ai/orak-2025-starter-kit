@@ -4,6 +4,7 @@ Compares Stage D + self-reflection vs the PR #31 Stage D baselines.
 Reads evaluation_summary.json and picks the max final_score across
 episodes (matches the per-game append.py shape used by PR #31).
 """
+
 from __future__ import annotations
 
 import argparse
