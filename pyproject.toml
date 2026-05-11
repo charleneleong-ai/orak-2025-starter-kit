@@ -30,6 +30,7 @@ dependencies = [
     "imageio[ffmpeg]>=2.37.2",
     "langchain-chroma>=1.0.0",
     "langchain-openai>=1.0.2",
+    "langgraph>=0.6.0",
     "langchain-google-vertexai>=3.2.0",
     "loguru>=0.7.0",
     "matplotlib>=3.10.7",
