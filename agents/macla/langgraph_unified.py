@@ -1,9 +1,24 @@
 """LangGraph variant of UnifiedMaclaAgent.
 
 Reshapes the LLM-fallback path of ``UnifiedMaclaAgent._base_fallback`` as a
-LangGraph state machine. Adds an optional self-verification (Reflexion-style) pass
-(propose → verify-against-obs → commit) that the parent class can't
+LangGraph ``StateGraph``. Adds an optional **self-verification** pass —
+propose → re-read obs → confirm or revise — that the parent class can't
 express without method-body branching.
+
+The self-verification pattern here is **Reflexion-style** (Shinn et al.,
+2023, *Reflexion: Language Agents with Verbal Reinforcement Learning*,
+arXiv:2303.11366). Reflexion's contribution is letting an agent verbally
+critique its own output before committing — distinct from classic ReAct
+(Yao et al., 2023, *ReAct: Synergizing Reasoning and Acting in Language
+Models*, arXiv:2210.03629), which interleaves Thought-Act-Observation
+with environment observations between cycles. Our single-action-per-step
+env API can't surface an env observation between sub-thoughts in one
+agent call, so Reflexion's shape is the natural fit.
+
+State threading uses ``MessagesState`` so the verify pass sees the
+proposal as an ``AIMessage`` in proper conversation form — a real
+``[System, Human(prompt), AI(proposal), Human(verify_request)]`` chain
+rather than re-stating "you proposed X" as a string blob.
 
 Graph shape::
 
@@ -17,12 +32,11 @@ Graph shape::
                                   ▼
                                  END
 
-Without self-verification (default): straight-line replication of the parent's flow.
-With self-verification (``use_verify_action: true``): two-pass LLM. First pass proposes
-an action; second pass re-reads the obs + critique and either confirms
-the proposed action or revises it. Catches hallucinations like the Stage
-C'++ T=0.3 tool-selection failure (LLM walked to (3,7) but used
-``move_to`` when ``warp_with_warp_point`` was needed).
+Without self-verification (default): straight-line replication of the
+parent's flow. With self-verification (``use_verify_action: true``): two
+LLM calls per fallback step (proposal + verify). Catches hallucinations
+like the Stage C'++ T=0.3 tool-selection failure (LLM walked to (3,7)
+but used ``move_to`` when ``warp_with_warp_point`` was needed).
 
 Default off → identical behavior to ``UnifiedMaclaAgent``. Opt in per
 agent config via ``use_verify_action: true``.
@@ -32,11 +46,12 @@ from __future__ import annotations
 
 import base64
 import io
-from typing import Any, TypedDict
+from typing import Annotated, Any
 
 import weave
-from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.graph import END, START, StateGraph
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.graph.message import add_messages
 from loguru import logger
 
 from agents._harness import with_retries
@@ -44,11 +59,16 @@ from agents.macla.structured_output import safe_structured_invoke
 from agents.macla.unified import UnifiedMaclaAgent
 
 
-class ActionGraphState(TypedDict, total=False):
+class ActionGraphState(MessagesState, total=False):
     """Per-step state threaded through the action graph.
 
-    Each node reads/writes a strict subset; LangGraph's default reducer
-    (last-write-wins) is fine because no two nodes race on the same key.
+    Subclasses ``MessagesState`` so ``messages`` is reduced with langgraph's
+    ``add_messages`` (append + dedupe by id). The proposal node appends an
+    ``AIMessage`` carrying its proposed action; the verify node then sees
+    the proposal in proper conversation form rather than as a string blob.
+
+    Other fields use the default reducer (last-write-wins); no two nodes
+    race on the same key, so simple replacement is correct.
     """
 
     # Inputs from _base_fallback
@@ -71,6 +91,10 @@ class ActionGraphState(TypedDict, total=False):
     verified_action: str
     verified_reasoning: str
     was_revised: bool
+
+    # Explicit re-declaration of MessagesState's messages field with the
+    # add_messages reducer so subclassing semantics are obvious to readers.
+    messages: Annotated[list, add_messages]
 
 
 def _build_action_graph() -> Any:
@@ -205,16 +229,33 @@ class LangGraphMaclaAgent(UnifiedMaclaAgent):
         return {"user_text": user_text}
 
     def _node_invoke_llm(self, state: ActionGraphState) -> dict:
+        # Build the conversation seed (system + first user turn) and persist
+        # it on the state so the verify node can extend it with proper
+        # AIMessage/HumanMessage continuation rather than a string blob.
+        user_text = state.get("user_text", "")
+        messages: list[Any] = [
+            SystemMessage(content=self._adapter.SYSTEM_PROMPT),
+            HumanMessage(content=user_text),
+        ]
         action, reasoning = self._invoke_action_llm(
-            user_text=state.get("user_text", ""),
+            messages=messages,
             obs_image=state.get("obs_image"),
         )
-        return {"proposed_action": action, "proposed_reasoning": reasoning}
+        proposal_msg = AIMessage(
+            content=f"Action: {action}\nReasoning: {reasoning}",
+            additional_kwargs={"proposed_action": action},
+        )
+        return {
+            "proposed_action": action,
+            "proposed_reasoning": reasoning,
+            "messages": [*messages, proposal_msg],
+        }
 
     def _node_verify_action(self, state: ActionGraphState) -> dict:
-        """Second-pass LLM call that checks the proposed action against the
-        observation + critique + subtask. Returns either the original action
-        (if the verifier confirms) or a revised one.
+        """Second-pass LLM call (Reflexion-style; Shinn et al. 2023) that
+        checks the proposed action against the observation + critique +
+        subtask. Returns either the original action (if the verifier confirms)
+        or a revised one.
 
         Skipped entirely when ``use_verify_action`` is False — returns the
         proposed action unchanged.
@@ -230,27 +271,37 @@ class LangGraphMaclaAgent(UnifiedMaclaAgent):
         critique = state.get("critique", "")
         subtask = state.get("subtask", "")
         observation = state.get("observation", "")
-        verify_user = (
-            f"You proposed the action: {proposed}\n"
-            f"Reasoning: {state.get('proposed_reasoning', '')}\n\n"
-            f"Re-read the observation and verify the action will actually achieve the "
-            f"sub-goal. Watch for tool-selection mistakes (e.g. emitting move_to(x,y) "
-            f"when the tile is a WarpPoint and warp_with_warp_point is required).\n\n"
-            f"### Observation\n{observation[:1500]}\n\n"
-            f"### Sub-goal\n{subtask or '(none)'}\n\n"
-            f"### Critique\n{critique or '(none)'}\n\n"
-            f"If the proposed action is correct, restate it verbatim. If it's wrong, "
-            f"propose the corrected action."
+        verify_request = HumanMessage(
+            content=(
+                "Re-read the observation and verify the action you just proposed will "
+                "actually achieve the sub-goal. Watch for tool-selection mistakes "
+                "(e.g. emitting move_to(x,y) when the tile is a WarpPoint and "
+                "warp_with_warp_point is required).\n\n"
+                f"### Observation (truncated)\n{observation[:1500]}\n\n"
+                f"### Sub-goal\n{subtask or '(none)'}\n\n"
+                f"### Critique\n{critique or '(none)'}\n\n"
+                "If the proposed action is correct, restate it verbatim. "
+                "If it's wrong, propose the corrected action."
+            )
         )
+        # Continue the conversation from the proposal — proper message
+        # chain rather than re-stating "You proposed X" in a string.
+        prior_messages = state.get("messages") or []
+        verify_messages = [*prior_messages, verify_request]
         try:
-            action, reasoning = self._invoke_action_llm(user_text=verify_user, obs_image=None)
+            action, reasoning = self._invoke_action_llm(messages=verify_messages, obs_image=None)
             revised = action != proposed
             if revised:
                 logger.debug(f"[LangGraph] self-verify revised action: {proposed!r} → {action!r}")
+            verify_response = AIMessage(
+                content=f"Action: {action}\nReasoning: {reasoning}",
+                additional_kwargs={"verified_action": action, "was_revised": revised},
+            )
             return {
                 "verified_action": action,
                 "verified_reasoning": reasoning,
                 "was_revised": revised,
+                "messages": [verify_request, verify_response],
             }
         except Exception as e:
             logger.warning(f"[LangGraph] verify_action failed; keeping proposed: {e}")
@@ -262,31 +313,43 @@ class LangGraphMaclaAgent(UnifiedMaclaAgent):
 
     # ── Shared LLM invocation ─────────────────────────────────────────
 
-    def _invoke_action_llm(self, *, user_text: str, obs_image: Any | None) -> tuple[str, str]:
+    def _invoke_action_llm(self, *, messages: list[Any], obs_image: Any | None) -> tuple[str, str]:
         """Call the action LLM via the same retries/structured-output stack
         the parent uses. Returns (action, reasoning) parsed from the result.
+
+        ``messages`` is the conversation seed — typically ``[SystemMessage,
+        HumanMessage]`` for the proposal pass, extended with
+        ``[..., AIMessage(proposed), HumanMessage(verify_request)]`` for
+        the verify pass. ``obs_image`` is appended to the LAST HumanMessage
+        as a vision content part when the model supports vision.
         """
         supports_vision = getattr(self, "_supports_vision", True)
+
+        # Optionally splice the obs image into the last HumanMessage's content
         if supports_vision and obs_image:
-            user_content: Any = [{"type": "text", "text": user_text}]
             buffered = io.BytesIO()
             obs_image.save(buffered, format="JPEG")
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-            user_content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{img_str}"},
-                }
-            )
-            human_content = user_content
-        else:
-            human_content = user_text
+            for i in range(len(messages) - 1, -1, -1):
+                if isinstance(messages[i], HumanMessage) and isinstance(messages[i].content, str):
+                    messages[i] = HumanMessage(
+                        content=[
+                            {"type": "text", "text": messages[i].content},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{img_str}"},
+                            },
+                        ]
+                    )
+                    break
 
-        messages = [
-            SystemMessage(content=self._adapter.SYSTEM_PROMPT),
-            HumanMessage(content=human_content),
-        ]
-        self._last_llm_user_text = user_text
+        # Stash the last user text for telemetry parity with the parent agent
+        last_human = next(
+            (m for m in reversed(messages) if isinstance(m, HumanMessage)),
+            None,
+        )
+        if last_human is not None and isinstance(last_human.content, str):
+            self._last_llm_user_text = last_human.content
 
         result, _usage = with_retries(
             lambda: safe_structured_invoke(self._llm, messages, self._action_schema),
