@@ -21,7 +21,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from agents._cognitive import LLMSelfReflector, LLMSubtaskPlanner, VectorMemoryProvider
-from agents._harness import with_retries
+from agents._harness import format_recent_history, with_retries
 from agents.base import BaseOrakAgent
 from agents.macla.base import BaseMaclaAgent
 from agents.macla.context_extractors import build_context_extractor
@@ -167,7 +167,20 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         return reflector
 
     def _build_subtask_history(self) -> str:
-        """Build a compact history string for the subtask planner."""
+        """Build an outcome-tagged history block for the subtask planner.
+
+        Pulls the last K records from the live trajectory buffer and renders
+        them with score deltas + state-changed tags. Falls back to the legacy
+        one-line form when the trajectory writer hasn't been wired (tests,
+        ad-hoc scripts).
+        """
+        k = max(1, int(getattr(self.config, "subtask_history_steps", 8)))
+        writer = getattr(self, "_trajectory_writer", None)
+        if writer is not None:
+            recent = writer.recent(k)
+            if recent:
+                return format_recent_history(recent)
+
         last_action = getattr(self, "_last_action", "none")
         prev_state = getattr(self, "_prev_state_str", "") or ""
         prev_summary = prev_state[:200] if prev_state else "(no prior state)"
@@ -175,18 +188,26 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
 
     def _maybe_init_subtask_planner(self, config: Any):
         """Stage D: optional subtask planner for long-horizon games (pokemon).
-        Adds 1 LLM call per replan_every steps. Default off."""
+        Adds 1 LLM call per replan_every steps. Default off.
+
+        Game adapters can override the planner's system prompt by exporting a
+        module-level ``SUBTASK_PLANNER_SYSTEM`` constant — used to bake game-
+        specific waypoint chains into the planner (see pokemon_red.game_adapter)."""
         if not getattr(config, "use_subtask_planning", False):
             return None
-        planner = LLMSubtaskPlanner(
-            llm=self._llm,  # reuse the same vLLM-backed LLM
+        kwargs: dict[str, Any] = dict(
             replan_every=getattr(config, "subtask_replan_every", 1),
             observation_chars=getattr(config, "subtask_observation_chars", 600),
         )
+        adapter_system = getattr(self._adapter, "SUBTASK_PLANNER_SYSTEM", None)
+        if adapter_system:
+            kwargs["system_prompt"] = adapter_system
+        planner = LLMSubtaskPlanner(llm=self._llm, **kwargs)
         logger.info(
             f"[MACLA] subtask planner enabled "
             f"(replan_every={planner._replan_every}, "
-            f"observation_chars={planner._observation_chars})"
+            f"observation_chars={planner._observation_chars}, "
+            f"adapter_system_prompt={'yes' if adapter_system else 'no'})"
         )
         return planner
 
@@ -433,14 +454,16 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             if critique:
                 user_text = f"[Recent critique]\n{critique}\n\n{user_text}"
 
-        # Stage C: prepend retrieved memories to the user prompt when the
-        # vector-memory provider is active. Query is the goal + a slice of
-        # the current observation — enough signal for cosine retrieval.
+        # Vector-memory recall — one query feeds both the action LLM (Stage C)
+        # and the subtask planner (Stage D). Avoids duplicate embedding +
+        # retrieval cost per step.
+        recalled = ""
         if self._memory_provider is not None:
-            query = f"{goal} | {observation[:300]}"
-            recalled = self._memory_provider.prefetch(query)
-            if recalled:
-                user_text = f"[Recalled memories from prior steps]\n{recalled}\n\n{user_text}"
+            recalled = self._memory_provider.prefetch(f"{goal} | {observation[:300]}")
+
+        # Stage C: prepend recalled memories to the action LLM's user prompt.
+        if recalled:
+            user_text = f"[Recalled memories from prior steps]\n{recalled}\n\n{user_text}"
 
         # Stage D: ask the subtask planner for a near-term sub-goal and
         # prepend it. For long-horizon games (pokemon) this is the missing
@@ -448,6 +471,14 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         if self._subtask_planner is not None:
             try:
                 history_str = self._build_subtask_history()
+                # Cross-episode learning: feed the same recalled memories into
+                # the planner so it sees "this kind of state previously led to
+                # score=+1 via X" and biases the subtask accordingly.
+                if recalled:
+                    history_str = (
+                        f"### Recalled prior memories\n{recalled}\n\n"
+                        f"### Recent steps (this episode)\n{history_str}"
+                    )
                 subtask = self._subtask_planner.plan(
                     goal=goal,
                     observation=observation,

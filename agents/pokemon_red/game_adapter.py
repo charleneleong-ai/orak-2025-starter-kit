@@ -5,6 +5,8 @@ import re
 from loguru import logger
 from pydantic import BaseModel, Field
 
+# Re-exports read by UnifiedMaclaAgent via self._adapter.<NAME>.
+from agents.pokemon_red.base import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE  # noqa: F401
 from agents.pokemon_red.openai_pokemon_memory_utils import (
     get_map_memory_dict,
     parse_game_state,

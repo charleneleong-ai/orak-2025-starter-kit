@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import traceback
@@ -280,6 +281,11 @@ class BaseOrakAgent(weave.Model):
 
         if self._trajectory_writer is not None and log_extras and "user_prompt" in log_extras:
             try:
+                obs_digest = (
+                    hashlib.sha1(cur_state_str.encode("utf-8")).hexdigest()[:12]
+                    if cur_state_str
+                    else None
+                )
                 self._trajectory_writer.add_step(
                     StepRecord(
                         step=self._step_count,
@@ -294,6 +300,8 @@ class BaseOrakAgent(weave.Model):
                         cached_tokens=log_extras.get("tokens_cached", 0),
                         is_fallback=bool(log_extras.get("is_fallback", False)),
                         fallback_reason=log_extras.get("fallback_reason"),
+                        info_score=float(current_score),
+                        obs_digest=obs_digest,
                     )
                 )
             except Exception as e:
