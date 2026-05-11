@@ -2,7 +2,14 @@
 
 import re
 
+from loguru import logger
 from pydantic import BaseModel, Field
+
+from agents.pokemon_red.openai_pokemon_memory_utils import (
+    get_map_memory_dict,
+    parse_game_state,
+    replace_map_on_screen_with_full_map,
+)
 
 # Compiled once for the per-step lookup in extract_loop_state. Mirrors the
 # regexes in pokemon_red/macla.py so the LoopDetector wiring works for both
@@ -78,6 +85,47 @@ def extract_loop_state(obs: dict) -> tuple | None:
     if not m_map or not m_pos:
         return None
     return (m_map.group(1), int(m_pos.group(1)), int(m_pos.group(2)))
+
+
+class PokemonObservationPreprocessor:
+    """Maintains per-agent map exploration memory and expands the env's
+    screen-window 'Map on Screen' block to the full explored map.
+
+    Pokemon Red emits a viewport ~5 columns × 6 rows centred on the
+    player, so tiles outside that window — including the RedsHouse1f
+    exit door at (3, 7) when the agent stands at the top of the map —
+    are invisible to the LLM. Without an off-screen memory layer the
+    agent can be unable to even consider an action whose target is
+    physically off the obs grid.
+
+    Mirrors the legacy ``PokemonRedMaclaAgent._preprocess_observation``
+    pipeline (``agents/pokemon_red/base.py``) so ``UnifiedMaclaAgent``
+    runs see the same expanded obs as the legacy entrypoint.
+    """
+
+    def __init__(self) -> None:
+        self._map_memory: dict = {}
+
+    def preprocess(self, obs_str: str) -> str:
+        try:
+            parsed = parse_game_state(obs_str)
+            map_info = parsed.get("map_info") or {}
+            map_name = map_info.get("map_name")
+            if not map_name or map_info.get("x_max") is None:
+                return obs_str
+            self._map_memory = get_map_memory_dict(parsed, self._map_memory)
+            map_current = self._map_memory.get(map_name, {}).get("explored_map", [])
+            if not map_current:
+                return obs_str
+            return replace_map_on_screen_with_full_map(obs_str, map_current, {})
+        except Exception as e:
+            logger.warning(f"[pokemon obs preprocessor] failed; returning raw obs: {e}")
+            return obs_str
+
+
+def make_observation_preprocessor() -> PokemonObservationPreprocessor:
+    """Factory hook read by ``UnifiedMaclaAgent`` — instantiate per agent."""
+    return PokemonObservationPreprocessor()
 
 
 def calculate_metrics(game_info: dict) -> dict:
