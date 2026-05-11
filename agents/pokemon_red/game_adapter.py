@@ -143,6 +143,7 @@ def calculate_metrics(game_info: dict) -> dict:
     metrics["score"] = float(game_info.get("score", 0))
     return metrics
 
+
 # ── Self-reflection recommendation (PR #64 cross-game retro) ──────────
 # Cross-game test (n=1, 300 steps) found self-reflection on pokemon enables
 # deeper stuck-state recoveries (Charmander naming + trainer-battle progression)
