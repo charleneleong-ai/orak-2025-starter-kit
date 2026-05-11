@@ -391,5 +391,9 @@ def scoreboard(
     typer.echo(f"wrote {p}")
 
 
+# scoreboard-from-index lives upstream now — see autoresearch.compare.
+# Invoke directly: python -m autoresearch.compare scoreboard-from-index ...
+
+
 if __name__ == "__main__":
     app()
