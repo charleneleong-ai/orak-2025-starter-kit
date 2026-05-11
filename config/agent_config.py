@@ -207,14 +207,14 @@ class LocalConfig(AgentConfig):
     reflection_every: int = 10
     reflection_max_chars: int = 600
 
-    # Optional ReAct self-verification (LangGraphMaclaAgent only). When True,
+    # Optional self-verification (Reflexion-style) (LangGraphMaclaAgent only). When True,
     # the LLM-fallback path runs through a graph that adds a second-pass
     # verification step: propose action → re-read obs → confirm or revise.
     # Catches tool-selection failures the single-pass LLM falls into
     # (e.g. emitting move_to(x,y) for a WarpPoint tile). Cost: doubles
     # LLM calls on fallback steps. Default off.
-    use_react_verify: bool = False
-    react_max_iterations: int = 1
+    use_verify_action: bool = False
+    verify_max_iterations: int = 1
 
     # Optional shaped-reward overrides. Keys are merged on top of
     # `agents.macla.online_evaluator.DEFAULT_SHAPING[<game>]`. Useful for

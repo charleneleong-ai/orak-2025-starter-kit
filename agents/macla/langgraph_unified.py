@@ -1,7 +1,7 @@
 """LangGraph variant of UnifiedMaclaAgent.
 
 Reshapes the LLM-fallback path of ``UnifiedMaclaAgent._base_fallback`` as a
-LangGraph state machine. Adds an optional ReAct self-verification pass
+LangGraph state machine. Adds an optional self-verification (Reflexion-style) pass
 (propose → verify-against-obs → commit) that the parent class can't
 express without method-body branching.
 
@@ -12,20 +12,20 @@ Graph shape::
                                                                     │
                                   ┌─────────────────────────────────┘
                                   ▼
-                              react_verify (conditional)
+                              verify_action (conditional)
                                   │
                                   ▼
                                  END
 
-Without ReAct (default): straight-line replication of the parent's flow.
-With ReAct (``use_react_verify: true``): two-pass LLM. First pass proposes
+Without self-verification (default): straight-line replication of the parent's flow.
+With self-verification (``use_verify_action: true``): two-pass LLM. First pass proposes
 an action; second pass re-reads the obs + critique and either confirms
 the proposed action or revises it. Catches hallucinations like the Stage
 C'++ T=0.3 tool-selection failure (LLM walked to (3,7) but used
 ``move_to`` when ``warp_with_warp_point`` was needed).
 
 Default off → identical behavior to ``UnifiedMaclaAgent``. Opt in per
-agent config via ``use_react_verify: true``.
+agent config via ``use_verify_action: true``.
 """
 
 from __future__ import annotations
@@ -67,10 +67,10 @@ class ActionGraphState(TypedDict, total=False):
     proposed_action: str
     proposed_reasoning: str
 
-    # ReAct verification outputs (populated only when enabled)
+    # Self-verification outputs (populated only when enabled)
     verified_action: str
     verified_reasoning: str
-    react_was_revised: bool
+    was_revised: bool
 
 
 def _build_action_graph() -> Any:
@@ -91,7 +91,7 @@ def _build_action_graph() -> Any:
         "plan_subtask",
         "compose_prompt",
         "invoke_llm",
-        "react_verify",
+        "verify_action",
     ):
         sg.add_node(name, _noop)
 
@@ -101,28 +101,28 @@ def _build_action_graph() -> Any:
     sg.add_edge("retrieve_memory", "plan_subtask")
     sg.add_edge("plan_subtask", "compose_prompt")
     sg.add_edge("compose_prompt", "invoke_llm")
-    sg.add_edge("invoke_llm", "react_verify")
-    sg.add_edge("react_verify", END)
+    sg.add_edge("invoke_llm", "verify_action")
+    sg.add_edge("verify_action", END)
     return sg.compile()
 
 
 class LangGraphMaclaAgent(UnifiedMaclaAgent):
     """UnifiedMaclaAgent with the LLM-fallback path as a LangGraph.
 
-    Default behavior matches the parent. Opt into ReAct self-verification
-    by setting ``use_react_verify: true`` in the agent YAML.
+    Default behavior matches the parent. Opt into self-verification (Reflexion-style)
+    by setting ``use_verify_action: true`` in the agent YAML.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         config = kwargs.get("config") or (args[0] if args else None)
-        self._use_react_verify = bool(getattr(config, "use_react_verify", False))
-        self._react_max_iterations = int(getattr(config, "react_max_iterations", 1))
+        self._use_verify_action = bool(getattr(config, "use_verify_action", False))
+        self._verify_max_iterations = int(getattr(config, "verify_max_iterations", 1))
         self._action_graph = self._build_action_graph_bound()
-        if self._use_react_verify:
+        if self._use_verify_action:
             logger.info(
-                f"[LangGraph] ReAct self-verification enabled "
-                f"(max_iterations={self._react_max_iterations})"
+                f"[LangGraph] self-verification (Reflexion-style) enabled "
+                f"(max_iterations={self._verify_max_iterations})"
             )
 
     # ── Graph construction (instance-bound) ───────────────────────────
@@ -135,7 +135,7 @@ class LangGraphMaclaAgent(UnifiedMaclaAgent):
         sg.add_node("plan_subtask", self._node_plan_subtask)
         sg.add_node("compose_prompt", self._node_compose_prompt)
         sg.add_node("invoke_llm", self._node_invoke_llm)
-        sg.add_node("react_verify", self._node_react_verify)
+        sg.add_node("verify_action", self._node_verify_action)
 
         sg.add_edge(START, "compute_critique")
         sg.add_edge(START, "retrieve_memory")
@@ -143,8 +143,8 @@ class LangGraphMaclaAgent(UnifiedMaclaAgent):
         sg.add_edge("retrieve_memory", "plan_subtask")
         sg.add_edge("plan_subtask", "compose_prompt")
         sg.add_edge("compose_prompt", "invoke_llm")
-        sg.add_edge("invoke_llm", "react_verify")
-        sg.add_edge("react_verify", END)
+        sg.add_edge("invoke_llm", "verify_action")
+        sg.add_edge("verify_action", END)
         return sg.compile()
 
     # ── Node implementations ──────────────────────────────────────────
@@ -211,20 +211,20 @@ class LangGraphMaclaAgent(UnifiedMaclaAgent):
         )
         return {"proposed_action": action, "proposed_reasoning": reasoning}
 
-    def _node_react_verify(self, state: ActionGraphState) -> dict:
+    def _node_verify_action(self, state: ActionGraphState) -> dict:
         """Second-pass LLM call that checks the proposed action against the
         observation + critique + subtask. Returns either the original action
         (if the verifier confirms) or a revised one.
 
-        Skipped entirely when ``use_react_verify`` is False — returns the
+        Skipped entirely when ``use_verify_action`` is False — returns the
         proposed action unchanged.
         """
         proposed = state.get("proposed_action", "")
-        if not self._use_react_verify or not proposed:
+        if not self._use_verify_action or not proposed:
             return {
                 "verified_action": proposed,
                 "verified_reasoning": state.get("proposed_reasoning", ""),
-                "react_was_revised": False,
+                "was_revised": False,
             }
 
         critique = state.get("critique", "")
@@ -246,18 +246,18 @@ class LangGraphMaclaAgent(UnifiedMaclaAgent):
             action, reasoning = self._invoke_action_llm(user_text=verify_user, obs_image=None)
             revised = action != proposed
             if revised:
-                logger.debug(f"[LangGraph] ReAct revised action: {proposed!r} → {action!r}")
+                logger.debug(f"[LangGraph] self-verify revised action: {proposed!r} → {action!r}")
             return {
                 "verified_action": action,
                 "verified_reasoning": reasoning,
-                "react_was_revised": revised,
+                "was_revised": revised,
             }
         except Exception as e:
-            logger.warning(f"[LangGraph] react_verify failed; keeping proposed: {e}")
+            logger.warning(f"[LangGraph] verify_action failed; keeping proposed: {e}")
             return {
                 "verified_action": proposed,
                 "verified_reasoning": state.get("proposed_reasoning", ""),
-                "react_was_revised": False,
+                "was_revised": False,
             }
 
     # ── Shared LLM invocation ─────────────────────────────────────────

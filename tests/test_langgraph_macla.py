@@ -1,11 +1,11 @@
 """Tests for LangGraphMaclaAgent — the LangGraph variant of UnifiedMaclaAgent.
 
 Same per-step interface as the parent, but the LLM-fallback path is expressed
-as a LangGraph state machine. Adds an optional ReAct self-verification pass
+as a LangGraph state machine. Adds an optional self-verification (Reflexion-style) pass
 (propose → verify-against-obs → commit) that the parent class can't express
 without method-body branching.
 
-These tests pin the contract (subclass relationship, graph compiles, ReAct
+These tests pin the contract (subclass relationship, graph compiles, self-verification
 gating) without spinning up a live LLM.
 """
 
@@ -36,8 +36,8 @@ def test_action_graph_compiles():
     assert hasattr(g, "stream")
 
 
-def test_action_graph_nodes_include_react_verify_node():
-    """The graph must expose a react_verify node (gated at runtime by config)."""
+def test_action_graph_nodes_include_verify_action_node():
+    """The graph must expose a verify_action node (gated at runtime by config)."""
     from agents.macla.langgraph_unified import _build_action_graph
 
     g = _build_action_graph()
@@ -45,11 +45,11 @@ def test_action_graph_nodes_include_react_verify_node():
     # Core nodes
     assert "compose_prompt" in nodes
     assert "invoke_llm" in nodes
-    # ReAct self-verification node
-    assert "react_verify" in nodes
+    # Self-verification node
+    assert "verify_action" in nodes
 
 
-def test_localconfig_declares_use_react_verify():
+def test_localconfig_declares_use_verify_action():
     """pydantic extra='forbid' on LocalConfig — gates the new agent feature."""
     from config.agent_config import LocalConfig
 
@@ -57,11 +57,11 @@ def test_localconfig_declares_use_react_verify():
         class_name="test",
         model="test-model",
         temperature=0.0,
-        use_react_verify=True,
-        react_max_iterations=2,
+        use_verify_action=True,
+        verify_max_iterations=2,
     )
-    assert c.use_react_verify is True
-    assert c.react_max_iterations == 2
+    assert c.use_verify_action is True
+    assert c.verify_max_iterations == 2
 
 
 def test_unified_agent_signature_unchanged():
@@ -75,17 +75,17 @@ def test_unified_agent_signature_unchanged():
     assert "tuple[list[str], str]" in src or "return " in src
 
 
-def test_langgraph_macla_init_default_react_off():
-    """When use_react_verify is unset, the agent behaves identically to parent.
+def test_langgraph_macla_init_default_verify_off():
+    """When use_verify_action is unset, the agent behaves identically to parent.
 
-    Source-inspection test (no live LLM): the LangGraph init gates the ReAct
-    branch behind config.use_react_verify, defaulting to off.
+    Source-inspection test (no live LLM): the LangGraph init gates the self-verification
+    branch behind config.use_verify_action, defaulting to off.
     """
     import inspect
 
     from agents.macla.langgraph_unified import LangGraphMaclaAgent
 
     init_src = inspect.getsource(LangGraphMaclaAgent.__init__)
-    assert 'getattr(config, "use_react_verify"' in init_src, (
-        "LangGraphMaclaAgent must gate ReAct verify behind the config flag"
+    assert 'getattr(config, "use_verify_action"' in init_src, (
+        "LangGraphMaclaAgent must gate self-verification behind the config flag"
     )
