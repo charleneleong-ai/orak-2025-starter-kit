@@ -64,7 +64,10 @@ dependencies = [
     "torch>=2.9.0",
     "transformers>=4.57.1",
     "typer>=0.20.0",
-    "autoresearch @ git+ssh://git@github.com/charleneleong-ai/autoresearch.git@v0.21.0",
+    # TODO: switch back to a release tag once autoresearch PR #57 lands
+    # (consolidate + scoreboard-from-index). Branch pin works locally; CI will
+    # need the PAT to read the autoresearch fork.
+    "autoresearch @ git+ssh://git@github.com/charleneleong-ai/autoresearch.git@feat/scoreboard-from-index",
     "ultralytics>=8.3.225",
     "burnysc2==7.1.1",
     "screeninfo>=0.8.1",

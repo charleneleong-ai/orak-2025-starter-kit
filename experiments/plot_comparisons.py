@@ -48,7 +48,6 @@ Examples:
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -392,129 +391,8 @@ def scoreboard(
     typer.echo(f"wrote {p}")
 
 
-# ── scoreboard-from-index (canonical alternative to scoreboard) ────────
-
-
-def _best_score_for_variant_from_index(rows: list[dict], *, game: str, variant: str) -> float:
-    """Best ``evaluation_score`` across all rows matching (game, variant)."""
-    matching = [r for r in rows if r.get("game") == game and r.get("variant") == variant]
-    return _best_score(matching)
-
-
-def _load_index(path: Path) -> list[dict]:
-    return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
-
-
-@app.command("scoreboard-from-index")
-def scoreboard_from_index(
-    from_file: str = typer.Option(..., help="Path to a consolidated results.jsonl"),
-    out: str = typer.Option(..., help="Output PNG path"),
-    game: list[str] = typer.Option(..., "--game", "-g", help="Game name (repeat per panel)"),
-    variant: list[str] = typer.Option(
-        ...,
-        "--variant",
-        "-v",
-        help="Variant to render as one bar (matched against the 'variant' field). "
-        "Repeat per bar; interleave with --label/--sep like the scoreboard subcommand.",
-    ),
-    label: list[str] = typer.Option(..., "--label", "-l", help="Display label per variant"),
-    sep: list[int] = typer.Option(
-        ...,
-        help="Number of (variant, label) pairs per game — must sum to len(variant)",
-    ),
-    title: str | None = typer.Option(None, help="Top-level title"),
-):
-    """Render a cross-game scoreboard from a single consolidated index file.
-
-    Unlike ``scoreboard``, this command doesn't need one tag-dir per bar —
-    it reads from a single ``--from-file`` and filters by ``(game, variant)``
-    to produce each bar. Build the index with ``python -m
-    experiments._consolidate ...``.
-    """
-    if sum(sep) != len(variant) or len(variant) != len(label):
-        raise typer.BadParameter(
-            f"--sep ({sep}, sum={sum(sep)}) must add up to len(variant)={len(variant)} "
-            f"== len(label)={len(label)}"
-        )
-    if len(sep) != len(game):
-        raise typer.BadParameter(
-            f"--sep entries ({len(sep)}) must match --game entries ({len(game)})"
-        )
-
-    index_rows = _load_index(Path(from_file))
-
-    # Build games_to_sweeps in the shape plot_cross_game_scoreboard expects,
-    # but the "tag" we pass is actually a placeholder — we precompute scores
-    # via the index and feed them via game_titles is a hack; better to render
-    # directly here.
-    out_path = Path(out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    n_games = len(game)
-    fig, axes = plt.subplots(
-        1,
-        n_games,
-        figsize=(5.5 * n_games, 6.0),
-        dpi=140,
-    )
-    if n_games == 1:
-        axes = [axes]
-    fig.patch.set_facecolor("white")
-
-    palette = ["#888", "#1f77b4", "#ff7f0e", "#9467bd", "#2ca02c", "#d62728"]
-
-    cursor = 0
-    for ax, (g, n) in zip(axes, zip(game, sep)):
-        variants_for_game = variant[cursor : cursor + n]
-        labels_for_game = label[cursor : cursor + n]
-        cursor += n
-        values = [
-            _best_score_for_variant_from_index(index_rows, game=g, variant=v)
-            for v in variants_for_game
-        ]
-        colors = [palette[i % len(palette)] for i in range(len(labels_for_game))]
-        bars = ax.bar(
-            range(len(labels_for_game)),
-            values,
-            color=colors,
-            edgecolor="white",
-            linewidth=2,
-            zorder=3,
-        )
-        if any(v > 0 for v in values):
-            best_idx = max(range(len(values)), key=lambda i: values[i])
-            bars[best_idx].set_edgecolor("#2ca02c")
-            bars[best_idx].set_linewidth(3)
-        else:
-            best_idx = -1
-        max_v = max(values) if any(v > 0 for v in values) else 1
-        for i, v in enumerate(values):
-            ax.text(
-                i,
-                v + max_v * 0.02,
-                f"{v:.2f}",
-                ha="center",
-                va="bottom",
-                fontsize=11,
-                fontweight="bold" if i == best_idx else "normal",
-                color="#2ca02c" if i == best_idx else "#333",
-            )
-        ax.set_xticks(range(len(labels_for_game)))
-        ax.set_xticklabels(labels_for_game, rotation=20, ha="right", fontsize=9)
-        ax.set_title(g, fontsize=13, fontweight="bold", pad=10)
-        if ax is axes[0]:
-            ax.set_ylabel("Best Evaluation Score")
-        ax.grid(True, color="#eee", linewidth=0.7, axis="y", zorder=0)
-        ax.set_axisbelow(True)
-        ax.set_ylim(0, max_v * 1.25)
-
-    if title:
-        fig.suptitle(title, fontsize=13, color="#222", y=1.02)
-
-    plt.tight_layout()
-    plt.savefig(out_path, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-    typer.echo(f"wrote {out_path}")
+# scoreboard-from-index lives upstream now — see autoresearch.compare.
+# Invoke directly: python -m autoresearch.compare scoreboard-from-index ...
 
 
 if __name__ == "__main__":
