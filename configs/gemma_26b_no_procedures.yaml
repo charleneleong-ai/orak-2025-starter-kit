@@ -14,8 +14,8 @@ defaults:
   - twenty_fourty_eight: base
   - super_mario: base
   - pokemon_red: base
-  - override twenty_fourty_eight/agent: gemma_26b_no_procedures
-  - override super_mario/agent: gemma_26b_no_procedures
+  - override twenty_fourty_eight/agent: gemma_26b
+  - override super_mario/agent: gemma_26b
   - override pokemon_red/agent: gemma_26b_no_procedures
   - _self_
 
