@@ -76,7 +76,7 @@ python3 <<PYEOF
 import json, statistics, datetime as dt
 from pathlib import Path
 
-scores = [${scores[@]}]
+scores = [$(IFS=,; echo "${scores[*]}")]
 fmt = ", ".join(f"{s:.2f}%" for s in scores)
 mean = statistics.mean(scores) if scores else 0
 std = statistics.stdev(scores) if len(scores) > 1 else 0.0
