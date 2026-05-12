@@ -29,4 +29,4 @@ subtask_observation_chars: 600
 # committing. Targets PR #64's Stage C′++ T=0.3 failure mode (LLM emits
 # move_to to a WarpPoint instead of warp_with_warp_point).
 use_verify_action: true
-react_max_iterations: 1
+verify_max_iterations: 1
