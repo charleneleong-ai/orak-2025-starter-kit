@@ -80,19 +80,21 @@ print(f"appended: $game eval={eval_score:.2f}")
 PYEOF
 }
 
-echo "[$(date -u +%H:%M:%SZ)] === Stage B' cross-game (mario n=3 + 2048 n=1) ==="
-# Mario goes at n=3 because per-iter is ~10min and we expect the biggest
-# delta there (PR #31 Stage B 61.26 → Stage D 35.21 = -26pp from procedures).
-# 2048 stays at n=1 — Stage D was already procedure-OFF-by-adapter so the
-# Stage B' comparison there is more "did anything regress" than "did
-# procedures unlock anything". Each run_game call uses a fresh timestamp
-# so different LLM sampling seeds at T=0.7 give us variance.
+echo "[$(date -u +%H:%M:%SZ)] === Stage B' cross-game (mario n=3 + 2048 n=3) ==="
+# n=3 on both games for symmetric variance bands across the comparison.
+# Each run_game call uses a fresh timestamp so different LLM sampling
+# seeds at T=0.7 give us variance. Per-iter: mario ~10min, 2048 ~30min,
+# so cross-game phase is ~120min total.
 for iter in 1 2 3; do
     echo "[$(date -u +%H:%M:%SZ)] mario iter $iter/3"
     run_game super_mario configs/super_mario/env/default.yaml
     sleep 2  # distinct timestamps for run-id uniqueness
 done
-run_game twenty_fourty_eight configs/twenty_fourty_eight/env/default.yaml
+for iter in 1 2 3; do
+    echo "[$(date -u +%H:%M:%SZ)] 2048 iter $iter/3"
+    run_game twenty_fourty_eight configs/twenty_fourty_eight/env/default.yaml
+    sleep 2
+done
 
 echo "================================================================"
 echo "[$(date -u +%H:%M:%SZ)] STAGE B' CROSS-GAME DONE"
