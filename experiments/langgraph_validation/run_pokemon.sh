@@ -14,10 +14,6 @@ cd "$REPO"
 AGENT_CFG="configs/pokemon_red/agent/gemma_26b_langgraph.yaml"
 ENV_CFG="configs/pokemon_red/env/default.yaml"
 export GAME_DATA_DIR="/tmp/orak-planner-prompt"
-# Worktree has no .env (main repo's .env not copied by `git worktree add`),
-# so wandb has no API key. Stage E is a 1-off validation run — disable
-# wandb sync; eval_summary.json + evaluation.log still produced locally.
-export WANDB_MODE=disabled
 mkdir -p "$GAME_DATA_DIR/game_logs/pokemon_red"
 
 # Guards: AWQ model + verify_action enabled (config-drift insurance per PR #64 retro)
