@@ -273,6 +273,10 @@ class BayesianProcedureSelector:
         self.ontology_embeddings: dict[str, Any] = {}
         self.context_extractor = context_extractor
         self.spatial_pattern_extractor = spatial_pattern_extractor
+        # Master switch. When False, select_procedure short-circuits to
+        # (None, 0.0) on every call so the MACLA procedure layer is bypassed
+        # entirely. EnhancedMACLAAgent flips this from the agent config.
+        self.use_procedure_layer = True
 
     def build_ontology(self, trajectories: list[dict], k_top: int = 100):
         """Build ontology from trajectories to enable semantic retrieval."""
@@ -568,6 +572,12 @@ class BayesianProcedureSelector:
     def select_procedure(
         self, observation: str, goal: str, theta_conf: float = 0.25
     ) -> tuple[str | None, float]:
+        # Master switch: when the procedure layer is disabled, never select
+        # a cached procedure. Every step takes the LLM-fallback path. Keeps
+        # vmem + planner + reflection wired (those live on the agent, not
+        # the selector).
+        if not self.use_procedure_layer:
+            return None, 0.0
         candidates = self._retrieve_candidates(observation, goal, k=10)
         if not candidates:
             return None, 0.0
@@ -869,11 +879,13 @@ class EnhancedMACLAAgent:
         spatial_pattern_extractor=None,
         precondition_extractor=None,
         refinement_config: dict = None,
+        use_procedure_layer: bool = True,
     ):
         self.memory_system = EnhancedHierarchicalMemorySystem(N_a, N_s, N_p, N_m)
         self.bayesian_selector = BayesianProcedureSelector(
             self.memory_system, context_extractor=context_extractor
         )
+        self.bayesian_selector.use_procedure_layer = use_procedure_layer
         self.precondition_extractor = precondition_extractor
 
         refinement_config = refinement_config or {}
@@ -1463,6 +1475,7 @@ class LLMMACLAAgent(EnhancedMACLAAgent):
         spatial_pattern_extractor=None,
         precondition_extractor=None,
         refinement_config: dict = None,
+        use_procedure_layer: bool = True,
     ):
         super().__init__(
             N_a,
@@ -1474,6 +1487,7 @@ class LLMMACLAAgent(EnhancedMACLAAgent):
             spatial_pattern_extractor=spatial_pattern_extractor,
             precondition_extractor=precondition_extractor,
             refinement_config=refinement_config,
+            use_procedure_layer=use_procedure_layer,
         )
         self.llm = FrozenLLMReasoner(generator)
         self.fallback_generator = fallback_generator
