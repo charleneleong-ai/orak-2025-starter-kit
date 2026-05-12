@@ -207,6 +207,19 @@ class LocalConfig(AgentConfig):
     reflection_every: int = 10
     reflection_max_chars: int = 600
 
+    # Procedure-layer escape (post-Stage-E/F diagnosis: action-layer fixes
+    # didn't lift pokemon score=4 plateau; bottleneck is procedure-selection
+    # loop). Two surgical knobs:
+    #   - procedure_failure_streak_max: BayesianProcedureSelector filters
+    #     candidates whose consecutive_failures >= this. K=5 default.
+    #     Set to 0 (or negative) to disable Fix 1.
+    #   - force_llm_after_stuck_steps: when N consecutive steps see no
+    #     procedure-success, _compute_adaptive_theta returns 1.01 so every
+    #     candidate is rejected → LLM fallback. N=50 default. Set to 0 to
+    #     disable Fix 2.
+    procedure_failure_streak_max: int = 5
+    force_llm_after_stuck_steps: int = 50
+
     # Optional shaped-reward overrides. Keys are merged on top of
     # `agents.macla.online_evaluator.DEFAULT_SHAPING[<game>]`. Useful for
     # ablation sweeps over shaping params without editing source. Example:
