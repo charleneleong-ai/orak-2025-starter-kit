@@ -90,6 +90,8 @@ class BaseMaclaAgent(BaseModel):
             spatial_pattern_extractor=getattr(self, "extract_spatial_patterns", None),
             precondition_extractor=self.extract_preconditions,
             use_procedure_layer=getattr(self.config, "use_procedure_layer", True),
+            procedure_failure_streak_max=getattr(self.config, "procedure_failure_streak_max", 5),
+            force_llm_after_stuck_steps=getattr(self.config, "force_llm_after_stuck_steps", 50),
         )
 
     def _init_openai_macla(self):
@@ -114,6 +116,8 @@ class BaseMaclaAgent(BaseModel):
             spatial_pattern_extractor=getattr(self, "extract_spatial_patterns", None),
             precondition_extractor=self.extract_preconditions,
             use_procedure_layer=getattr(self.config, "use_procedure_layer", True),
+            procedure_failure_streak_max=getattr(self.config, "procedure_failure_streak_max", 5),
+            force_llm_after_stuck_steps=getattr(self.config, "force_llm_after_stuck_steps", 50),
         )
 
     def _init_local_macla(self):
@@ -143,6 +147,8 @@ class BaseMaclaAgent(BaseModel):
             spatial_pattern_extractor=getattr(self, "extract_spatial_patterns", None),
             precondition_extractor=self.extract_preconditions,
             use_procedure_layer=getattr(self.config, "use_procedure_layer", True),
+            procedure_failure_streak_max=getattr(self.config, "procedure_failure_streak_max", 5),
+            force_llm_after_stuck_steps=getattr(self.config, "force_llm_after_stuck_steps", 50),
         )
 
     @abstractmethod

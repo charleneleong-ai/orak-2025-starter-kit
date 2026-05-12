@@ -107,6 +107,11 @@ class ProceduralMemoryEntry:
     goals: set[str] = field(default_factory=set)
     performance_score: float = 0.5
     last_refined: float = field(default_factory=time.time)
+    # Resets on success, increments on failure. Used by BayesianProcedureSelector
+    # to retire procedures that fail K times in a row (default K=5) so the
+    # selector falls through to LLM fallback instead of looping on a procedure
+    # that's already proven bad in the current state.
+    consecutive_failures: int = 0
 
 
 # =========================================================
@@ -215,12 +220,14 @@ class EnhancedHierarchicalMemorySystem:
         if success:
             entry.procedure.alpha += 1
             entry.success_contexts.append(context)
+            entry.consecutive_failures = 0
         else:
             # Heavy penalty for fatal failures (Game Over)
             penalty = 5 if is_fatal else 1
             entry.procedure.beta += penalty
             context.fatal = is_fatal
             entry.failure_contexts.append(context)
+            entry.consecutive_failures += 1
 
         entry.procedure.execution_count += 1
         if len(entry.success_contexts) > 15:
@@ -267,6 +274,7 @@ class BayesianProcedureSelector:
         memory_system: EnhancedHierarchicalMemorySystem,
         context_extractor=None,
         spatial_pattern_extractor=None,
+        failure_streak_max: int = 5,
     ):
         self.memory_system = memory_system
         self.ontology: dict[str, list[str]] = {}
@@ -277,6 +285,9 @@ class BayesianProcedureSelector:
         # (None, 0.0) on every call so the MACLA procedure layer is bypassed
         # entirely. EnhancedMACLAAgent flips this from the agent config.
         self.use_procedure_layer = True
+        # Procedure-layer escape: filter candidates whose consecutive_failures
+        # is at or above this threshold. Set to 0 (or negative) to disable.
+        self.failure_streak_max = failure_streak_max
 
     def build_ontology(self, trajectories: list[dict], k_top: int = 100):
         """Build ontology from trajectories to enable semantic retrieval."""
@@ -586,6 +597,15 @@ class BayesianProcedureSelector:
         for pk in candidates:
             if pk in self.memory_system.procedural_memory:
                 entry = self.memory_system.procedural_memory[pk]
+                # Procedure-layer escape (Fix 1): skip candidates whose
+                # consecutive_failures has hit the streak threshold. Forces
+                # the selector to fall through to LLM fallback for this step
+                # instead of looping on a procedure that's clearly failing.
+                if (
+                    self.failure_streak_max > 0
+                    and entry.consecutive_failures >= self.failure_streak_max
+                ):
+                    continue
                 eu = self._compute_expected_utility(entry, observation, goal)
                 utilities.append((pk, eu))
 
@@ -880,13 +900,23 @@ class EnhancedMACLAAgent:
         precondition_extractor=None,
         refinement_config: dict = None,
         use_procedure_layer: bool = True,
+        procedure_failure_streak_max: int = 5,
+        force_llm_after_stuck_steps: int = 50,
     ):
         self.memory_system = EnhancedHierarchicalMemorySystem(N_a, N_s, N_p, N_m)
         self.bayesian_selector = BayesianProcedureSelector(
-            self.memory_system, context_extractor=context_extractor
+            self.memory_system,
+            context_extractor=context_extractor,
+            failure_streak_max=procedure_failure_streak_max,
         )
         self.bayesian_selector.use_procedure_layer = use_procedure_layer
         self.precondition_extractor = precondition_extractor
+        # Procedure-layer escape (Fix 2): when the agent goes this many
+        # consecutive steps without ANY procedure-success, _compute_adaptive_theta
+        # returns a value above the EU clamp (1.01) so select_procedure rejects
+        # every candidate → LLM fallback. Set to 0 to disable.
+        self.force_llm_after_stuck_steps = force_llm_after_stuck_steps
+        self._steps_since_step_success = 0
 
         refinement_config = refinement_config or {}
         n_min_s = refinement_config.get("n_min_s", 3)  # Reduced from 5 for faster iteration
@@ -920,8 +950,42 @@ class EnhancedMACLAAgent:
             "stagnant_episodes": 0,
         }
 
+    def note_step_outcome(self, success: bool) -> None:
+        """Per-step success signal for the stuck-state forced-LLM logic.
+
+        Resets the streak counter on success; increments on failure. Called
+        from the per-step ``provide_feedback`` path. When the streak hits
+        ``force_llm_after_stuck_steps``, the next theta is pushed above 1.0
+        so ``select_procedure`` rejects all candidates (best_eu ≤ 1.0) and
+        the agent falls through to LLM fallback. The streak does NOT reset
+        automatically when force-LLM fires — only success resets it.
+        """
+        if success:
+            self._steps_since_step_success = 0
+        else:
+            self._steps_since_step_success += 1
+
+    def should_force_llm_fallback(self) -> bool:
+        """True if the stuck-state counter has hit the configured threshold.
+        Returns False when the feature is disabled (threshold ≤ 0)."""
+        if self.force_llm_after_stuck_steps <= 0:
+            return False
+        return self._steps_since_step_success >= self.force_llm_after_stuck_steps
+
     def _compute_adaptive_theta(self) -> float:
         """Self-adapt confidence threshold based on recent performance."""
+        # Procedure-layer escape (Fix 2): when stuck, return a value above
+        # the EU clamp [0,1] so every candidate is rejected in select_procedure
+        # → LLM fallback for at least one step. Streak only resets on a real
+        # step-success, so this can fire repeatedly until the agent escapes.
+        if self.should_force_llm_fallback():
+            logger.info(
+                f"[ProcedureEscape] forcing LLM fallback "
+                f"(steps_since_success={self._steps_since_step_success}, "
+                f"threshold={self.force_llm_after_stuck_steps})"
+            )
+            return 1.01
+
         s = self._adaptive_stats
         total = max(s["recent_total"], 1)
 
@@ -1028,6 +1092,10 @@ class EnhancedMACLAAgent:
         is_fatal: bool = False,
         shaped_reward: float | None = None,
     ) -> dict:
+        # Procedure-layer escape (Fix 2): bump or reset the stuck-state counter
+        # per step. should_force_llm_fallback() reads this in the next
+        # _compute_adaptive_theta() call to decide whether to push theta > 1.0.
+        self.note_step_outcome(success=actual_success)
         """
         Provides feedback on the execution result and updates memory.
 
@@ -1476,6 +1544,8 @@ class LLMMACLAAgent(EnhancedMACLAAgent):
         precondition_extractor=None,
         refinement_config: dict = None,
         use_procedure_layer: bool = True,
+        procedure_failure_streak_max: int = 5,
+        force_llm_after_stuck_steps: int = 50,
     ):
         super().__init__(
             N_a,
@@ -1488,6 +1558,8 @@ class LLMMACLAAgent(EnhancedMACLAAgent):
             precondition_extractor=precondition_extractor,
             refinement_config=refinement_config,
             use_procedure_layer=use_procedure_layer,
+            procedure_failure_streak_max=procedure_failure_streak_max,
+            force_llm_after_stuck_steps=force_llm_after_stuck_steps,
         )
         self.llm = FrozenLLMReasoner(generator)
         self.fallback_generator = fallback_generator
