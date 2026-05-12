@@ -220,6 +220,14 @@ class LocalConfig(AgentConfig):
     procedure_failure_streak_max: int = 5
     force_llm_after_stuck_steps: int = 50
 
+    # Master switch for the Bayesian procedure cache. When False, select_procedure
+    # short-circuits to (None, 0.0) so every step takes the LLM-fallback path —
+    # but the reflection / planner / vmem modules are unaffected, so this is a
+    # "raw-LLM-with-reflection-aids" mode rather than a Stage A model-only one.
+    # Used to test whether the score=4 plateau is in the procedure layer
+    # (cache-driven loop) or upstream in the LLM/planner combo.
+    use_procedure_layer: bool = True
+
     # Optional shaped-reward overrides. Keys are merged on top of
     # `agents.macla.online_evaluator.DEFAULT_SHAPING[<game>]`. Useful for
     # ablation sweeps over shaping params without editing source. Example:

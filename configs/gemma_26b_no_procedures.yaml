@@ -1,0 +1,30 @@
+# @package _global_
+#
+# Hydra root for Stage B': pokemon routed to gemma_26b_no_procedures
+# (Stage D minus procedure cache). mario/2048 stay on gemma_26b — only
+# pokemon needs the baseline disambiguation. The mario/2048 entries here
+# are just to satisfy Hydra's "must override all games" requirement when
+# composing the full config.
+
+ENV: ${oc.env:ENV, "dev"}
+CWD: ${hydra:runtime.cwd}
+LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
+
+defaults:
+  - twenty_fourty_eight: base
+  - super_mario: base
+  - pokemon_red: base
+  - override twenty_fourty_eight/agent: gemma_26b
+  - override super_mario/agent: gemma_26b
+  - override pokemon_red/agent: gemma_26b_no_procedures
+  - _self_
+
+twenty_fourty_eight:
+  wandb:
+    tags: ["gemma", "gemma-26b", "twenty_fourty_eight", "stage_d_planner", "outcome_tagged_history"]
+super_mario:
+  wandb:
+    tags: ["gemma", "gemma-26b", "super_mario", "stage_d_planner", "outcome_tagged_history"]
+pokemon_red:
+  wandb:
+    tags: ["gemma", "gemma-26b", "pokemon_red", "stage_b_prime_no_procedures"]

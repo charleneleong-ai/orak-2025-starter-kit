@@ -91,6 +91,7 @@ class BaseMaclaAgent(BaseModel):
             precondition_extractor=self.extract_preconditions,
             procedure_failure_streak_max=getattr(self.config, "procedure_failure_streak_max", 5),
             force_llm_after_stuck_steps=getattr(self.config, "force_llm_after_stuck_steps", 50),
+            use_procedure_layer=getattr(self.config, "use_procedure_layer", True),
         )
 
     def _init_openai_macla(self):
@@ -116,6 +117,7 @@ class BaseMaclaAgent(BaseModel):
             precondition_extractor=self.extract_preconditions,
             procedure_failure_streak_max=getattr(self.config, "procedure_failure_streak_max", 5),
             force_llm_after_stuck_steps=getattr(self.config, "force_llm_after_stuck_steps", 50),
+            use_procedure_layer=getattr(self.config, "use_procedure_layer", True),
         )
 
     def _init_local_macla(self):
@@ -146,6 +148,7 @@ class BaseMaclaAgent(BaseModel):
             precondition_extractor=self.extract_preconditions,
             procedure_failure_streak_max=getattr(self.config, "procedure_failure_streak_max", 5),
             force_llm_after_stuck_steps=getattr(self.config, "force_llm_after_stuck_steps", 50),
+            use_procedure_layer=getattr(self.config, "use_procedure_layer", True),
         )
 
     @abstractmethod

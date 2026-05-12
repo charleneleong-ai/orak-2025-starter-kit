@@ -1,0 +1,28 @@
+# Stage B' baseline: Stage D minus the Bayesian procedure cache.
+# Tests competing hypothesis to PR #68's procedure-escape fixes — is the
+# pokemon score=4 plateau in the procedure layer, or upstream in the
+# LLM/planner combo? Disable ONLY the procedure cache; keep self-reflection,
+# subtask planner, and vector memory all ON via per-game adapter defaults.
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: true
+max_tokens: 8192
+max_model_len: 16384
+game_config_path: "pokemon_red"
+track: "TRACK1"
+# Reflection enhancements stay ON (same as Stage D)
+use_vector_memory: true
+vector_memory_max: 100
+vector_memory_top_k: 3
+vector_memory_threshold: 0.5
+vector_memory_use_mmr: true
+vector_memory_mmr_lambda: 0.5
+vector_memory_decay_alpha: 0.5
+vector_memory_decay_window: 20
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600
+# Procedure cache disabled — every step takes the LLM-fallback path.
+use_procedure_layer: false

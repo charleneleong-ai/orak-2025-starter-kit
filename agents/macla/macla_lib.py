@@ -284,6 +284,10 @@ class BayesianProcedureSelector:
         # Procedure-layer escape: filter candidates whose consecutive_failures
         # is at or above this threshold. Set to 0 (or negative) to disable.
         self.failure_streak_max = failure_streak_max
+        # Master switch — when False, select_procedure short-circuits to
+        # (None, 0.0) regardless of EU/theta/streaks. Used for the Stage B'
+        # baseline (raw-LLM-with-reflection-aids, no procedure cache).
+        self.use_procedure_layer = True
 
     def build_ontology(self, trajectories: list[dict], k_top: int = 100):
         """Build ontology from trajectories to enable semantic retrieval."""
@@ -579,6 +583,10 @@ class BayesianProcedureSelector:
     def select_procedure(
         self, observation: str, goal: str, theta_conf: float = 0.25
     ) -> tuple[str | None, float]:
+        # Master switch: when the procedure layer is disabled, never select
+        # a cached procedure. Every step takes the LLM-fallback path.
+        if not self.use_procedure_layer:
+            return None, 0.0
         candidates = self._retrieve_candidates(observation, goal, k=10)
         if not candidates:
             return None, 0.0
@@ -891,6 +899,7 @@ class EnhancedMACLAAgent:
         refinement_config: dict = None,
         procedure_failure_streak_max: int = 5,
         force_llm_after_stuck_steps: int = 50,
+        use_procedure_layer: bool = True,
     ):
         self.memory_system = EnhancedHierarchicalMemorySystem(N_a, N_s, N_p, N_m)
         self.bayesian_selector = BayesianProcedureSelector(
@@ -898,6 +907,7 @@ class EnhancedMACLAAgent:
             context_extractor=context_extractor,
             failure_streak_max=procedure_failure_streak_max,
         )
+        self.bayesian_selector.use_procedure_layer = use_procedure_layer
         self.precondition_extractor = precondition_extractor
         # Procedure-layer escape (Fix 2): when the agent goes this many
         # consecutive steps without ANY procedure-success, _compute_adaptive_theta
@@ -1533,6 +1543,7 @@ class LLMMACLAAgent(EnhancedMACLAAgent):
         refinement_config: dict = None,
         procedure_failure_streak_max: int = 5,
         force_llm_after_stuck_steps: int = 50,
+        use_procedure_layer: bool = True,
     ):
         super().__init__(
             N_a,
@@ -1546,6 +1557,7 @@ class LLMMACLAAgent(EnhancedMACLAAgent):
             refinement_config=refinement_config,
             procedure_failure_streak_max=procedure_failure_streak_max,
             force_llm_after_stuck_steps=force_llm_after_stuck_steps,
+            use_procedure_layer=use_procedure_layer,
         )
         self.llm = FrozenLLMReasoner(generator)
         self.fallback_generator = fallback_generator
