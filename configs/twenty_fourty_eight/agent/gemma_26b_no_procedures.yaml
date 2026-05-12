@@ -1,0 +1,27 @@
+# Stage B' baseline for 2048: Stage D minus the Bayesian procedure cache.
+# Disable ONLY use_procedure_layer; keep planner + vmem ON. Tests whether
+# 2048's Stage D (63.64%) plateau holds when procedures are off — control
+# for whether procedures were hurting or helping post-#46 log-norm units.
+#
+# Model: cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit (matches the currently-served
+# vLLM model; master's 2048 yaml predates the AWQ switch).
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: true
+max_tokens: 8192
+max_model_len: 16384
+game_config_path: "twenty_fourty_eight"
+track: "TRACK1"
+use_vector_memory: true
+vector_memory_max: 100
+vector_memory_top_k: 3
+vector_memory_threshold: 0.5
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600
+macla_n_min_f: 1
+macla_n_min_s: 1
+macla_theta_decay: 0.001
+use_procedure_layer: false
