@@ -67,8 +67,12 @@ def first_line(s: str, n: int = 180) -> str:
 @app.command()
 def main(
     run_dir: Annotated[Path, typer.Option("--run-dir", help="Path to a single run dir")],
-    plateau_window: Annotated[int, typer.Option(help="N consecutive steps with no score change = plateau")] = 30,
-    show_responses: Annotated[bool, typer.Option(help="Dump full LLM responses at plateau (verbose)")] = False,
+    plateau_window: Annotated[
+        int, typer.Option(help="N consecutive steps with no score change = plateau")
+    ] = 30,
+    show_responses: Annotated[
+        bool, typer.Option(help="Dump full LLM responses at plateau (verbose)")
+    ] = False,
 ):
     states = load_jsonl(run_dir / "game_states.jsonl")
     requests = load_jsonl(run_dir / "logs" / "raw_requests.jsonl")
@@ -92,7 +96,9 @@ def main(
         score = s.get("info", {}).get("score") or s.get("score") or last_score
         # Some envs report score inside obs.info; fall back to evaluator
         if isinstance(score, (int, float)) and score != last_score and score >= 0:
-            score_bank_events.append({"step": i, "from": last_score, "to": score, "map": parsed["map"]})
+            score_bank_events.append(
+                {"step": i, "from": last_score, "to": score, "map": parsed["map"]}
+            )
             last_score = score
         timeline.append({"step": i, "score": last_score, **parsed})
 
@@ -106,18 +112,29 @@ def main(
     for i, t in enumerate(timeline + [{"score": "END"}]):
         if t["score"] != cur_score:
             if i - cur_start >= plateau_window:
-                plateaus.append({"start": cur_start, "end": i - 1, "score": cur_score, "length": i - cur_start})
+                plateaus.append(
+                    {"start": cur_start, "end": i - 1, "score": cur_score, "length": i - cur_start}
+                )
             cur_start = i
             cur_score = t["score"]
 
     # Final plateau (if run ended stuck)
     if len(timeline) - cur_start >= plateau_window:
-        plateaus.append({"start": cur_start, "end": len(timeline) - 1, "score": cur_score, "length": len(timeline) - cur_start})
+        plateaus.append(
+            {
+                "start": cur_start,
+                "end": len(timeline) - 1,
+                "score": cur_score,
+                "length": len(timeline) - cur_start,
+            }
+        )
 
     # ── Report ──
     print(f"# Trajectory: {run_dir.name}")
     print()
-    print(f"- **final_score:** {final_score} (raw); **eval %:** {(final_score / 7.0) * 100 if isinstance(final_score, (int, float)) else '?'}")
+    print(
+        f"- **final_score:** {final_score} (raw); **eval %:** {(final_score / 7.0) * 100 if isinstance(final_score, (int, float)) else '?'}"
+    )
     print(f"- **steps recorded:** {len(timeline)}")
     print(f"- **total tokens:** {summary.get('total_tokens', '?')}")
     print()
@@ -138,11 +155,13 @@ def main(
     else:
         print()
         for p in plateaus:
-            print(f"### Plateau at score={p['score']} — steps {p['start']}–{p['end']} ({p['length']} steps)")
+            print(
+                f"### Plateau at score={p['score']} — steps {p['start']}–{p['end']} ({p['length']} steps)"
+            )
             print()
             # Map distribution during plateau
             map_counts: dict[str, int] = {}
-            for t in timeline[p["start"]:p["end"] + 1]:
+            for t in timeline[p["start"] : p["end"] + 1]:
                 map_counts[t["map"]] = map_counts.get(t["map"], 0) + 1
             top_maps = sorted(map_counts.items(), key=lambda kv: -kv[1])[:5]
             print(f"**Maps visited:** {', '.join(f'`{m}`×{c}' for m, c in top_maps)}")
@@ -177,8 +196,12 @@ def main(
         last_score_at_burst_start = timeline[burst_start]["score"]
         final_score_t = timeline[-1]["score"]
         if final_score_t > last_score_at_burst_start:
-            print(f"## Late burst — last 30 steps banked {final_score_t - last_score_at_burst_start} milestones")
-            print(f"score went **{last_score_at_burst_start} → {final_score_t}** in steps {burst_start}–{len(timeline) - 1}")
+            print(
+                f"## Late burst — last 30 steps banked {final_score_t - last_score_at_burst_start} milestones"
+            )
+            print(
+                f"score went **{last_score_at_burst_start} → {final_score_t}** in steps {burst_start}–{len(timeline) - 1}"
+            )
             print()
             # show subgoals + critique at the start of the burst
             for step in [burst_start, burst_start + 10, len(timeline) - 5]:
