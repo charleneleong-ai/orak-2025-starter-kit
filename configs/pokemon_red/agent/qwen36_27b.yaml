@@ -11,7 +11,10 @@ model: "Qwen/Qwen3.6-27B-FP8"
 temperature: 0.7
 server_type: "vllm"
 supports_vision: false   # Qwen3.6-27B is text-only; Stage H probes reasoning, not vision
-max_tokens: 4096
+# max_tokens limits OUTPUT tokens. Input + max_tokens must fit within
+# vLLM's max_model_len (8192). Pokemon fallback prompts are ~3500 tokens
+# (incl. image + history), so we keep max_tokens conservative at 1024.
+max_tokens: 1024
 max_model_len: 8192
 game_config_path: "pokemon_red"
 track: "TRACK1"

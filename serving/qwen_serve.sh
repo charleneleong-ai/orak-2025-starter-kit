@@ -28,7 +28,7 @@ set -euo pipefail
 MODEL="${1:-${QWEN_MODEL:-Qwen/Qwen3.6-27B-FP8}}"
 PORT="${QWEN_PORT:-8000}"
 GPU_UTIL="${QWEN_GPU_UTIL:-0.90}"
-MAX_MODEL_LEN="${QWEN_MAX_MODEL_LEN:-4096}"
+MAX_MODEL_LEN="${QWEN_MAX_MODEL_LEN:-8192}"
 VENV="${QWEN_VENV:-/workspace/vllm-serve/.venv}"
 
 export HF_HOME="${HF_HOME:-/workspace/.hf_home}"
