@@ -1,0 +1,89 @@
+# Curated wandb-Artifact upload list. Each entry maps to a single wandb run
+# already in chaleong/orak-{pokemon-red,super-mario,2048}. Run name == dir
+# basename == wandb run_id (per run.py:149).
+#
+# Game-data root is one of:
+#   /tmp/orak-planner-prompt/{game}/{run_id}        (post-PR-31 sweep runs)
+#   /workspace/orak-2025-starter-kit/game_logs/...  (legacy)
+#
+# Use scripts/upload_game_logs_to_wandb.py to upload.
+
+# Project name mapping (game → wandb project under chaleong/)
+projects:
+  pokemon_red: "orak-pokemon-red"
+  super_mario: "orak-super-mario"
+  twenty_fourty_eight: "orak-2048"
+
+# Game data root
+data_roots:
+  - "/tmp/orak-planner-prompt"
+  - "/workspace/orak-2025-starter-kit/game_logs"
+
+# ── POKEMON RED ──────────────────────────────────────────────────────
+pokemon_red:
+  stage_a_pr31:
+    - pr31_rerun_pokemon_stage_a_obs_fix_20260511T104439Z
+  stage_b_pr31:
+    - pr31_rerun_pokemon_stage_b_26b_20260509T011537Z
+  stage_c_pr31:
+    - pr31_rerun_pokemon_stage_c_26b_20260509T001240Z
+    - pr31_rerun_pokemon_stage_c_26b_mmr_decay_20260510T120645Z
+    - pr31_rerun_pokemon_stage_c_plus_26b_mmr_decay_20260510T143658Z
+  stage_d_pr31:
+    - pr31_rerun_pokemon_stage_d_plus_26b_20260509T020152Z
+  stage_d_reflect_v2_pr64:
+    - cross_game_self_reflect_pokemon_red_20260511T163517Z
+  stage_d_reflect_v3_pr64:
+    - cross_game_self_reflect_pokemon_red_20260511T194125Z_v3
+  stage_d_reflect_600_pr64:
+    - pr64_pokemon_d_reflect_600_20260512T145909Z
+  stage_e_langgraph_pr66:
+    - pr66_stage_e_langgraph_verify_20260512T111150Z   # only the run that actually completed
+  stage_f_plan_do_check_pr67:
+    - pr67_stage_f_plan_do_check_20260512T163935Z
+  stage_b_prime_no_procedures_pr69:
+    - pr_nopr_stage_b_prime_pokemon_iter1_20260512T183917Z
+    - pr_nopr_stage_b_prime_pokemon_iter2_20260512T192923Z
+    - pr_nopr_stage_b_prime_pokemon_iter3_20260512T200630Z
+  stage_g_procedure_escape_pr70:
+    - pr_procesc_stage_g_pokemon_iter3_20260513T082840Z   # only iter3-5 completed; 1-2 crashed disk-full
+    - pr_procesc_stage_g_pokemon_iter4_20260513T091858Z
+    - pr_procesc_stage_g_pokemon_iter5_20260513T100314Z
+
+# ── SUPER MARIO ──────────────────────────────────────────────────────
+super_mario:
+  stage_a_pr31:
+    - pr31_rerun_mario_stage_a_mario_20260511T132159Z
+  stage_b_pr31:
+    - pr31_rerun_mario_stage_b_mario_20260511T132547Z
+  stage_c_pr31:
+    - pr31_rerun_mario_stage_c_mario_20260511T133225Z
+  stage_d_pr31:
+    - pr31_rerun_mario_stage_d_mario_20260511T133554Z
+  stage_d_reflect_v2_pr64:
+    - cross_game_self_reflect_super_mario_20260511T181722Z_v2
+  stage_d_reflect_v3_pr64:
+    - cross_game_self_reflect_super_mario_20260511T202727Z_v3
+  stage_b_prime_no_procedures_pr69:
+    - pr_nopr_stage_b_prime_super_mario_20260512T205127Z
+    - pr_nopr_stage_b_prime_super_mario_20260512T210432Z
+    - pr_nopr_stage_b_prime_super_mario_20260512T211800Z
+
+# ── 2048 ─────────────────────────────────────────────────────────────
+twenty_fourty_eight:
+  stage_a_pr31:
+    - pr31_rerun_2048_stage_a_2048_20260510T155720Z
+  stage_b_pr31:
+    - pr31_rerun_2048_stage_b_2048_20260511T112033Z
+  stage_c_pr31:
+    - pr31_rerun_2048_stage_c_2048_20260510T161958Z
+  stage_d_pr31:
+    - pr31_rerun_2048_stage_d_2048_20260510T164250Z
+  stage_d_reflect_v2_pr64:
+    - cross_game_self_reflect_twenty_fourty_eight_20260511T182529Z_v2
+  stage_d_reflect_v3_pr64:
+    - cross_game_self_reflect_twenty_fourty_eight_20260511T203559Z_v3
+  stage_b_prime_no_procedures_pr69:
+    - pr_nopr_stage_b_prime_twenty_fourty_eight_20260512T213115Z
+    - pr_nopr_stage_b_prime_twenty_fourty_eight_20260512T220350Z
+    - pr_nopr_stage_b_prime_twenty_fourty_eight_20260512T223823Z
