@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage J — cumulative cross-episode memory on pokemon Stage D, n=5.
+# Stage K — cumulative cross-episode memory on pokemon Stage D, n=5.
 #
 # Hypothesis: Stages A→H all show convergence at 57.14% (4/7 milestones)
 # on pokemon. The 4/7 milestones bank from in-town actions (starter, Pokedex,
@@ -10,7 +10,7 @@
 # Each iter today starts FRESH — no memory of previous attempts. The
 # checkpoint system *can* save/load the EnhancedHierarchicalMemorySystem
 # (procedures + atomic memory) via --load-checkpoint + --prev-run-id, but
-# no launcher uses this. Stage J wires that in.
+# no launcher uses this. Stage K wires that in.
 #
 # Mechanism:
 #   iter 1: fresh start, saves checkpoints every 10 steps
@@ -27,7 +27,7 @@
 #   Stage B' no procedures (PR #69, n=3):  42.86% ± 14.29pp  (memory turned OFF)
 #   Stage G procedure-escape (PR #70, n=3): 47.62% ± 16.49pp
 #   Stage H Qwen 3.5 A3B-Int4 (n=3):       57.14% ± 0pp     (different model, same ceiling)
-#   Stage J cumulative n=5 (here):         target: monotonic lift across iters
+#   Stage K cumulative n=5 (here):         target: monotonic lift across iters
 #
 # Falsification criteria:
 #   Flat curve [57, 57, 57, 57, 57] → memory doesn't capture generalisable knowledge
@@ -71,7 +71,7 @@ for iter in $(seq 1 $n); do
     run_id="pr_stage_j_cumulative_pokemon_iter${iter}_$(date -u +%Y%m%dT%H%M%SZ)"
     started=$(date +%s)
     echo "================================================================"
-    echo "[$(date -u +%H:%M:%SZ)] STAGE J n=$n iter $iter/$n"
+    echo "[$(date -u +%H:%M:%SZ)] STAGE K n=$n iter $iter/$n"
     echo "  inherit from: ${prev_run_id:-NONE (fresh start)}"
     echo "  config:       gemma_26b + Stage D + cumulative memory"
     echo "  target:       monotonic lift across iters (n=$n)"
@@ -83,7 +83,7 @@ for iter in $(seq 1 $n); do
         -c gemma_26b
         --local --games pokemon_red
         --run-id "$run_id"
-        -d "Stage J iter $iter: cumulative cross-episode memory (inherit from ${prev_run_id:-NONE})"
+        -d "Stage K iter $iter: cumulative cross-episode memory (inherit from ${prev_run_id:-NONE})"
     )
     if [[ -n "$prev_run_id" ]]; then
         cmd+=(--load-checkpoint --prev-run-id "$prev_run_id")
@@ -116,7 +116,7 @@ done
 
 echo
 echo "================================================================"
-echo "[$(date -u +%H:%M:%SZ)] STAGE J n=$n CUMULATIVE SUMMARY"
+echo "[$(date -u +%H:%M:%SZ)] STAGE K n=$n CUMULATIVE SUMMARY"
 echo "================================================================"
 python3 <<PYEOF
 import json, statistics, datetime as dt
@@ -140,12 +140,12 @@ print(f"  Learning delta:   {delta_curve:+.2f} pp  ({'LIFT' if delta_curve > 7 e
 print(f"  vs Stage D 57.14%: {mean - 57.14:+.2f} pp")
 print(f"  vs Stage H 57.14%: {mean - 57.14:+.2f} pp")
 
-out = Path("experiments/stage_j_cumulative_memory/gemma_26b/results.jsonl")
+out = Path("experiments/stage_k_cumulative_memory/gemma_26b/results.jsonl")
 out.parent.mkdir(parents=True, exist_ok=True)
 existing = [json.loads(l) for l in out.read_text().splitlines() if l.strip()] if out.exists() else []
 row = {
     "experiment": len(existing) + 1,
-    "variant": f"stage_j_cumulative_memory_pokemon_n{len(scores)}",
+    "variant": f"stage_k_cumulative_memory_pokemon_n{len(scores)}",
     "game": "pokemon_red",
     "model": "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit",
     "evaluation_score": mean,
@@ -159,9 +159,9 @@ row = {
     "scores": scores,
     "steps": 300,
     "status": "KEEP",
-    "description": f"Stage J cumulative memory n={len(scores)} pokemon Stage D (procedures + vmem inherited iter-to-iter via --load-checkpoint --prev-run-id)",
+    "description": f"Stage K cumulative memory n={len(scores)} pokemon Stage D (procedures + vmem inherited iter-to-iter via --load-checkpoint --prev-run-id)",
     "notes": f"n={len(scores)}: mean={mean:.2f}% std={std:.2f}pp scores={fmt}. learning_delta={delta_curve:+.2f}pp.",
-    "tags": ["cumulative_memory", "stage_j_cumulative_memory", f"stage_j_cumulative_memory_pokemon_n{len(scores)}"],
+    "tags": ["cumulative_memory", "stage_k_cumulative_memory", f"stage_k_cumulative_memory_pokemon_n{len(scores)}"],
     "wandb_url": "",
     "timestamp": dt.datetime.now(dt.UTC).isoformat(),
     "config_name": "gemma_26b",

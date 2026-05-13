@@ -1,4 +1,4 @@
-# Stage J — Cumulative Cross-Episode Memory
+# Stage K — Cumulative Cross-Episode Memory
 
 **Status:** scaffolded, queued after Stage H finishes  •  **Branch:** `feat/stage-j-cumulative-memory`
 
@@ -16,7 +16,7 @@ Trajectory introspection ([`scripts/introspect_trajectory.py`](../../scripts/int
 
 **Common feature of all Stage A→H attempts:** each iter starts **fresh**. No memory of previous attempts. Even though `EnhancedHierarchicalMemorySystem` (procedural + atomic memory) is built up within an episode, it's discarded at the start of the next iter.
 
-Stage J tests one specific intervention: **inherit each iter's learned memory into the next iter**. The checkpoint system already supports this; the launcher just needs to wire it up.
+Stage K tests one specific intervention: **inherit each iter's learned memory into the next iter**. The checkpoint system already supports this; the launcher just needs to wire it up.
 
 ## Mechanism
 
@@ -35,7 +35,7 @@ agent_state:
   step_count, last_score, prev_state_str, last_action
 ```
 
-The Stage J launcher chains them: iter N inherits iter N-1's checkpoint:
+The Stage K launcher chains them: iter N inherits iter N-1's checkpoint:
 
 ```bash
 prev_run_id=""
@@ -80,7 +80,7 @@ If Gemma pokemon shows lift AND we test cross-game memory → ultimate test: doe
 | H (this PR not landed) | Qwen 3.5 35B-A3B-Int4 | 57.14% × n=3 (σ=0) |
 | **J (this writeup)** | **Cumulative memory iter→iter** | _pending_ |
 
-Stage J shares Stage D's exact agent config — only the launcher differs (iter N inherits iter N-1's checkpoint).
+Stage K shares Stage D's exact agent config — only the launcher differs (iter N inherits iter N-1's checkpoint).
 
 ## Run
 
@@ -92,8 +92,8 @@ nohup ./serving/gemma_serve.sh cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit \
   >/tmp/gemma_serve.log 2>&1 & disown
 until curl -s http://localhost:8000/v1/models | grep -qi 'gemma-4-26B-A4B'; do sleep 5; done
 
-# Launch Stage J n=5
-nohup bash experiments/stage_j_cumulative_memory/run_pokemon_cumulative.sh \
+# Launch Stage K n=5
+nohup bash experiments/stage_k_cumulative_memory/run_pokemon_cumulative.sh \
   >/tmp/stage_j_pokemon_n5.log 2>&1 & disown
 ```
 
@@ -103,5 +103,5 @@ Wall-clock estimate: ~50 min × 5 iters = **~4h 10min total**.
 
 - Cross-game memory transfer (pokemon procedures applied to mario/2048)
 - Long-term persistent memory (nightly snapshot of best checkpoint to a versioned KB)
-- Combined with Stage I (plateau deliberation) — natural next experiment if Stage J lifts
+- Combined with Stage I (plateau deliberation) — natural next experiment if Stage K lifts
 - Qwen-Hermes variant — defer to a follow-up if Gemma cumulative shows positive learning delta
