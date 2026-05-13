@@ -1,0 +1,29 @@
+# @package _global_
+#
+# Hydra root for the Stage B' baseline: routes ALL 3 games to their
+# no_procedures agent variants. Each per-game agent yaml flips
+# use_procedure_layer to false but keeps planner + vmem ON, so this is the
+# "raw LLM with reflection aids minus procedure cache" cross-game ablation.
+
+ENV: ${oc.env:ENV, "dev"}
+CWD: ${hydra:runtime.cwd}
+LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
+
+defaults:
+  - twenty_fourty_eight: base
+  - super_mario: base
+  - pokemon_red: base
+  - override twenty_fourty_eight/agent: gemma_26b_no_procedures
+  - override super_mario/agent: gemma_26b_no_procedures
+  - override pokemon_red/agent: gemma_26b_no_procedures
+  - _self_
+
+twenty_fourty_eight:
+  wandb:
+    tags: ["gemma", "gemma-26b", "twenty_fourty_eight", "stage_b_prime_no_procedures"]
+super_mario:
+  wandb:
+    tags: ["gemma", "gemma-26b", "super_mario", "stage_b_prime_no_procedures"]
+pokemon_red:
+  wandb:
+    tags: ["gemma", "gemma-26b", "pokemon_red", "stage_b_prime_no_procedures"]

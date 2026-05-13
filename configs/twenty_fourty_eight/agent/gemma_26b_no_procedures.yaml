@@ -1,0 +1,27 @@
+# Stage B' 2048 agent: Stage D minus the Bayesian procedure cache.
+# 2048 Stage D scored 63.64% on PR #31. Stage B' here controls for whether
+# procedures helped or hurt 2048 under post-#46 log-norm units. Keeps
+# planner + vmem ON and the MACLA refinement knobs from stock.
+#
+# AWQ model matches the currently-served vLLM; master's stock 2048 yaml
+# predates the AWQ migration.
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: true
+max_tokens: 8192
+max_model_len: 16384
+game_config_path: "twenty_fourty_eight"
+track: "TRACK1"
+use_vector_memory: true
+vector_memory_max: 100
+vector_memory_top_k: 3
+vector_memory_threshold: 0.5
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600
+macla_n_min_f: 1
+macla_n_min_s: 1
+macla_theta_decay: 0.001
+use_procedure_layer: false

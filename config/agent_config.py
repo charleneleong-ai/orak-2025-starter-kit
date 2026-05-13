@@ -205,6 +205,14 @@ class LocalConfig(AgentConfig):
     # steps. Cost: 1 extra LLM call per reflection_every steps. Default off.
     use_self_reflection: bool = False
     reflection_every: int = 10
+
+    # Master switch for the Bayesian procedure cache. When False, the MACLA
+    # procedure layer is disabled — every step takes the LLM fallback path,
+    # but vector memory + subtask planner + self-reflection stay ON. Used by
+    # the Stage B' baseline to disambiguate "is the score plateau caused by
+    # procedure-layer lock-in, or by the LLM/planner ceiling?". Default True
+    # preserves the current Stage D behaviour exactly.
+    use_procedure_layer: bool = True
     reflection_max_chars: int = 600
 
     # Optional shaped-reward overrides. Keys are merged on top of

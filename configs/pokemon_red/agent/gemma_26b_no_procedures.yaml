@@ -1,0 +1,25 @@
+# Stage B' pokemon agent: Stage D minus the Bayesian procedure cache.
+# Disable ONLY use_procedure_layer; keep vmem + subtask planner ON. Used
+# to test whether the pokemon score=4 plateau is procedure-layer lock-in
+# or an LLM/planner ceiling.
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: true
+max_tokens: 8192
+max_model_len: 16384
+game_config_path: "pokemon_red"
+track: "TRACK1"
+use_vector_memory: true
+vector_memory_max: 100
+vector_memory_top_k: 3
+vector_memory_threshold: 0.5
+vector_memory_use_mmr: true
+vector_memory_mmr_lambda: 0.5
+vector_memory_decay_alpha: 0.5
+vector_memory_decay_window: 20
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600
+use_procedure_layer: false
