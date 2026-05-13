@@ -57,3 +57,13 @@ def calculate_metrics(game_info: dict) -> dict:
         "max_tile": max_tile,
         "score": current_game_score,
     }
+
+
+# ── Self-reflection recommendation (PR #64 cross-game retro) ──────────
+# 2048 is reactive and short-horizon; cross-game test (n=1, 300 steps) showed
+# self-reflection regresses Stage D by -9.09 pp (max_tile=64 vs baseline 128).
+# Critique is correct ("avoid left, consolidate 8s") but the extra reasoning
+# overhead displaces per-step attention. Recommend OFF until a longer-horizon
+# or batched-reflection variant lands.
+RECOMMENDED_USE_SELF_REFLECTION = False
+RECOMMENDED_REFLECTION_EVERY = 30

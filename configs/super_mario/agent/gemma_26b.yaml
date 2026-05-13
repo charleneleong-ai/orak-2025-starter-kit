@@ -2,7 +2,7 @@
 # Mirrors pokemon_red/gemma_26b.yaml — same Stage D planner setup, only the
 # model changes. vLLM serves via ./serving/gemma_serve.sh unsloth/gemma-4-26b-a4b-it.
 class_name: "agents.macla.unified.UnifiedMaclaAgent"
-model: "unsloth/gemma-4-26b-a4b-it"
+model: "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit"
 temperature: 0.7
 server_type: "vllm"
 supports_vision: true
