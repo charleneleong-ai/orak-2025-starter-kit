@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import backoff
+import wandb
 from loguru import logger
 
 from config.base import Settings
@@ -570,6 +571,18 @@ class Runner:
                     except Exception as e:
                         logger.error(f"Failed to save evaluation summary: {e}")
                         raise
+
+                # Auto-archive game_logs as a wandb Artifact. Best-effort:
+                # logs a warning on any failure (never blocks game completion).
+                # Opt out: AUTO_ARCHIVE_GAME_LOGS=0
+                wandb_run = getattr(agent, "_wandb_run", None)
+                if wandb_run and os.environ.get("AUTO_ARCHIVE_GAME_LOGS", "1") != "0":
+                    try:
+                        art = wandb.Artifact(f"game_logs_{wandb_run.name}", type="game_logs")
+                        art.add_dir(game_data_dir, name=wandb_run.name)
+                        wandb_run.log_artifact(art)
+                    except Exception as e:
+                        logger.warning(f"[auto-archive] failed (non-fatal): {e}")
 
                 # Mark game as completed
                 self.renderer.complete_game(game_name, avg_score)
