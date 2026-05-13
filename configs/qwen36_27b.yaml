@@ -1,0 +1,36 @@
+# @package _global_
+#
+# Qwen 3.6 27B FP8 — Stage H ceiling check (Apr 2026 dense model release).
+# Routes pokemon to qwen36_27b agent variant. Mario/2048 stay on their base
+# configs (gemma) until pokemon ceiling-check finishes — vLLM is single-tenant
+# so we don't queue cross-game until we know the pokemon result.
+#
+# Hypothesis: if Qwen 3.6 27B (newer, stronger reasoning) breaks past pokemon's
+# 4/7 milestone-4 ceiling that Gemma 4-26B-A4B saturated at, the cap was model
+# capacity. If it plateaus at the same 57.14%, the cap is the prompt/scaffold.
+#
+# Usage:
+#   ./serving/qwen_serve.sh                        # in another shell (stop gemma vLLM first)
+#   python run.py -c qwen36_27b --local --games pokemon_red
+
+ENV: ${oc.env:ENV, "dev"}
+CWD: ${hydra:runtime.cwd}
+LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
+
+defaults:
+  - twenty_fourty_eight: base
+  - super_mario: base
+  - pokemon_red: base
+  # mario/2048 routed to gemma_26b only to satisfy Hydra+pydantic config
+  # validation (the runner is invoked with --games pokemon_red, so the
+  # other games never actually execute). Once Stage H pokemon result is in,
+  # if we proceed to cross-game we'll add qwen36_27b agent configs for
+  # mario/2048 and flip these overrides.
+  - override twenty_fourty_eight/agent: gemma_26b
+  - override super_mario/agent: gemma_26b
+  - override pokemon_red/agent: qwen36_27b
+  - _self_
+
+pokemon_red:
+  wandb:
+    tags: ["qwen", "qwen3.6-27b", "pokemon_red", "stage_h_ceiling_check", "stage_d_planner"]
