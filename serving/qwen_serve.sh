@@ -28,7 +28,7 @@ set -euo pipefail
 MODEL="${1:-${QWEN_MODEL:-Qwen/Qwen3.6-27B-FP8}}"
 PORT="${QWEN_PORT:-8000}"
 GPU_UTIL="${QWEN_GPU_UTIL:-0.90}"
-MAX_MODEL_LEN="${QWEN_MAX_MODEL_LEN:-8192}"
+MAX_MODEL_LEN="${QWEN_MAX_MODEL_LEN:-4096}"
 VENV="${QWEN_VENV:-/workspace/vllm-serve/.venv}"
 
 export HF_HOME="${HF_HOME:-/workspace/.hf_home}"
@@ -61,7 +61,10 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     fi
 fi
 
-# Qwen 3.x uses hermes-style tool calling in vLLM
+# Qwen 3.x uses hermes-style tool calling in vLLM.
+# --enforce-eager disables CUDA-graph capture; saves ~1-2 GB on A100-40GB
+# at the cost of ~10-15% lower throughput. Required for FP8 27B to fit
+# alongside KV cache + activations under the 40 GB cap.
 exec "${VENV}/bin/python" -m vllm.entrypoints.openai.api_server \
     --model "${MODEL}" \
     --port "${PORT}" \
@@ -70,4 +73,5 @@ exec "${VENV}/bin/python" -m vllm.entrypoints.openai.api_server \
     --trust-remote-code \
     --enable-auto-tool-choice \
     --tool-call-parser hermes \
-    --dtype auto
+    --dtype auto \
+    --enforce-eager
