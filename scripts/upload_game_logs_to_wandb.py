@@ -153,19 +153,31 @@ def upload_one(
 def main(
     game: Annotated[
         str | None,
-        typer.Option("--game", help="Game name (e.g. pokemon_red, super_mario, twenty_fourty_eight)"),
+        typer.Option(
+            "--game", help="Game name (e.g. pokemon_red, super_mario, twenty_fourty_eight)"
+        ),
     ] = None,
     run_id: Annotated[
         str | None,
-        typer.Option("--run-id", help="Single run id to upload (e.g. pr_procesc_stage_g_pokemon_iter3_...)"),
+        typer.Option(
+            "--run-id", help="Single run id to upload (e.g. pr_procesc_stage_g_pokemon_iter3_...)"
+        ),
     ] = None,
     all_curated: Annotated[
-        bool, typer.Option("--all-curated", help="Upload every run in scripts/curated_runs_to_upload.yaml")
+        bool,
+        typer.Option(
+            "--all-curated", help="Upload every run in scripts/curated_runs_to_upload.yaml"
+        ),
     ] = False,
     include_checkpoints: Annotated[
-        bool, typer.Option("--include-checkpoints", help="Also upload checkpoints/*.pkl (~10x bigger artifacts)")
+        bool,
+        typer.Option(
+            "--include-checkpoints", help="Also upload checkpoints/*.pkl (~10x bigger artifacts)"
+        ),
     ] = False,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print what would be uploaded, don't actually upload")] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print what would be uploaded, don't actually upload")
+    ] = False,
 ):
     load_dotenv(REPO_ROOT / ".env")
     curated = load_curated()
@@ -191,7 +203,9 @@ def main(
             for rid in run_ids:
                 targets.append((game, rid))
     else:
-        raise typer.BadParameter("Pass --run-id (single), --game (curated for that game), or --all-curated")
+        raise typer.BadParameter(
+            "Pass --run-id (single), --game (curated for that game), or --all-curated"
+        )
 
     projects = curated["projects"]
     data_roots = curated["data_roots"]
@@ -215,7 +229,9 @@ def main(
             dry_run=dry_run,
         )
         results.append(info)
-        print(f"  [{info['status']:10s}] {g}/{rid}  ({info.get('total_mb','?')} MB, {info.get('n_files','?')} files)")
+        print(
+            f"  [{info['status']:10s}] {g}/{rid}  ({info.get('total_mb', '?')} MB, {info.get('n_files', '?')} files)"
+        )
 
     print()
     print("=" * 60)
@@ -223,7 +239,9 @@ def main(
     print(f"  uploaded:   {sum(1 for r in results if r.get('status') == 'uploaded')}")
     print(f"  dry-run:    {sum(1 for r in results if r.get('status') == 'dry-run')}")
     print(f"  skipped:    {sum(1 for r in results if r.get('status', '').startswith('skip:'))}")
-    total_mb = sum(r.get("total_mb", 0) for r in results if r.get("status") in ("uploaded", "dry-run"))
+    total_mb = sum(
+        r.get("total_mb", 0) for r in results if r.get("status") in ("uploaded", "dry-run")
+    )
     print(f"  total size: {total_mb:.1f} MB")
     print("=" * 60)
 
