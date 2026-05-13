@@ -50,6 +50,17 @@ pokemon_red:
     - pr_procesc_stage_g_pokemon_iter4_20260513T091858Z
     - pr_procesc_stage_g_pokemon_iter5_20260513T100314Z
 
+  # ── Qwen ceiling check (Stage H, PR #71) ─────────────────────────────
+  # Tagged with model in the key so future Qwen runs slot in naturally
+  # and stay separable from the Gemma-family runs above.
+  stage_h_qwen35_a3b_int4_pr71:
+    - pr_stage_h_qwen35_a3b_pokemon_iter1_20260513T130435Z   # 57.14%
+    - pr_stage_h_qwen35_a3b_pokemon_iter2_20260513T145518Z   # 57.14%
+    - pr_stage_h_qwen35_a3b_pokemon_iter3_20260513T164747Z   # 57.14%
+  # NOTE: pr_stage_h_qwen36_pokemon_iter1_* (×2) excluded — FP8 27B on
+  # A100-40GB hit Marlin emulation; runs aborted before evaluation_summary.json
+  # was written. Pivot story documented in PR #71.
+
 # ── SUPER MARIO ──────────────────────────────────────────────────────
 super_mario:
   stage_a_pr31:
