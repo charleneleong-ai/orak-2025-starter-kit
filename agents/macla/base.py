@@ -89,6 +89,7 @@ class BaseMaclaAgent(BaseModel):
             postcondition_extractor=self.extract_postconditions,
             spatial_pattern_extractor=getattr(self, "extract_spatial_patterns", None),
             precondition_extractor=self.extract_preconditions,
+            use_procedure_layer=getattr(self.config, "use_procedure_layer", True),
         )
 
     def _init_openai_macla(self):
@@ -112,6 +113,7 @@ class BaseMaclaAgent(BaseModel):
             postcondition_extractor=self.extract_postconditions,
             spatial_pattern_extractor=getattr(self, "extract_spatial_patterns", None),
             precondition_extractor=self.extract_preconditions,
+            use_procedure_layer=getattr(self.config, "use_procedure_layer", True),
         )
 
     def _init_local_macla(self):
@@ -140,6 +142,7 @@ class BaseMaclaAgent(BaseModel):
             postcondition_extractor=self.extract_postconditions,
             spatial_pattern_extractor=getattr(self, "extract_spatial_patterns", None),
             precondition_extractor=self.extract_preconditions,
+            use_procedure_layer=getattr(self.config, "use_procedure_layer", True),
         )
 
     @abstractmethod

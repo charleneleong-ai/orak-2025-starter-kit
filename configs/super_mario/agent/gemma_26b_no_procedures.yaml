@@ -1,0 +1,24 @@
+# Stage B' mario agent: Stage D minus the Bayesian procedure cache.
+# PR #31's Stage B (planner-only, n=1) scored 61.26% vs Stage D (full
+# stack) 35.21% — procedures cost mario 26 pp at n=1. Stage B' here tests
+# whether dropping procedures recovers that gap with reflection-aids on top.
+#
+# AWQ model matches the currently-served vLLM; master's stock mario yaml
+# predates the AWQ migration.
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: true
+max_tokens: 8192
+max_model_len: 16384
+game_config_path: "super_mario"
+track: "TRACK1"
+use_vector_memory: true
+vector_memory_max: 100
+vector_memory_top_k: 3
+vector_memory_threshold: 0.5
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600
+use_procedure_layer: false
