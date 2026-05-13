@@ -1,28 +1,20 @@
-"""Upload curated game_logs directories as wandb Artifacts, linked to their
-original wandb runs.
+"""Upload curated game_logs dirs as wandb Artifacts, linked to the original runs.
 
-Per-run-dir basename == wandb run_id (run.py sets settings.wandb.run_id from
-the launcher's --run-id). So matching is straightforward: locate the run dir,
-resume the wandb run with the matching id, log_artifact, finish.
+Why: companion to Runner._archive_game_logs (auto-attach for *future* runs).
+This script backfills *past* runs whose game_logs were written but never
+logged as an Artifact.
 
-Examples
---------
-    # Single run, dry-run (no upload)
-    python scripts/upload_game_logs_to_wandb.py \\
-        --game pokemon_red \\
-        --run-id pr_procesc_stage_g_pokemon_iter3_20260513T082840Z \\
-        --dry-run
+The wandb run id is `<launcher_run_id>_<project>` (the runner appends the
+project name as a suffix). The script reconstructs that, resumes via
+`wandb.init(resume='must', id=...)`, and logs an Artifact named
+`game_logs_<launcher_run_id>` (same naming as the inline auto-archive).
 
-    # Real upload of a single run
-    python scripts/upload_game_logs_to_wandb.py \\
-        --game pokemon_red \\
-        --run-id pr_procesc_stage_g_pokemon_iter3_20260513T082840Z
-
-    # All curated runs for a game, dry-run
-    python scripts/upload_game_logs_to_wandb.py --game pokemon_red --all-curated --dry-run
-
-    # Everything in the curated YAML
-    python scripts/upload_game_logs_to_wandb.py --all-curated
+Usage
+-----
+    python scripts/upload_game_logs_to_wandb.py --game pokemon_red --run-id <id>
+    python scripts/upload_game_logs_to_wandb.py --game pokemon_red             # all curated for one game
+    python scripts/upload_game_logs_to_wandb.py --all-curated                  # everything
+    python scripts/upload_game_logs_to_wandb.py --all-curated --include-checkpoints --dry-run
 """
 
 from __future__ import annotations
@@ -39,211 +31,104 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CURATED_YAML = REPO_ROOT / "scripts" / "curated_runs_to_upload.yaml"
 ENTITY = "chaleong"
 
-# Files to bundle into the artifact (skip massive ones unless --include-checkpoints)
-DEFAULT_INCLUDE_FILES = {
-    "config.yaml",
-    "evaluation.log",
-    "evaluation_summary.json",
-    "game_server.log",
-    "game_states.jsonl",
-    "model_declaration.json",
-}
-DEFAULT_INCLUDE_DIRS = {"logs"}
-CHECKPOINTS_DIR = "checkpoints"
-
 app = typer.Typer(pretty_exceptions_enable=False)
 
 
-def load_curated() -> dict:
-    with CURATED_YAML.open() as f:
-        return yaml.safe_load(f)
-
-
-def find_run_dir(game: str, run_id: str, data_roots: list[str]) -> Path | None:
-    for root in data_roots:
-        candidate = Path(root) / game / run_id
-        if candidate.is_dir():
-            return candidate
+def find_run_dir(game: str, run_id: str, roots: list[str]) -> Path | None:
+    for r in roots:
+        p = Path(r) / game / run_id
+        if p.is_dir():
+            return p
     return None
 
 
-def collect_files_for_artifact(run_dir: Path, include_checkpoints: bool) -> list[Path]:
-    files: list[Path] = []
-    for name in DEFAULT_INCLUDE_FILES:
-        p = run_dir / name
-        if p.exists():
-            files.append(p)
-    for d in DEFAULT_INCLUDE_DIRS:
-        d_path = run_dir / d
-        if d_path.is_dir():
-            files.extend(p for p in d_path.rglob("*") if p.is_file())
-    if include_checkpoints:
-        cp_dir = run_dir / CHECKPOINTS_DIR
-        if cp_dir.is_dir():
-            files.extend(p for p in cp_dir.rglob("*") if p.is_file())
-    return files
-
-
 def upload_one(
-    *,
-    game: str,
-    run_id: str,
-    project: str,
-    run_dir: Path,
-    include_checkpoints: bool,
-    dry_run: bool,
-) -> dict:
-    files = collect_files_for_artifact(run_dir, include_checkpoints=include_checkpoints)
-    total_bytes = sum(f.stat().st_size for f in files)
-    total_mb = total_bytes / (1024 * 1024)
-
-    # wandb stores runs with an id of `<launcher_run_id>_<project>` (the
-    # runner appends the project name as a suffix). Match that exactly so
-    # `wandb.init(resume='must', id=...)` finds the existing run.
-    wandb_run_id = f"{run_id}_{project}"
-
-    info = {
-        "game": game,
-        "run_id": run_id,
-        "wandb_run_id": wandb_run_id,
-        "project": f"{ENTITY}/{project}",
-        "run_dir": str(run_dir),
-        "n_files": len(files),
-        "total_mb": round(total_mb, 1),
-        "include_checkpoints": include_checkpoints,
-    }
+    game: str, run_id: str, project: str, run_dir: Path, include_checkpoints: bool, dry_run: bool
+) -> tuple[str, float]:
+    """Return (status, size_mb). status ∈ {'uploaded', 'dry-run', 'skip:<reason>'}."""
+    # Collect files: everything except checkpoints/ unless opted in
+    files = [
+        f
+        for f in run_dir.rglob("*")
+        if f.is_file() and (include_checkpoints or "checkpoints" not in f.parts)
+    ]
+    size_mb = sum(f.stat().st_size for f in files) / (1024 * 1024)
 
     if dry_run:
-        info["status"] = "dry-run"
-        return info
+        return "dry-run", size_mb
 
-    # Resume the existing wandb run by id
-    run = wandb.init(
-        entity=ENTITY,
-        project=project,
-        id=wandb_run_id,
-        resume="must",
-        reinit=True,
-    )
-    try:
-        artifact_name = f"game_logs_{run_id}"
-        artifact = wandb.Artifact(
-            name=artifact_name,
+    # wandb id == <launcher_run_id>_<project> (runner appends project suffix)
+    with wandb.init(
+        entity=ENTITY, project=project, id=f"{run_id}_{project}", resume="must", reinit=True
+    ) as run:
+        art = wandb.Artifact(
+            name=f"game_logs_{run_id}",
             type="game_logs",
-            description=f"game_logs dir from {run_dir}",
-            metadata={
-                "n_files": len(files),
-                "size_mb": round(total_mb, 1),
-                "include_checkpoints": include_checkpoints,
-                "source_path": str(run_dir),
-            },
+            metadata={"source_path": str(run_dir), "include_checkpoints": include_checkpoints},
         )
-        # add_dir preserves the relative structure; we add the run_dir as the root
-        artifact.add_dir(str(run_dir), name=run_id)
-        run.log_artifact(artifact)
-    finally:
-        run.finish()
-
-    info["status"] = "uploaded"
-    info["artifact_name"] = f"{artifact_name}:latest"
-    return info
+        art.add_dir(str(run_dir), name=run_id)
+        run.log_artifact(art)
+    return "uploaded", size_mb
 
 
 @app.command()
 def main(
     game: Annotated[
-        str | None,
-        typer.Option(
-            "--game", help="Game name (e.g. pokemon_red, super_mario, twenty_fourty_eight)"
-        ),
+        str | None, typer.Option(help="Game (pokemon_red / super_mario / twenty_fourty_eight)")
     ] = None,
-    run_id: Annotated[
-        str | None,
-        typer.Option(
-            "--run-id", help="Single run id to upload (e.g. pr_procesc_stage_g_pokemon_iter3_...)"
-        ),
-    ] = None,
+    run_id: Annotated[str | None, typer.Option(help="Single run id (requires --game)")] = None,
     all_curated: Annotated[
-        bool,
-        typer.Option(
-            "--all-curated", help="Upload every run in scripts/curated_runs_to_upload.yaml"
-        ),
+        bool, typer.Option("--all-curated", help="All runs in curated YAML")
     ] = False,
     include_checkpoints: Annotated[
-        bool,
-        typer.Option(
-            "--include-checkpoints", help="Also upload checkpoints/*.pkl (~10x bigger artifacts)"
-        ),
+        bool, typer.Option(help="Also upload checkpoints/*.pkl (~10x bigger)")
     ] = False,
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Print what would be uploaded, don't actually upload")
-    ] = False,
+    dry_run: Annotated[bool, typer.Option(help="Print what would upload, don't upload")] = False,
 ):
     load_dotenv(REPO_ROOT / ".env")
-    curated = load_curated()
-
-    targets: list[tuple[str, str]] = []
-    if run_id is not None:
-        if game is None:
-            raise typer.BadParameter("--game required with --run-id")
-        targets.append((game, run_id))
-    elif all_curated:
-        for game_name, stages in curated.items():
-            if game_name in ("projects", "data_roots"):
-                continue
-            if game and game_name != game:
-                continue
-            for _stage, run_ids in stages.items():
-                for rid in run_ids:
-                    targets.append((game_name, rid))
-    elif game is not None:
-        # Just the curated runs for this one game
-        stages = curated.get(game, {})
-        for _stage, run_ids in stages.items():
-            for rid in run_ids:
-                targets.append((game, rid))
-    else:
-        raise typer.BadParameter(
-            "Pass --run-id (single), --game (curated for that game), or --all-curated"
-        )
-
+    curated = yaml.safe_load(CURATED_YAML.read_text())
     projects = curated["projects"]
     data_roots = curated["data_roots"]
 
-    results: list[dict] = []
+    # Resolve targets: single run-id, single game, or all curated
+    if run_id:
+        if not game:
+            raise typer.BadParameter("--game required with --run-id")
+        targets = [(game, run_id)]
+    elif all_curated:
+        targets = [
+            (g, r)
+            for g, stages in curated.items()
+            if g not in ("projects", "data_roots")
+            for rids in stages.values()
+            for r in rids
+        ]
+    elif game:
+        targets = [(game, r) for rids in curated.get(game, {}).values() for r in rids]
+    else:
+        raise typer.BadParameter("Pass --run-id, --game, or --all-curated")
+
+    n_uploaded = n_dry = n_skipped = 0
+    total_mb = 0.0
     for g, rid in targets:
         project = projects.get(g)
-        if project is None:
-            results.append({"game": g, "run_id": rid, "status": "skip:unknown-project"})
+        run_dir = find_run_dir(g, rid, data_roots) if project else None
+        if not project or not run_dir:
+            n_skipped += 1
+            print(f"  [skip      ] {g}/{rid}")
             continue
-        run_dir = find_run_dir(g, rid, data_roots)
-        if run_dir is None:
-            results.append({"game": g, "run_id": rid, "status": "skip:no-run-dir"})
-            continue
-        info = upload_one(
-            game=g,
-            run_id=rid,
-            project=project,
-            run_dir=run_dir,
-            include_checkpoints=include_checkpoints,
-            dry_run=dry_run,
-        )
-        results.append(info)
-        print(
-            f"  [{info['status']:10s}] {g}/{rid}  ({info.get('total_mb', '?')} MB, {info.get('n_files', '?')} files)"
-        )
+        status, size_mb = upload_one(g, rid, project, run_dir, include_checkpoints, dry_run)
+        total_mb += size_mb
+        if status == "uploaded":
+            n_uploaded += 1
+        elif status == "dry-run":
+            n_dry += 1
+        print(f"  [{status:10s}] {g}/{rid}  ({size_mb:.1f} MB)")
 
     print()
-    print("=" * 60)
-    print(f"  {len(results)} target(s)")
-    print(f"  uploaded:   {sum(1 for r in results if r.get('status') == 'uploaded')}")
-    print(f"  dry-run:    {sum(1 for r in results if r.get('status') == 'dry-run')}")
-    print(f"  skipped:    {sum(1 for r in results if r.get('status', '').startswith('skip:'))}")
-    total_mb = sum(
-        r.get("total_mb", 0) for r in results if r.get("status") in ("uploaded", "dry-run")
+    print(
+        f"  {len(targets)} target(s) | uploaded: {n_uploaded} | dry-run: {n_dry} | skipped: {n_skipped} | total: {total_mb:.1f} MB"
     )
-    print(f"  total size: {total_mb:.1f} MB")
-    print("=" * 60)
 
 
 if __name__ == "__main__":
