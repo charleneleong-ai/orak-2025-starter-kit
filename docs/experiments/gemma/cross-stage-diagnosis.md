@@ -15,8 +15,9 @@ PR #31 established Stage A→D ablation baselines. On pokemon, Stage D (full sta
 | **F**: plan-do-check | #67 | ToolGateValidator + LLMPlanValidator + retry | **28.57%** | 2/7 — validator over-rejected tactically correct actions |
 | **B'**: no procedures (n=3) | #69 | `use_procedure_layer=False`; planner+vmem+reflect ON | 42.86% ± 14.29pp | mean below Stage D, **range 28.57–57.14** |
 | **G**: procedure-escape (n=3) | #70 (closed) | failure-streak retire K=5 + force-LLM-on-stuck N=50 | 47.62% ± 16.49pp | scores `[57.14, 57.14, 28.57]` |
+| **H**: Qwen 3.5 35B-A3B-Int4 (n=3) | #71 | swap model lineage (Gemma 4 → Qwen 3.5 MoE, same MACLA Stage D stack) | 47.62% ± 16.49pp | scores `[57.14, 57.14, 28.57]` — **identical numbers to Stage G** |
 
-Three independent action-layer interventions (D + reflect, E, F), one self-reflection extension (v3), and two procedure-layer experiments (B', G) — none lifted the pokemon ceiling past 4/7 milestones at any point.
+Three independent action-layer interventions (D + reflect, E, F), one self-reflection extension (v3), two procedure-layer experiments (B', G), and one cross-model swap (H) — none lifted the pokemon ceiling past 4/7 milestones at any point. **The Stage H Qwen result matches the Gemma plateau on 2/3 iters and collapses to 28.57% on iter 3 — bimodal at exactly the same scores as Gemma's procedure-escape Stage G.**
 
 ## What the experiments ruled out
 
@@ -51,8 +52,14 @@ The structure of the failures is more informative than the failures themselves.
 - procedure-layer escape (Stage G shows even unconditional LLM fallback can't progress)
 - self-reflection schedule density (D+reflect v2 vs v3 ties baseline; 600-step also ties)
 - step budget (600-step run stuck at milestone 4 for 461 frames)
+- model lineage (Stage H Qwen 3.5 35B-A3B-Int4 hits the same plateau as Gemma 4-26B-A4B-AWQ; both bimodal at [57.14, 57.14, 28.57] on n=3)
 
-The 26B-AWQ-quantized Gemma model, with the current planner prompt + reasoning chain, **cannot consistently reason past the milestone 4 → 5 transition** under any tested action/procedure-layer scaffolding.
+Neither the 26B-AWQ Gemma nor the 35B-A3B-Int4 Qwen 3.5, with the current planner prompt + reasoning chain, **can consistently reason past the milestone 4 → 5 transition** under any tested action/procedure-layer scaffolding. Cross-model evidence is bimodal rather than σ=0, but the *upper* ceiling (57.14%) is shared.
+
+Trajectory introspection ([`scripts/introspect_trajectory.py`](../../scripts/introspect_trajectory.py) on PR #75) revealed a key structural finding:
+- Stage H iter 2 spent **226/300 steps in OaksLab** and still banked **4/7 milestones** → milestones 1-4 are all **in-town actions** (starter, Pokedex, Mom dialogue, etc.)
+- Milestone 5+ requires **leaving Pallet Town** → Viridian → Forest → Pewter Gym (Brock fight). None of the tested scaffolds reliably escape Pallet Town within 300 steps.
+- Self-reflection at step 149 of every iter says verbatim *"You are stuck in a movement loop, no score gain"* — the agent **diagnoses correctly but the action layer doesn't change strategy**.
 
 ## What the durable artefacts are
 
@@ -68,14 +75,14 @@ Closed PRs (with verdicts preserved in PR comments):
 
 ## What to try next
 
-The diagnosis points at the planner-prompt / chain-of-thought path, **not** the action layer or procedure layer. Candidate directions:
+After Stage H, the most informative remaining levers are at the framework level — additions to the cognitive harness that none of A→H tested:
 
-1. **Planner-prompt overhaul at the milestone boundary** — when the agent detects "stuck at milestone N for K steps", inject a milestone-specific CoT scaffold (e.g. "here's what milestone N+1 requires; here's the sub-goal sequence; reason step-by-step about which sub-goal is incomplete").
-2. **Multi-turn reasoning checkpoint** — at suspected milestone transitions, allow the planner an extended reasoning budget (more tokens, possibly chain-of-verification or self-consistency).
-3. **Different / stronger model** — the ceiling may be a 26B-AWQ capacity ceiling. Try the unquantised model, or a stronger model (Claude/GPT-class), as a ceiling check. If a stronger model lifts past 4/7, the cap is model capacity, not architecture.
-4. **Subtask decomposition** at milestone N→N+1 boundaries — the current planner emits whole-task plans; an explicit "what does milestone N+1 require?" decomposition may help.
+1. **Stage J — Qwen3-Thinking** ([PR #76](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/76)): explicit thinking-mode reasoning budget per decision via `cyankiwi/Qwen3-30B-A3B-Thinking-2507-AWQ-4bit` + vLLM `--reasoning-parser qwen3`. Tests "does extended reasoning at the boundary lift the ceiling?" Single-variable swap vs Stage H non-thinking.
+2. **Stage K — Cumulative memory** ([PR #75](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/75)): chain agent checkpoints iter→iter via existing `--load-checkpoint --prev-run-id` flags so each iter inherits the previous one's procedures + atomic + vector memory. Tests "does cross-episode learning break the plateau?"
+3. **Planner-prompt overhaul at the milestone boundary** — when the agent detects "stuck at milestone N for K steps", inject a milestone-specific CoT scaffold. Deferred until J/K results are in.
+4. **Subtask decomposition** at milestone N→N+1 boundaries. Also deferred.
 
-Option 3 is the cheapest experiment with the clearest signal: does the ceiling move? If yes → model capacity. If no → option 1/4 next.
+Both Stage J and Stage K test **harness additions** rather than specific game knowledge — keeping the cross-game generalisation thesis intact.
 
 ## References
 
