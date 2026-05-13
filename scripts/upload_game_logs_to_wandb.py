@@ -97,9 +97,15 @@ def upload_one(
     total_bytes = sum(f.stat().st_size for f in files)
     total_mb = total_bytes / (1024 * 1024)
 
+    # wandb stores runs with an id of `<launcher_run_id>_<project>` (the
+    # runner appends the project name as a suffix). Match that exactly so
+    # `wandb.init(resume='must', id=...)` finds the existing run.
+    wandb_run_id = f"{run_id}_{project}"
+
     info = {
         "game": game,
         "run_id": run_id,
+        "wandb_run_id": wandb_run_id,
         "project": f"{ENTITY}/{project}",
         "run_dir": str(run_dir),
         "n_files": len(files),
@@ -115,7 +121,7 @@ def upload_one(
     run = wandb.init(
         entity=ENTITY,
         project=project,
-        id=run_id,
+        id=wandb_run_id,
         resume="must",
         reinit=True,
     )
