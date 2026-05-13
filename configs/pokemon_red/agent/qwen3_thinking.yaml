@@ -1,0 +1,41 @@
+# Qwen 3-30B-A3B-Thinking-2507-AWQ-4bit for Pokemon Red — Stage K thinking-mode test.
+#
+# Why this model:
+#   - Always-thinking variant: emits <think>...</think> chain-of-thought before
+#     every response, then the actual action. Tests "give the LLM explicit
+#     reasoning budget at decision time" as a general harness addition.
+#   - 30B total / 3B active params (MoE) — fast inference per token.
+#   - AWQ-Int4 quant by cyankiwi (same author as our Gemma 4-26B-A4B-AWQ).
+#     Native INT4 on A100 (no Marlin/FP8 emulation tax).
+#   - Fits ~17 GB on A100-40GB → plenty of room for max_model_len=16384.
+#
+# vLLM should be started with --reasoning-parser qwen3 to strip <think>
+# blocks server-side before the agent sees the response. See serving/qwen_serve.sh
+# QWEN_REASONING_PARSER env.
+#
+# Same MACLA stack as gemma_26b.yaml — only the served model changes.
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "cyankiwi/Qwen3-30B-A3B-Thinking-2507-AWQ-4bit"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: false   # text-only thinking variant
+# Larger budgets to accommodate thinking blocks (which can be 2-5K tokens
+# before the actual action). vLLM strips <think> server-side via
+# --reasoning-parser so the agent sees only post-think content.
+max_tokens: 8192
+max_model_len: 16384
+game_config_path: "pokemon_red"
+track: "TRACK1"
+# Stage C: vector memory
+use_vector_memory: true
+vector_memory_max: 100
+vector_memory_top_k: 3
+vector_memory_threshold: 0.5
+vector_memory_use_mmr: true
+vector_memory_mmr_lambda: 0.5
+vector_memory_decay_alpha: 0.5
+vector_memory_decay_window: 20
+# Stage D: subtask planner
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600
