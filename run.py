@@ -30,7 +30,7 @@ class ExperimentConfigName(StrEnum):
     GEMMA_STAGE_A = "gemma_stage_a"
     GEMMA_26B = "gemma_26b"
     GEMMA_26B_NO_PROCEDURES = "gemma_26b_no_procedures"
-    QWEN36_27B = "qwen36_27b"
+    QWEN35_A3B_INT4 = "qwen35_a3b_int4"
 
 
 load_dotenv()

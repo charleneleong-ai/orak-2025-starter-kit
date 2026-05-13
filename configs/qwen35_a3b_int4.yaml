@@ -1,0 +1,36 @@
+# @package _global_
+#
+# Qwen 3.5 35B-A3B-GPTQ-Int4 — Stage H ceiling check.
+#
+# MoE 35B total / 3B active params, INT4 quant native to A100 (no Marlin
+# emulation tax like Qwen 3.6 27B FP8 had). Pivot from initial FP8 plan
+# after FP8/A100 inference was 5x slower than expected — see PR #71.
+#
+# Hypothesis: if Qwen 3.5 35B-A3B Int4 (newer + more total params, similar
+# active compute as Gemma 4-26B-A4B-it which is 26B/4B-active) breaks past
+# pokemon's 4/7 milestone-4 ceiling, the cap was model lineage / training.
+# If it plateaus at 57.14%, the cap is the prompt/scaffold.
+#
+# Usage:
+#   ./serving/qwen_serve.sh                              # in another shell
+#   python run.py -c qwen35_a3b_int4 --local --games pokemon_red
+
+ENV: ${oc.env:ENV, "dev"}
+CWD: ${hydra:runtime.cwd}
+LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
+
+defaults:
+  - twenty_fourty_eight: base
+  - super_mario: base
+  - pokemon_red: base
+  # mario/2048 routed to gemma_26b only to satisfy Hydra+pydantic config
+  # validation (the runner is invoked with --games pokemon_red, so the
+  # other games never actually execute).
+  - override twenty_fourty_eight/agent: gemma_26b
+  - override super_mario/agent: gemma_26b
+  - override pokemon_red/agent: qwen35_a3b_int4
+  - _self_
+
+pokemon_red:
+  wandb:
+    tags: ["qwen", "qwen3.5-35b-a3b-int4", "pokemon_red", "stage_h_ceiling_check", "stage_d_planner"]

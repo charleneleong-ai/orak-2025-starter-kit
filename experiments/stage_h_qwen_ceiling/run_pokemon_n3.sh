@@ -25,7 +25,7 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO"
 
-AGENT_CFG="configs/pokemon_red/agent/qwen36_27b.yaml"
+AGENT_CFG="configs/pokemon_red/agent/qwen35_a3b_int4.yaml"
 ENV_CFG="configs/pokemon_red/env/default.yaml"
 
 export GAME_DATA_DIR="/tmp/orak-planner-prompt"
@@ -53,7 +53,7 @@ sed -i 's/^max_steps: .*/max_steps: 300/' "$ENV_CFG"
 n=3
 scores=()
 for iter in $(seq 1 $n); do
-    run_id="pr_stage_h_qwen36_pokemon_iter${iter}_$(date -u +%Y%m%dT%H%M%SZ)"
+    run_id="pr_stage_h_qwen35_a3b_pokemon_iter${iter}_$(date -u +%Y%m%dT%H%M%SZ)"
     started=$(date +%s)
     echo "================================================================"
     echo "[$(date -u +%H:%M:%SZ)] STAGE H n=3 iter $iter/$n"
@@ -63,10 +63,10 @@ for iter in $(seq 1 $n); do
     echo "================================================================"
 
     if ! uv run python run.py \
-        -c qwen36_27b \
+        -c qwen35_a3b_int4 \
         --local --games pokemon_red \
         --run-id "$run_id" \
-        -d "Stage H iter $iter: Qwen 3.6 27B FP8 ceiling check on pokemon Stage D"; then
+        -d "Stage H iter $iter: Qwen 3.5 35B-A3B-Int4 ceiling check on pokemon Stage D"; then
         echo "[FAIL] iter $iter exited non-zero"
         scores+=("0.0")
         continue
@@ -107,14 +107,14 @@ print(f"  Gemma Stage G (proc-escape) n=3: 47.62% +/- 16.49pp")
 print(f"  Delta vs Stage D:                {mean - 57.14:+.2f} pp")
 print(f"  Target (>= 71.43%):              {'HIT' if mean >= 71.43 else 'MISS'}")
 
-out = Path("experiments/stage_h_qwen_ceiling/qwen36_27b/results.jsonl")
+out = Path("experiments/stage_h_qwen_ceiling/qwen35_a3b_int4/results.jsonl")
 out.parent.mkdir(parents=True, exist_ok=True)
 existing = [json.loads(l) for l in out.read_text().splitlines() if l.strip()] if out.exists() else []
 row = {
     "experiment": len(existing) + 1,
-    "variant": "stage_h_qwen36_27b_pokemon_n3",
+    "variant": "stage_h_qwen35_a3b_int4_pokemon_n3",
     "game": "pokemon_red",
-    "model": "Qwen/Qwen3.6-27B-FP8",
+    "model": "Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
     "evaluation_score": mean,
     "evaluation_score_std": std,
     "evaluation_score_min": min(scores),
@@ -123,12 +123,12 @@ row = {
     "scores": scores,
     "steps": 300,
     "status": "KEEP",
-    "description": "Stage H ceiling check: Qwen 3.6 27B FP8 on pokemon Stage D (procedures ON, planner ON, vmem ON)",
+    "description": "Stage H ceiling check: Qwen 3.5 35B-A3B-GPTQ-Int4 on pokemon Stage D (procedures ON, planner ON, vmem ON)",
     "notes": f"n=3: mean={mean:.2f}% std={std:.2f}pp scores={fmt}. delta_vs_gemma_stage_d={mean-57.14:+.2f}pp",
-    "tags": ["qwen", "qwen3.6-27b", "stage_h_ceiling_check", "stage_h_qwen36_27b_pokemon_n3"],
+    "tags": ["qwen", "qwen3.5-35b-a3b-int4", "stage_h_ceiling_check", "stage_h_qwen35_a3b_int4_pokemon_n3"],
     "wandb_url": "",
     "timestamp": dt.datetime.now(dt.UTC).isoformat(),
-    "config_name": "qwen36_27b",
+    "config_name": "qwen35_a3b_int4",
 }
 with out.open("a") as f:
     f.write(json.dumps(row) + "\n")

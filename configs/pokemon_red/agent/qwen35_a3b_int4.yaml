@@ -1,0 +1,37 @@
+# Qwen 3.5 35B-A3B-GPTQ-Int4 for Pokemon Red — Stage H ceiling check on A100-40GB.
+# MoE: 35B total / 3B active params per token. GPTQ-Int4 ~17 GB on disk +
+# GPU. Native INT4 support on A100 (vs FP8's slow Marlin emulation), so
+# inference is ~5-10x faster than Qwen3.6-27B-FP8.
+#
+# Same MACLA stack as gemma_26b.yaml (vmem + subtask planner ON, procedure
+# layer ON, self-reflection per-game adapter default). The variable being
+# tested is model lineage, not the agent architecture.
+#
+# To serve:  ./serving/qwen_serve.sh   (after stopping gemma vLLM)
+#
+# Why this variant instead of Qwen 3.6 27B FP8:
+#   A100 lacks native FP8 compute (Marlin INT4 emulation), so FP8 27B was
+#   running at ~1 min/step in initial trials. INT4-native quants like this
+#   one run at the expected pace. See PR #71 for the pivot story.
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "Qwen/Qwen3.5-35B-A3B-GPTQ-Int4"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: false   # Stage H probes reasoning, not vision
+max_tokens: 4096
+max_model_len: 16384
+game_config_path: "pokemon_red"
+track: "TRACK1"
+# Stage C: vector memory
+use_vector_memory: true
+vector_memory_max: 100
+vector_memory_top_k: 3
+vector_memory_threshold: 0.5
+vector_memory_use_mmr: true
+vector_memory_mmr_lambda: 0.5
+vector_memory_decay_alpha: 0.5
+vector_memory_decay_window: 20
+# Stage D: subtask planner
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600
