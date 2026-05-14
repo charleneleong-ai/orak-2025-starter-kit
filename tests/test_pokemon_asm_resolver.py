@@ -16,31 +16,32 @@ decoupled from the map_names.json convention.
 
 from __future__ import annotations
 
-import pytest
+import importlib.util
+import sys
+import types
 from pathlib import Path
 
-# Load just the resolver — pulling in PyBoy + pyboy_runner is too heavy.
+import pytest
+
+# pyboy_runner does ``from pyboy import PyBoy`` at module top, which we
+# don't want to pay for here. Stub the pyboy bindings before loading
+# the module so the pure-stdlib helpers can be imported normally.
 _REPO = Path(__file__).resolve().parent.parent
-_RUNNER_SRC = (
-    _REPO / "evaluation_utils/mcp_game_servers/pokemon_red/game/pyboy_runner.py"
-).read_text()
+_pyboy_stub = types.ModuleType("pyboy")
+_pyboy_stub.PyBoy = object
+sys.modules.setdefault("pyboy", _pyboy_stub)
+_pyboy_utils_stub = types.ModuleType("pyboy.utils")
+_pyboy_utils_stub.WindowEvent = object
+sys.modules.setdefault("pyboy.utils", _pyboy_utils_stub)
 
-
-def _load_helper(name: str, *, end_marker: str):
-    """Extract a single helper from pyboy_runner.py and exec it standalone.
-
-    pyboy_runner imports PyBoy at module top, which we don't want to
-    pay for here. The helpers are pure stdlib so a chunk-exec works."""
-    start = _RUNNER_SRC.index(f"def {name}")
-    end = _RUNNER_SRC.index(end_marker)
-    fn_src = "import os\n" + _RUNNER_SRC[start:end]
-    ns: dict = {}
-    exec(fn_src, ns)
-    return ns[name]
-
-
-_resolve = _load_helper("_resolve_asm_path", end_marker="def _require_asm_files")
-_require_asm_files = _load_helper("_require_asm_files", end_marker="def parse_object_sprites")
+_spec = importlib.util.spec_from_file_location(
+    "pyboy_runner_under_test",
+    _REPO / "evaluation_utils/mcp_game_servers/pokemon_red/game/pyboy_runner.py",
+)
+_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_module)
+_resolve = _module._resolve_asm_path
+_require_asm_files = _module._require_asm_files
 
 
 def test_returns_path_unchanged_when_exact_match_exists(tmp_path):
@@ -97,42 +98,39 @@ def test_picks_first_match_when_multiple_case_variants_exist(tmp_path):
 
 
 # ── Hard-fail check when pokered/ wasn't cloned ────────────────────────
+#
+# Pre-2026-05-14 every pokemon run silently fell back to OBJ_n_n
+# placeholders because pokered/ was empty; the hard-fail keeps that
+# from re-occurring. See docs/experiments/pokemon-asm-gap.md.
 
 
-def test_require_asm_files_raises_when_dir_missing(tmp_path):
-    """Pre-2026-05-14 every pokemon run silently emitted OBJ_n_n placeholders
-    because pokered/ was empty. The hard-fail keeps that from re-occurring."""
-    with pytest.raises(RuntimeError, match="placeholder OBJ_n_n"):
-        _require_asm_files(str(tmp_path / "does_not_exist"))
+@pytest.mark.parametrize(
+    "setup",
+    [
+        lambda d: d / "does_not_exist",  # missing dir
+        lambda d: d,  # empty dir
+        lambda d: (d / "README.md").write_text("hi") or d,  # only non-asm files
+    ],
+    ids=["missing", "empty", "no_asm_files"],
+)
+def test_require_asm_files_raises(tmp_path, setup):
+    target = setup(tmp_path)
+    with pytest.raises(RuntimeError, match="OBJ_n_n placeholders"):
+        _require_asm_files(str(target))
 
 
-def test_require_asm_files_raises_when_dir_empty(tmp_path):
-    """Empty dir is the same failure surface as missing — both starve the
-    resolver and the runtime falls back to placeholders."""
-    with pytest.raises(RuntimeError, match="placeholder OBJ_n_n"):
-        _require_asm_files(str(tmp_path))
-
-
-def test_require_asm_files_error_message_includes_clone_command(tmp_path):
-    """The error has to be self-fixing — print the exact git clone."""
+def test_require_asm_files_error_message_is_self_fixing(tmp_path):
     with pytest.raises(RuntimeError) as exc:
         _require_asm_files(str(tmp_path))
-    assert "git clone" in str(exc.value)
-    assert "pret/pokered.git" in str(exc.value)
-    assert "docs/experiments/pokemon-asm-gap.md" in str(exc.value)
+    msg = str(exc.value)
+    assert "git clone" in msg
+    assert "pret/pokered.git" in msg
+    assert "docs/experiments/pokemon-asm-gap.md" in msg
 
 
 def test_require_asm_files_passes_when_asm_present(tmp_path):
-    """At least one .asm file in the dir = healthy."""
     (tmp_path / "OaksLab.asm").write_text("# stub\n")
-    _require_asm_files(str(tmp_path))  # no raise
-
-
-def test_require_asm_files_ignores_non_asm_files(tmp_path):
-    """README, .gitignore, etc shouldn't satisfy the check on their own."""
-    (tmp_path / "README.md").write_text("hi\n")
-    with pytest.raises(RuntimeError, match="placeholder OBJ_n_n"):
-        _require_asm_files(str(tmp_path))
+    _require_asm_files(str(tmp_path))
 
 
 def test_resolver_handles_every_floor_suffix_pattern(tmp_path):
