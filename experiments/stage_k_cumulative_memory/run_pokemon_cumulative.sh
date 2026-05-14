@@ -56,6 +56,17 @@ if [[ "$served" != *"gemma-4-26B-A4B-it-AWQ-4bit"* ]]; then
     exit 1
 fi
 
+# Pre-flight: pyboy ROM must exist. It's gitignored, so worktrees / fresh clones
+# silently miss it and every iter then crashes inside the spawned game server
+# with FileNotFoundError — a failure mode that retries gRPC for ~50min/iter
+# without ever logging into the launcher's stdout. Catch it before iter 1.
+if [[ ! -s "executables/pokemon_red/pyboy/pokered.gbc" ]]; then
+    echo "FATAL: ROM file executables/pokemon_red/pyboy/pokered.gbc is missing or empty (PWD=$PWD)"
+    echo "  The file is gitignored; symlink it from a checkout that has it:"
+    echo "    ln -sf <other-checkout>/executables/pokemon_red/pyboy/pokered.gbc executables/pokemon_red/pyboy/pokered.gbc"
+    exit 1
+fi
+
 restore() {
     echo "[restore] max_steps → 300"
     sed -i 's/^max_steps: .*/max_steps: 300/' "$ENV_CFG"
