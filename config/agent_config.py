@@ -223,6 +223,14 @@ class LocalConfig(AgentConfig):
     # Leave empty / None to use the per-game defaults.
     reward_shaping: dict = field(default_factory=dict)
 
+    # Paired-rollout / agentic-RL: when True, request `logprobs=True` from
+    # the OpenAI-compatible server so each generated token's chosen-token
+    # logprob lands in `response.response_metadata["logprobs"]`. The online
+    # GSPO/PPO loop uses these as `π_θ_old`; the offline DPO/GRPO path can
+    # ignore them and recompute via teacher-forcing. Best-effort: if the
+    # serving backend doesn't return logprobs the rollout still completes.
+    capture_logprobs: bool = False
+
     def __post_init__(self):
         # Env var overrides for easy CLI switching
         self.base_url = os.environ.get("LOCAL_BASE_URL", self.base_url)

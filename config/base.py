@@ -24,6 +24,15 @@ class WandbConfig(BaseModel):
     # Weave-specific settings
     weave_enabled: bool = True
 
+    # Paired-rollout / agentic-RL collection metadata. Set by run.py from
+    # --rollout-group-id / --rollout-idx / --adapter-name. Propagated into
+    # wandb.init(config=...) and per-step raw_requests.jsonl so the trainer
+    # side (offline DPO/GSPO or online LoRA loop) can filter rollouts by
+    # group and join them with the adapter that produced them.
+    rollout_group_id: str | None = None
+    rollout_idx: int = 0
+    adapter_name: str | None = None
+
     def model_post_init(self, __context):
         self.project = os.environ.get("WANDB_PROJECT", self.project)
         self.entity = os.environ.get("WANDB_ENTITY", self.entity)

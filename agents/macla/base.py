@@ -119,10 +119,12 @@ class BaseMaclaAgent(BaseModel):
     def _init_local_macla(self):
         """Initialize MACLA with a local model via OpenAI-compatible API (vLLM, Ollama, MLX)."""
         extra_body = self.config.extra_body or {}
+        capture_logprobs = bool(getattr(self.config, "capture_logprobs", False))
         logger.info(
             f"Initializing local model: {self.config.model} "
             f"via {self.config.server_type} at {self.config.base_url} "
-            f"(vision={self.config.supports_vision}, extra_body={extra_body})"
+            f"(vision={self.config.supports_vision}, extra_body={extra_body}, "
+            f"capture_logprobs={capture_logprobs})"
         )
         self._supports_vision = self.config.supports_vision
         llm_kwargs = dict(
@@ -141,6 +143,13 @@ class BaseMaclaAgent(BaseModel):
         )
         if extra_body:
             llm_kwargs["extra_body"] = extra_body
+        if capture_logprobs:
+            # LangChain ChatOpenAI surfaces logprobs in response_metadata
+            # when these kwargs are set. top_logprobs=0 returns only the
+            # chosen-token logprob per position (cheapest payload that
+            # supports importance-ratio computation in GSPO/PPO).
+            llm_kwargs["logprobs"] = True
+            llm_kwargs["top_logprobs"] = 0
         self._llm = ChatOpenAI(**llm_kwargs)
         self._macla_agent = LLMMACLAAgent(
             generator=self._llm,
