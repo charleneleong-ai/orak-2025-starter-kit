@@ -67,6 +67,31 @@ def _resolve_asm_path(asm_path: str) -> str | None:
     return None
 
 
+def _require_asm_files(asm_dir: str) -> None:
+    """Hard-fail if the pokered asm dir is missing or empty.
+
+    Without these files ``parse_object_sprites`` silently returns ``[]``
+    and the harness emits ``OBJ_n_n`` placeholders instead of real
+    sprite names (``SPRITE_OAK``, ``SPRITE_POKE_BALL``, ...). Every
+    Pokemon experiment in this repo before 2026-05-14 hit this; the
+    Stage J FAIL bucket was diagnosed against placeholder-anchored
+    reasoning chains. See ``docs/experiments/pokemon-asm-gap.md``.
+    """
+    if not os.path.isdir(asm_dir) or not any(
+        name.endswith(".asm") for name in os.listdir(asm_dir)
+    ):
+        pokered_root = os.path.normpath(os.path.join(asm_dir, "..", "..", ".."))
+        raise RuntimeError(
+            f"Pokemon Red object-sprite asm files missing at {asm_dir!r}. "
+            f"Without these the harness emits placeholder OBJ_n_n tokens "
+            f"instead of real sprite names (SPRITE_OAK, SPRITE_POKE_BALL, "
+            f"...) and the agent reasons against tokens it cannot ground. "
+            f"Populate by cloning pret/pokered:\n"
+            f"  git clone --depth 1 https://github.com/pret/pokered.git {pokered_root}\n"
+            f"See docs/experiments/pokemon-asm-gap.md for context."
+        )
+
+
 def parse_object_sprites(asm_path):
     resolved = _resolve_asm_path(asm_path)
     if resolved is None:
@@ -103,6 +128,7 @@ class PyBoyRunner:
 
         self.json_dir = os.path.join(game_code_dir, "game", "mapping_json")
         self.asm_dir = os.path.join(game_code_dir, "game", "pokered", "data", "maps", "objects")
+        _require_asm_files(self.asm_dir)
 
         self.species_names = load_json(os.path.join(self.json_dir, "species_names.json"))
         self.type_names = load_json(os.path.join(self.json_dir, "type_names.json"))
