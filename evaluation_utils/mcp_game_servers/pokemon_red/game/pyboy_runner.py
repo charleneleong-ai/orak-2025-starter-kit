@@ -67,6 +67,29 @@ def _resolve_asm_path(asm_path: str) -> str | None:
     return None
 
 
+def _require_asm_files(asm_dir: str) -> None:
+    """Hard-fail if the pokered asm dir is missing or empty.
+
+    Every Pokemon experiment in this repo before 2026-05-14 silently
+    fell back to ``OBJ_n_n`` placeholders that wedged Stage J in
+    OaksLab. See ``docs/experiments/pokemon-asm-gap.md``.
+    """
+    try:
+        with os.scandir(asm_dir) as it:
+            if any(entry.name.endswith(".asm") for entry in it):
+                return
+    except (FileNotFoundError, NotADirectoryError):
+        pass
+    pokered_root = os.path.normpath(os.path.join(asm_dir, "..", "..", ".."))
+    raise RuntimeError(
+        f"Pokemon Red object-sprite asm files missing at {asm_dir!r}. "
+        f"Without these the harness emits OBJ_n_n placeholders instead of "
+        f"real sprite names (SPRITE_OAK, SPRITE_POKE_BALL, ...). Run:\n"
+        f"  git clone --depth 1 https://github.com/pret/pokered.git {pokered_root}\n"
+        f"See docs/experiments/pokemon-asm-gap.md."
+    )
+
+
 def parse_object_sprites(asm_path):
     resolved = _resolve_asm_path(asm_path)
     if resolved is None:
@@ -103,6 +126,7 @@ class PyBoyRunner:
 
         self.json_dir = os.path.join(game_code_dir, "game", "mapping_json")
         self.asm_dir = os.path.join(game_code_dir, "game", "pokered", "data", "maps", "objects")
+        _require_asm_files(self.asm_dir)
 
         self.species_names = load_json(os.path.join(self.json_dir, "species_names.json"))
         self.type_names = load_json(os.path.join(self.json_dir, "type_names.json"))
