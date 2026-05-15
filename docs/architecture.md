@@ -212,7 +212,7 @@ The PR #28 verdict (mario → Stage D) is the production config; the iter-5 100%
 
 | Lever | Status | Notes |
 |---|---|---|
-| **Stage K — cumulative cross-episode memory** (n=5, Gemma 26B, `--load-checkpoint --prev-run-id` chaining) | Running on GPU, ETA ~10:20Z | Will land on [PR #75](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/75). Pre-fix was REGRESS −14.28pp learning_delta. Post-fix prediction: floor holds at 57.14% but ceiling does not lift unless iter 1 stumbles into Viridian and captures a navigation procedure. |
+| **Stage K — cumulative cross-episode memory** (n=5, Gemma 26B, `--load-checkpoint --prev-run-id` chaining) | Running (3/5 done @ 08:33Z) | Will land on [PR #75](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/75). Pre-fix was REGRESS −14.28pp learning_delta. **Mid-flight introspection shows negative transfer**: iters 1/2/3 all scored 57.14% but iter 2 took **+91 steps** to bank M4 (220 vs iter 1's 129), never reached Route1, and spent 160 steps stuck in OaksLab. Iter 3 partially recovered Route1 (70 steps) but increased perseveration to 22.0% (worst of three). Asm fix prevents the catastrophic *floor* regression but doesn't fix the underlying issue. **See `Cumulative-memory mechanics` section below** for the redesign sketch. |
 | **Map-exit callouts in observation** | Untested, recommended next | Surface unvisited adjacent maps + their exit tile coordinates in every observation. Afternoon's work. |
 | **Visited-maps sticky note** | Untested | Append `(map_name, first_step, last_step)` tuples to the observation. Cheap. |
 | **Mini-map / map-graph view** | Untested | Compact rendering of connected maps reachable from current location, unvisited highlighted. |
@@ -259,6 +259,23 @@ The PR #28 verdict (mario → Stage D) is the production config; the iter-5 100%
 | #80 | 2026-05-14 | **Hard-fail when `pokered/*.asm` missing** | Root-cause fix for placeholder-anchored reasoning |
 | #81 | 2026-05-15 | **Stage D + Stage H n=3 reruns under asm fix** | 57.14% × 6 zero-variance ceiling; M5 navigation gate identified |
 | #82 | 2026-05-15 | Cross-stage diagnosis post-asm-fix update | Supersedes Stage H bimodal interpretation |
+
+---
+
+## Cumulative-memory mechanics — TTL/decay + map-aware procedure keys
+
+**Finding (2026-05-15, Stage K rerun iters 1-3 at 57.14% × 3 zero-variance):** even when cumulative memory doesn't change the *score* it can hurt *efficiency*. Inherited procedures from earlier iters dead-end the agent in the scripted M1-M4 phase: iter 2 took 91 more steps than iter 1 to bank M4 and never reached Route1, because procedures captured against transient OaksLab states kept the agent in OaksLab instead of progressing. This is **negative transfer** in the procedure cache — the same pathology that caused the pre-fix Stage K REGRESS (now a floor-stable but efficiency-degraded version).
+
+The current procedure cache has two design gaps that need to close before cumulative memory becomes net-positive:
+
+| Gap | Why it bites | Proposed fix |
+|---|---|---|
+| **Procedure key is not map-aware** | A procedure like `interact_with_object(SPRITE_OAK)` is keyed on the action + sprite identity. Applied later in PalletTown or Route1 where there's no Oak, the procedure still fires because the cache match doesn't condition on `map_name`. Inherited procedures end up firing in the wrong map. | Key procedures on `(map_name, sprite/object_id, action)` tuple. A procedure captured in OaksLab can only match when `map_info.map_name == "OaksLab"`. |
+| **No "forget irrelevant" mechanism** | Bayesian acquisition adds procedures but never retires them based on usage staleness or context-mismatch. Procedures that succeeded once at step 50 of iter 1 stay top-K-retrievable through iter 5. | Add a **TTL or confidence decay** in `agents/macla/procedures/`: each procedure carries a `last_used_iter` + `success_count_since_last_used`; procedures unused for ≥ 1 full iter, or whose recent-use success-rate drops below a threshold, decay out of top-K. Complements the existing Stage G failure-streak retire (which retires *currently* failing procedures, not stale ones). |
+
+Both fixes are local to `agents/macla/procedures/` and don't require a new sweep harness — they're a Stage L-style intervention. Either one alone is testable (n=3 cumulative-memory variant); both together is the more conservative bet. The current Stage K REGRESS-but-floor-stable result establishes the baseline to beat: any redesign needs to deliver `late_mean ≥ early_mean` (no negative transfer) at minimum, ideally improving steps-to-M4 iter-over-iter.
+
+This is the next move for the procedure layer regardless of the navigation gate. The M5 navigation interventions (map-exit callouts, visited-maps sticky note, mini-map) attack the ceiling; the procedure-cache redesign attacks the *floor stability* of any future cumulative-memory sweep.
 
 ---
 
