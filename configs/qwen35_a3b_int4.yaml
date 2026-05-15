@@ -23,14 +23,20 @@ defaults:
   - twenty_fourty_eight: base
   - super_mario: base
   - pokemon_red: base
+  - star_craft: base
   # mario/2048 routed to gemma_26b only to satisfy Hydra+pydantic config
-  # validation (the runner is invoked with --games pokemon_red, so the
-  # other games never actually execute).
+  # validation (the runner is typically invoked with a subset like --games
+  # pokemon_red or --games star_craft, so the other games never actually
+  # execute). pokemon_red + star_craft use the qwen35 agent.
   - override twenty_fourty_eight/agent: gemma_26b
   - override super_mario/agent: gemma_26b
   - override pokemon_red/agent: qwen35_a3b_int4
+  - override star_craft/agent: qwen35_a3b_int4
   - _self_
 
 pokemon_red:
   wandb:
     tags: ["qwen", "qwen3.5-35b-a3b-int4", "pokemon_red", "stage_h_ceiling_check", "stage_d_planner"]
+star_craft:
+  wandb:
+    tags: ["qwen", "qwen3.5-35b-a3b-int4", "star_craft", "stage_d_planner"]
