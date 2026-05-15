@@ -39,6 +39,18 @@ GPU_UTIL="${QWEN_GPU_UTIL:-0.90}"
 MAX_MODEL_LEN="${QWEN_MAX_MODEL_LEN:-16384}"
 VENV="${QWEN_VENV:-/workspace/vllm-serve/.venv}"
 
+# Auto-enable Qwen reasoning parser for Thinking-mode variants so vLLM strips
+# <think>...</think> blocks server-side and returns them in `reasoning_content`
+# (the agent harness sees only the post-think tool-call output). Override
+# with QWEN_REASONING_PARSER=foo to force, or QWEN_REASONING_PARSER=' ' to disable.
+if [[ -z "${QWEN_REASONING_PARSER+x}" ]]; then
+    if [[ "${MODEL,,}" == *"thinking"* ]]; then
+        QWEN_REASONING_PARSER="qwen3"
+    else
+        QWEN_REASONING_PARSER=""
+    fi
+fi
+
 export HF_HOME="${HF_HOME:-/workspace/.hf_home}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HOME}/hub}"
 
@@ -73,6 +85,16 @@ fi
 # For GPTQ-Int4 MoE on A100, CUDA graph capture is fine (native INT4
 # compute). For FP8 fallback path (no native FP8 on A100), add
 # --enforce-eager to save GPU memory at the cost of throughput.
+#
+# Thinking-mode variants (model name contains "thinking") auto-enable
+# --reasoning-parser qwen3 so vLLM separates <think> blocks into
+# `reasoning_content` and returns clean tool-call output in `content`.
+reasoning_args=()
+if [[ -n "${QWEN_REASONING_PARSER// }" ]]; then
+    reasoning_args=(--reasoning-parser "${QWEN_REASONING_PARSER}")
+    echo "[serve] reasoning parser: ${QWEN_REASONING_PARSER}"
+fi
+
 exec "${VENV}/bin/python" -m vllm.entrypoints.openai.api_server \
     --model "${MODEL}" \
     --port "${PORT}" \
@@ -81,4 +103,5 @@ exec "${VENV}/bin/python" -m vllm.entrypoints.openai.api_server \
     --trust-remote-code \
     --enable-auto-tool-choice \
     --tool-call-parser hermes \
-    --dtype auto
+    --dtype auto \
+    "${reasoning_args[@]}"
