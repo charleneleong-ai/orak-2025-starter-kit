@@ -61,6 +61,9 @@ class Procedure:
     generalisability_score: float = 0.5
     confidence: float = 0.5
     source_trajectory: str = ""
+    # Stage L: map-aware procedure key. Default "unknown" matches any map
+    # for backwards-compat with pre-Stage-L checkpoints.
+    map_name: str = "unknown"
 
     @property
     def success_rate(self) -> float:
@@ -107,6 +110,9 @@ class ProceduralMemoryEntry:
     goals: set[str] = field(default_factory=set)
     performance_score: float = 0.5
     last_refined: float = field(default_factory=time.time)
+    # Stage L: iter at which this entry was last selected. prune_stale_procedures
+    # retires entries with `last_used_iter < current_iter - max_age`.
+    last_used_iter: int = 0
 
 
 # =========================================================
@@ -130,8 +136,39 @@ class EnhancedHierarchicalMemorySystem:
             "procedures_added": 0,
             "procedures_refined": 0,
             "meta_procedures_added": 0,
+            "procedures_pruned_stale": 0,
         }
         self._meta_counter = 0
+        # Stage L: iter counter for the cumulative-memory chain. Bumped each
+        # time the agent loads from a previous-iter checkpoint.
+        self.current_iter: int = 0
+
+    def bump_iter(self) -> int:
+        """Increment the iter counter — call when a checkpoint is loaded
+        (i.e. each new iter under --load-checkpoint --prev-run-id)."""
+        self.current_iter += 1
+        return self.current_iter
+
+    def prune_stale_procedures(self, max_age: int = 2) -> list[str]:
+        """Stage L: retire procedural entries whose ``last_used_iter`` is
+        older than ``current_iter - max_age``. Returns the keys removed.
+
+        Default ``max_age=2`` means a procedure that hasn't been selected
+        for 2+ full iters is dropped from the cache and its index entries
+        cleaned up.
+        """
+        threshold = self.current_iter - max_age
+        removed: list[str] = []
+        for key, entry in list(self.procedural_memory.items()):
+            if entry.last_used_iter < threshold:
+                removed.append(key)
+                for context in entry.contexts:
+                    self.context_index[context].discard(key)
+                for goal in entry.goals:
+                    self.goal_index[goal].discard(key)
+                del self.procedural_memory[key]
+        self.stats["procedures_pruned_stale"] += len(removed)
+        return removed
 
     @weave.op()
     def add_atomic_entry(
@@ -159,7 +196,12 @@ class EnhancedHierarchicalMemorySystem:
     def add_procedural_entry(
         self, procedure: Procedure, contexts: set[str], goals: set[str], performance: float
     ) -> str:
-        proc_key = f"proc_{hash(str(procedure.steps)) % 1000000}"
+        # Stage L: map_name is part of the key so the same step sequence
+        # captured in different maps gets distinct cache entries instead
+        # of colliding/merging. Procedures without an explicit map_name
+        # (older checkpoints) default to "unknown" via the dataclass.
+        map_name = getattr(procedure, "map_name", "unknown") or "unknown"
+        proc_key = f"proc_{hash((str(procedure.steps), map_name)) % 1000000}"
 
         if proc_key in self.procedural_memory:
             # Merge with existing entry to avoid duplicates and preserve stats
@@ -277,6 +319,18 @@ class BayesianProcedureSelector:
         # (None, 0.0) on every call so the MACLA procedure layer is bypassed
         # entirely. EnhancedMACLAAgent flips this from the agent config.
         self.use_procedure_layer = True
+
+    # Stage L: parse the current map name out of the structured observation
+    # text. Pokemon observations carry "Map Name: <Name>, (x_max,..." in the
+    # [Map Info] block. Falls back to "unknown" when the pattern is absent
+    # (e.g. battle screens, dialog screens, non-pokemon games).
+    _MAP_NAME_RE = re.compile(r"Map Name:\s*([^\s,\n]+)", re.IGNORECASE)
+
+    def _extract_map_name(self, observation: str) -> str:
+        if not observation:
+            return "unknown"
+        m = self._MAP_NAME_RE.search(observation)
+        return m.group(1).strip() if m else "unknown"
 
     def build_ontology(self, trajectories: list[dict], k_top: int = 100):
         """Build ontology from trajectories to enable semantic retrieval."""
@@ -398,6 +452,18 @@ class BayesianProcedureSelector:
             all_procs = list(self.memory_system.procedural_memory.items())
             all_procs.sort(key=lambda x: x[1].procedure.execution_count, reverse=True)
             candidates = {k for k, _ in all_procs[:k]}
+
+        # Stage L: drop candidates whose procedure was captured in a
+        # different map. "unknown" (older procedures or non-map contexts)
+        # matches any map.
+        current_map = self._extract_map_name(observation)
+        candidates = {
+            pk
+            for pk in candidates
+            if pk in self.memory_system.procedural_memory
+            and getattr(self.memory_system.procedural_memory[pk].procedure, "map_name", "unknown")
+            in (current_map, "unknown")
+        }
 
         clist = list(candidates)
         clist.sort(
@@ -600,6 +666,12 @@ class BayesianProcedureSelector:
         # Strict threshold to prevent executing bad cached procedures
         if best_eu < theta_conf:
             return None, 0.0
+        # Stage L: mark the entry as used in the current iter so it survives
+        # the next prune_stale_procedures pass.
+        if best_pk in self.memory_system.procedural_memory:
+            self.memory_system.procedural_memory[
+                best_pk
+            ].last_used_iter = self.memory_system.current_iter
         return best_pk, min(1.0, best_eu)
 
 
@@ -1183,6 +1255,10 @@ class EnhancedMACLAAgent:
                     except Exception as e:
                         logger.warning(f"Failed to extract initial postconditions: {e}")
 
+                # Stage L: stamp the procedure with the map it was captured
+                # in so the cache can filter retrieval by current map.
+                captured_map = self.bayesian_selector._extract_map_name(obs)
+
                 new_proc = Procedure(
                     goal=goal,
                     preconditions=preconditions,
@@ -1192,6 +1268,7 @@ class EnhancedMACLAAgent:
                     confidence=0.6,
                     execution_count=1,  # Mark as executed once
                     alpha=2,  # 1 prior + 1 success
+                    map_name=captured_map,
                 )
 
                 pk = self.memory_system.add_procedural_entry(
