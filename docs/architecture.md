@@ -262,6 +262,27 @@ The PR #28 verdict (mario → Stage D) is the production config; the iter-5 100%
 
 ---
 
+## Evaluation policy: when to run cross-game
+
+**Convention (2026-05-15):** cognitive-harness interventions are validated on **pokemon-only first** (cheapest single-game cost, hardest ceiling). Cross-game reruns happen as a **follow-up sweep** if and only if the pokemon variant **LIFTs** above the 57.14% ceiling.
+
+| Stage | Lever | Cross-game scope | Why |
+|---|---|---|---|
+| B' | no procedures | all 3 games at n=3 (PR #69) | Ablation testing whether procedures generalize — they do (−14.29 / −7.72 / −3.03pp) |
+| D baseline | full Stage D stack | all 3 games (PR #31) | Sets the per-game baseline scoreboard |
+| H | model lineage (Qwen vs Gemma) | **pokemon-only** | Specific ceiling check on pokemon's 57.14%; mario/2048 aren't gated the same way |
+| J | thinking-mode reasoning budget | **pokemon-only** | Defer cross-game until pokemon shows signal |
+| K | cumulative cross-episode memory | **pokemon-only** | Defer cross-game until pokemon shows signal |
+
+Rule of thumb:
+- **Architectural ablations** (B', D) → cross-game from day one, because the question is "does this component generalize."
+- **Pokemon-specific ceiling pokes** (H, J, K, future navigation interventions) → pokemon-only first. If pokemon LIFTs (mean > 60% OR max ≥ 71%), queue a cross-game rerun as a follow-up PR.
+- **Game-specific tuning** (2048 state-abstraction, mario carry-over) → that game only.
+
+GPU cost rationale: cross-game is roughly 3× per sweep on a single A100 (300 steps × 3 games). For interventions that haven't shown signal on pokemon, 3× cost is wasted on confirming the obvious (no change).
+
+---
+
 ## Next move
 
 Options 2 (visited-maps sticky note) or 1 (map-exit callouts) are the cheapest and most direct attack on the M5 navigation gate. Stage K (cumulative memory) is the in-flight check on whether learned procedures can break it. None of these need a new model or new training — they're observation-layer additions.
