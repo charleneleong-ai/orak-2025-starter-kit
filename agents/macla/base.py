@@ -753,7 +753,26 @@ class BaseMaclaAgent(BaseModel):
             # Re-link selector and meta-learner to the restored memory system
             self._macla_agent.bayesian_selector.memory_system = state["macla_memory"]
             self._macla_agent.meta_learner.memory_system = state["macla_memory"]
-            logger.info("Restored MACLA memory system from checkpoint")
+            # Stage L: bump iter counter on each checkpoint load and retire
+            # procedures that haven't been used for >= max_age (default 2)
+            # iters. Tolerates pre-Stage-L checkpoints (memory_system without
+            # the new attrs) via getattr fallbacks.
+            mem = self._macla_agent.memory_system
+            if not hasattr(mem, "current_iter"):
+                mem.current_iter = 0
+            if hasattr(mem, "bump_iter"):
+                mem.bump_iter()
+            if hasattr(mem, "prune_stale_procedures"):
+                removed = mem.prune_stale_procedures(max_age=2)
+                if removed:
+                    logger.info(
+                        f"Stage L: pruned {len(removed)} stale procedures "
+                        f"(unused for >=2 iters; current_iter={mem.current_iter})"
+                    )
+            logger.info(
+                f"Restored MACLA memory system from checkpoint "
+                f"(current_iter={getattr(mem, 'current_iter', 0)})"
+            )
 
         if "macla_stats" in state and self._macla_agent:
             self._macla_agent.stats = state["macla_stats"]
