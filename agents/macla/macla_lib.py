@@ -461,9 +461,7 @@ class BayesianProcedureSelector:
             pk
             for pk in candidates
             if pk in self.memory_system.procedural_memory
-            and getattr(
-                self.memory_system.procedural_memory[pk].procedure, "map_name", "unknown"
-            )
+            and getattr(self.memory_system.procedural_memory[pk].procedure, "map_name", "unknown")
             in (current_map, "unknown")
         }
 
@@ -671,9 +669,9 @@ class BayesianProcedureSelector:
         # Stage L: mark the entry as used in the current iter so it survives
         # the next prune_stale_procedures pass.
         if best_pk in self.memory_system.procedural_memory:
-            self.memory_system.procedural_memory[best_pk].last_used_iter = (
-                self.memory_system.current_iter
-            )
+            self.memory_system.procedural_memory[
+                best_pk
+            ].last_used_iter = self.memory_system.current_iter
         return best_pk, min(1.0, best_eu)
 
 

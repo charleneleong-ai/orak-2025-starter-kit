@@ -26,9 +26,7 @@ import typer
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
-MOVE_TO_RE = re.compile(
-    r"move_to[^()]*\(\s*[^,]*?(-?\d+)\s*,\s*[^,]*?(-?\d+)\s*\)"
-)
+MOVE_TO_RE = re.compile(r"move_to[^()]*\(\s*[^,]*?(-?\d+)\s*,\s*[^,]*?(-?\d+)\s*\)")
 
 
 def _iter_metrics(run_dir: Path) -> dict:
@@ -81,7 +79,9 @@ def _iter_metrics(run_dir: Path) -> dict:
 
     # Perseveration: consecutive identical move_to targets
     if len(move_targets) > 1:
-        repeats = sum(1 for i in range(1, len(move_targets)) if move_targets[i] == move_targets[i - 1])
+        repeats = sum(
+            1 for i in range(1, len(move_targets)) if move_targets[i] == move_targets[i - 1]
+        )
         perseveration = repeats / max(len(move_targets) - 1, 1)
     else:
         perseveration = 0.0
