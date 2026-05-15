@@ -16,6 +16,63 @@ import weave
 from loguru import logger
 
 # =========================================================
+# STAGE M: SALIENT STATE EXTRACTION
+# =========================================================
+# Generic key-value extractor for the "did this step actually move the game
+# state forward" signal. Generalisable across pokemon (Score/HP/Map/Position/
+# In Battle), mario (x/score/lives), 2048 (board), starcraft (minerals/gas/
+# supply). When the observation is unstructured (e.g. battle dialog), the
+# extractor returns () and downstream state_delta_observed records as None
+# — neutral, no penalty.
+_SALIENT_KEYS = (
+    "score",
+    "hp",
+    "position",
+    "map name",
+    "in battle",
+    "minerals",
+    "gas",
+    "supply",
+    "lives",
+    "board",
+)
+
+
+def _extract_salient_state(observation: str | None) -> tuple[str, ...]:
+    """Return a tuple of normalised salient `Key: Value` lines from ``observation``.
+
+    Stable signature of game state for comparing init vs term observations
+    to detect whether a step actually moved the game forward. Empty tuple
+    when the observation lacks structured key:value lines.
+    """
+    if not observation:
+        return ()
+    found: list[str] = []
+    for line in observation.split("\n"):
+        line_l = line.strip().lower()
+        if not line_l or ":" not in line_l:
+            continue
+        prefix = line_l.split(":", 1)[0].strip()
+        if prefix in _SALIENT_KEYS:
+            found.append(line.strip())
+    return tuple(found)
+
+
+def _state_delta_observed(
+    observation_init: str | None, observation_term: str | None
+) -> bool | None:
+    """Return True/False/None for the state-delta signal a ContrastiveContext
+    should record. None when salient state can't be extracted from either
+    side (unstructured observation) — recorded as neutral and excluded from
+    the procedure's state_delta_rate."""
+    init_s = _extract_salient_state(observation_init)
+    term_s = _extract_salient_state(observation_term)
+    if not init_s and not term_s:
+        return None
+    return init_s != term_s
+
+
+# =========================================================
 # OPTIONAL SEMANTIC EMBEDDINGS
 # =========================================================
 _EMBED_AVAILABLE = True
@@ -98,6 +155,11 @@ class ContrastiveContext:
     postconditions_image: Any = None
     fatal: bool = False
     observation: str = ""
+    # Stage M: did this execution move the salient game state forward?
+    # True/False when salient extraction succeeded on both init and term;
+    # None when the observation lacked structured key:value lines (e.g.
+    # battle dialog) — that case bootstraps to neutral 0.5 in the selector.
+    state_delta_observed: bool | None = None
 
 
 @dataclass
@@ -142,6 +204,26 @@ class EnhancedHierarchicalMemorySystem:
         # Stage L: iter counter for the cumulative-memory chain. Bumped each
         # time the agent loads from a previous-iter checkpoint.
         self.current_iter: int = 0
+        # Stage M: track which maps the cumulative-memory chain has visited.
+        # select_procedure raises the effective theta_conf on unvisited maps
+        # so cached procedures rarely fire and the LLM gets free rein to
+        # explore. Persists across iters via the existing pickle checkpoint.
+        self.visited_maps: set[str] = set()
+
+    def record_map_visit(self, map_name: str | None) -> None:
+        """Stage M: record that the agent has been on ``map_name`` in this
+        cumulative-memory chain. ``"unknown"`` / empty / None are ignored —
+        they represent absence-of-info, not a discovered map."""
+        if not map_name or map_name == "unknown":
+            return
+        self.visited_maps.add(map_name)
+
+    def is_new_map(self, map_name: str | None) -> bool:
+        """Stage M: True iff ``map_name`` is a real map name (not unknown /
+        empty / None) that has not yet been visited in this chain."""
+        if not map_name or map_name == "unknown":
+            return False
+        return map_name not in self.visited_maps
 
     def bump_iter(self) -> int:
         """Increment the iter counter — call when a checkpoint is loaded
@@ -622,6 +704,22 @@ class BayesianProcedureSelector:
         except Exception:
             return 0.0
 
+    def _state_delta_confidence(self, entry: ProceduralMemoryEntry) -> float:
+        """Stage M: fraction of this entry's success_contexts where the
+        executing step actually moved the salient game state forward.
+
+        Bootstraps to 0.5 (neutral) when there are no success_contexts or
+        when all contexts have ``state_delta_observed=None`` (typical for
+        non-pokemon games whose observations lack structured key:value lines).
+        """
+        if not entry.success_contexts:
+            return 0.5
+        observed = [getattr(c, "state_delta_observed", None) for c in entry.success_contexts]
+        not_none = [o for o in observed if o is not None]
+        if not not_none:
+            return 0.5
+        return sum(1 for o in not_none if o) / len(not_none)
+
     def _compute_expected_utility(
         self, entry: ProceduralMemoryEntry, observation: str, goal: str
     ) -> float:
@@ -633,7 +731,19 @@ class BayesianProcedureSelector:
         info_gain = self._compute_information_gain(entry.procedure)
 
         eu = (relevance * rho_mean * 1.0) - (risk * (1 - rho_mean) * 0.5) + 0.1 * info_gain
+        # Stage M (a): multiplicative state-delta confidence. Maps the
+        # confidence ∈ [0, 1] into a multiplier ∈ [0.5, 1.0] so the signal
+        # damps marginally-useful procedures without zeroing them entirely.
+        sdc = self._state_delta_confidence(entry)
+        eu *= 0.5 + 0.5 * sdc
         return max(0.0, eu)
+
+    # Stage M (b): on an unvisited map, raise theta_conf to this floor so
+    # cached procedures rarely fire and the LLM is biased toward exploration.
+    # 0.6 sits well above the typical EU range (~0.05-0.3) observed in
+    # Stage L logs, so virtually all cached procs get rejected on a first
+    # visit to a new map.
+    _NEW_MAP_THETA = 0.6
 
     def select_procedure(
         self, observation: str, goal: str, theta_conf: float = 0.25
@@ -644,6 +754,13 @@ class BayesianProcedureSelector:
         # the selector).
         if not self.use_procedure_layer:
             return None, 0.0
+
+        # Stage M (b): record the map and bump theta on first visit.
+        current_map = self._extract_map_name(observation)
+        is_new = self.memory_system.is_new_map(current_map)
+        effective_theta = max(theta_conf, self._NEW_MAP_THETA) if is_new else theta_conf
+        self.memory_system.record_map_visit(current_map)
+
         candidates = self._retrieve_candidates(observation, goal, k=10)
         if not candidates:
             return None, 0.0
@@ -661,10 +778,11 @@ class BayesianProcedureSelector:
         utilities.sort(key=lambda x: x[1], reverse=True)
         best_pk, best_eu = utilities[0]
         logger.debug(
-            f"[Selector] best_eu={best_eu:.3f} theta={theta_conf:.3f} candidates={len(utilities)} pk={best_pk}"
+            f"[Selector] best_eu={best_eu:.3f} theta={effective_theta:.3f} "
+            f"(new_map={is_new}) candidates={len(utilities)} pk={best_pk}"
         )
         # Strict threshold to prevent executing bad cached procedures
-        if best_eu < theta_conf:
+        if best_eu < effective_theta:
             return None, 0.0
         # Stage L: mark the entry as used in the current iter so it survives
         # the next prune_stale_procedures pass.
@@ -1168,8 +1286,9 @@ class EnhancedMACLAAgent:
             logger.debug(
                 f"Recording outcome for existing procedure {pk}. {execution_result.get('obs_image')}, {next_obs_image}"
             )
+            ctx_obs_init = execution_result.get("observation", "")
             ctx = ContrastiveContext(
-                observation_init=execution_result.get("observation", ""),
+                observation_init=ctx_obs_init,
                 action_sequence=execution_result.get("action_sequence", []),
                 observation_term=next_observation,
                 cumulative_reward=shaped_reward
@@ -1177,11 +1296,13 @@ class EnhancedMACLAAgent:
                 else (1.0 if actual_success else 0.0),
                 trajectory_id=execution_result.get("trajectory_id", "unknown"),
                 success=actual_success,
-                context=self.bayesian_selector._extract_context(
-                    execution_result.get("observation", "")
-                ),
+                context=self.bayesian_selector._extract_context(ctx_obs_init),
                 preconditions_image=execution_result.get("obs_image"),
                 postconditions_image=next_obs_image,
+                # Stage M (a): record whether this execution moved the
+                # salient game state forward — feeds state_delta_confidence
+                # in the next selection cycle.
+                state_delta_observed=_state_delta_observed(ctx_obs_init, next_observation),
             )
             self.memory_system.record_execution_outcome(pk, actual_success, ctx, is_fatal=is_fatal)
             update_info["type"] = "procedure_updated"
@@ -1243,6 +1364,7 @@ class EnhancedMACLAAgent:
                     context=str(context_key),
                     preconditions_image=execution_result.get("obs_image"),
                     postconditions_image=next_obs_image,
+                    state_delta_observed=_state_delta_observed(obs, next_observation),
                 )
 
                 # Extract initial postconditions from this successful execution
