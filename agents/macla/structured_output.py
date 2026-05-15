@@ -15,6 +15,34 @@ from loguru import logger
 from pydantic import BaseModel
 
 
+def _extract_mean_logprob(logprobs: Any) -> float | None:
+    """Compute mean per-token logprob from a langchain-openai logprobs dict.
+
+    langchain-openai surfaces logprobs (when ``logprobs=True, top_logprobs=N``
+    is set on the ChatOpenAI client) as ``response_metadata['logprobs']``
+    with shape ``{"content": [{"token": str, "logprob": float, ...}, ...]}``.
+
+    Stage M (third signal) calibrates procedure quality against the rolling
+    distribution of these mean values, so cross-model safe. Returns None
+    when the model didn't return logprobs (e.g. when the kwarg isn't
+    supported or the API silently dropped it) — downstream signal then
+    bootstraps to neutral 0.5.
+    """
+    if not isinstance(logprobs, dict):
+        return None
+    content = logprobs.get("content")
+    if not isinstance(content, list) or not content:
+        return None
+    lps = [
+        item.get("logprob")
+        for item in content
+        if isinstance(item, dict) and isinstance(item.get("logprob"), (int, float))
+    ]
+    if not lps:
+        return None
+    return sum(lps) / len(lps)
+
+
 def _extract_usage(raw: Any) -> dict | None:
     """Lift token counts off a LangChain AIMessage into a flat dict.
 
@@ -24,9 +52,18 @@ def _extract_usage(raw: Any) -> dict | None:
     ``response_metadata['token_usage']`` for older provider integrations.
     Returns None if neither carries usage — in which case downstream
     token logging stays at zero, same as before this fix.
+
+    Stage M: also surfaces ``mean_logprob`` extracted from
+    ``response_metadata['logprobs']`` (None when the provider didn't
+    return logprobs). The Bayesian selector calibrates procedure quality
+    against the rolling distribution of these means.
     """
     if raw is None:
         return None
+    response_meta = getattr(raw, "response_metadata", None) or {}
+    mean_logprob = _extract_mean_logprob(
+        response_meta.get("logprobs") if isinstance(response_meta, dict) else None
+    )
     usage_meta = getattr(raw, "usage_metadata", None)
     if isinstance(usage_meta, dict) and usage_meta:
         # LangChain canonical: input_tokens / output_tokens / total_tokens.
@@ -39,9 +76,9 @@ def _extract_usage(raw: Any) -> dict | None:
                 "total_tokens",
                 usage_meta.get("input_tokens", 0) + usage_meta.get("output_tokens", 0),
             ),
+            "mean_logprob": mean_logprob,
             "raw_usage_metadata": usage_meta,
         }
-    response_meta = getattr(raw, "response_metadata", None)
     if isinstance(response_meta, dict):
         token_usage = response_meta.get("token_usage")
         if isinstance(token_usage, dict) and token_usage:
@@ -52,8 +89,16 @@ def _extract_usage(raw: Any) -> dict | None:
                     "total_tokens",
                     token_usage.get("prompt_tokens", 0) + token_usage.get("completion_tokens", 0),
                 ),
+                "mean_logprob": mean_logprob,
                 "raw_usage_metadata": token_usage,
             }
+    if mean_logprob is not None:
+        return {
+            "tokens_prompt": 0,
+            "tokens_completion": 0,
+            "tokens_total": 0,
+            "mean_logprob": mean_logprob,
+        }
     return None
 
 

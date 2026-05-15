@@ -66,7 +66,15 @@ if ! grep -q "Stage M (b): record the map and bump theta on first visit" agents/
     echo "FATAL: agents/macla/macla_lib.py is missing the Stage M novelty-bump patch"
     exit 1
 fi
-echo "[preflight] Stage M multi-signal + novelty code present"
+if ! grep -q "Stage M (third signal): logprob_confidence" agents/macla/macla_lib.py; then
+    echo "FATAL: agents/macla/macla_lib.py is missing the Stage M logprob-confidence patch"
+    exit 1
+fi
+if ! grep -q "logprobs=True" agents/macla/base.py; then
+    echo "FATAL: agents/macla/base.py is missing logprobs=True on the ChatOpenAI client"
+    exit 1
+fi
+echo "[preflight] Stage M three-signal (state_delta + novelty + logprob) code present"
 
 restore() { sed -i 's/^max_steps: .*/max_steps: 300/' "$ENV_CFG"; }
 trap restore EXIT

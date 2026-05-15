@@ -49,7 +49,11 @@ safe_structured_invoke = _so.safe_structured_invoke
 
 
 def test_extract_usage_lifts_langchain_usage_metadata():
-    """The canonical case: AIMessage with usage_metadata dict."""
+    """The canonical case: AIMessage with usage_metadata dict.
+
+    Stage M added a ``mean_logprob`` key (None when the provider didn't
+    return logprobs); the rest of the surface is unchanged.
+    """
     raw = SimpleNamespace(
         usage_metadata={"input_tokens": 1234, "output_tokens": 56, "total_tokens": 1290}
     )
@@ -58,6 +62,7 @@ def test_extract_usage_lifts_langchain_usage_metadata():
         "tokens_prompt": 1234,
         "tokens_completion": 56,
         "tokens_total": 1290,
+        "mean_logprob": None,
         "raw_usage_metadata": raw.usage_metadata,
     }
 

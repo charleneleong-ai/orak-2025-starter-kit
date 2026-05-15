@@ -121,6 +121,11 @@ class Procedure:
     # Stage L: map-aware procedure key. Default "unknown" matches any map
     # for backwards-compat with pre-Stage-L checkpoints.
     map_name: str = "unknown"
+    # Stage M: mean per-token logprob from the LLM call that generated
+    # this procedure's action sequence. ``None`` for procedures created
+    # before logprobs were plumbed (backwards-compat); these score
+    # neutral 0.5 in BayesianProcedureSelector._logprob_confidence.
+    mean_logprob: float | None = None
 
     @property
     def success_rate(self) -> float:
@@ -209,6 +214,14 @@ class EnhancedHierarchicalMemorySystem:
         # so cached procedures rarely fire and the LLM gets free rein to
         # explore. Persists across iters via the existing pickle checkpoint.
         self.visited_maps: set[str] = set()
+        # Stage M (third signal): rolling distribution of recent mean
+        # per-token logprobs from the agent's LLM calls. Used by the
+        # selector's percentile-rank calibration. Bootstraps when len < 10.
+        self._recent_logprobs: deque[float] = deque(maxlen=50)
+        # Hand-off slot from the calling agent's most-recent LLM call to
+        # the macla_lib procedure-creation site. Set by the agent before
+        # provide_feedback; consumed (set back to None) on use.
+        self._pending_logprob: float | None = None
 
     def record_map_visit(self, map_name: str | None) -> None:
         """Stage M: record that the agent has been on ``map_name`` in this
@@ -720,6 +733,32 @@ class BayesianProcedureSelector:
             return 0.5
         return sum(1 for o in not_none if o) / len(not_none)
 
+    # Stage M (third signal): minimum sample count before the rolling
+    # logprob distribution is considered calibrated. Below this, every
+    # entry scores neutral 0.5 — distribution-free bootstrap.
+    _LOGPROB_BOOTSTRAP_N = 10
+
+    def _logprob_confidence(self, entry: ProceduralMemoryEntry) -> float:
+        """Stage M: percentile rank of this entry's ``procedure.mean_logprob``
+        against the memory system's rolling logprob deque.
+
+        Returns 0.5 (neutral) when:
+          - the entry's mean_logprob is None (pre-Stage-M procedure)
+          - fewer than ``_LOGPROB_BOOTSTRAP_N`` samples in the deque
+            (not enough calibration data to rank meaningfully)
+
+        Otherwise returns rank / N ∈ [0, 1]. Cross-model safe (each model's
+        procedures calibrate against that model's own distribution).
+        """
+        mlp = getattr(entry.procedure, "mean_logprob", None)
+        if mlp is None:
+            return 0.5
+        recent = self.memory_system._recent_logprobs
+        if len(recent) < self._LOGPROB_BOOTSTRAP_N:
+            return 0.5
+        rank = sum(1 for lp in recent if lp <= mlp)
+        return rank / len(recent)
+
     def _compute_expected_utility(
         self, entry: ProceduralMemoryEntry, observation: str, goal: str
     ) -> float:
@@ -736,6 +775,13 @@ class BayesianProcedureSelector:
         # damps marginally-useful procedures without zeroing them entirely.
         sdc = self._state_delta_confidence(entry)
         eu *= 0.5 + 0.5 * sdc
+        # Stage M (third signal): logprob_confidence — percentile rank of
+        # this procedure's mean_logprob against the rolling distribution.
+        # Same [0.5, 1.0] multiplier band as state-delta — both signals
+        # are ablatable by hardcoding to 1.0 / setting mean_logprob=None
+        # everywhere.
+        lpc = self._logprob_confidence(entry)
+        eu *= 0.5 + 0.5 * lpc
         return max(0.0, eu)
 
     # Stage M (b): on an unvisited map, raise theta_conf to this floor so
@@ -1381,6 +1427,13 @@ class EnhancedMACLAAgent:
                 # in so the cache can filter retrieval by current map.
                 captured_map = self.bayesian_selector._extract_map_name(obs)
 
+                # Stage M (third signal): stamp mean_logprob from the most
+                # recent LLM call. Cleared after use so the next procedure
+                # doesn't inherit a stale value. ``None`` is fine — the
+                # selector's _logprob_confidence falls back to neutral 0.5.
+                pending_lp = self.memory_system._pending_logprob
+                self.memory_system._pending_logprob = None
+
                 new_proc = Procedure(
                     goal=goal,
                     preconditions=preconditions,
@@ -1391,6 +1444,7 @@ class EnhancedMACLAAgent:
                     execution_count=1,  # Mark as executed once
                     alpha=2,  # 1 prior + 1 success
                     map_name=captured_map,
+                    mean_logprob=pending_lp,
                 )
 
                 pk = self.memory_system.add_procedural_entry(
