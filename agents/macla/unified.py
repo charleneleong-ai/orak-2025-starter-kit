@@ -25,6 +25,7 @@ from agents._harness import format_recent_history, with_retries
 from agents.base import BaseOrakAgent
 from agents.macla.base import BaseMaclaAgent
 from agents.macla.context_extractors import build_context_extractor
+from agents.macla.macla_lib import _extract_map_name
 from agents.macla.structured_output import safe_structured_invoke
 
 # ── Game adapter registry ────────────────────────────────────────────
@@ -489,6 +490,19 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                         f"### Recalled prior memories\n{recalled}\n\n"
                         f"### Recent steps (this episode)\n{history_str}"
                     )
+                # Stage N: novelty hint for the planner. The selector-side
+                # theta-bump (Stage M b) fired 0 times in the n=5 sweep because
+                # the cache was OaksLab-only and select_procedure early-returned
+                # on no candidates. Moved here so the hint reaches the LLM
+                # regardless of cache state; marked visited only after the
+                # planner has been told, so each new map fires the hint once.
+                mem = self._macla_agent.memory_system
+                current_map = _extract_map_name(observation)
+                novelty_hint = mem.map_visit_status(current_map)
+                if novelty_hint:
+                    history_str = f"### Novelty\n{novelty_hint}\n\n{history_str}"
+                    mem.record_map_visit(current_map)
+                    logger.info(f"[MACLA] novelty hint fired for map={current_map}")
                 subtask = self._subtask_planner.plan(
                     goal=goal,
                     observation=observation,

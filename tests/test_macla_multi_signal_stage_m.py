@@ -134,7 +134,12 @@ def test_contrastive_context_has_state_delta_observed_default_none():
 
 
 def test_state_delta_confidence_neutral_when_no_contexts():
-    """No data → 0.5 (neutral)."""
+    """No data → 1.0 (neutral, no damping).
+
+    Stage N changed bootstrap from 0.5 → 1.0. Under the old 0.5 a brand-new
+    proc was silently damped to 0.5625× EU and could never fire to refine.
+    See tests/test_macla_stage_n_bootstrap_fix.py for the trap and fix.
+    """
     from agents.macla.macla_lib import (
         BayesianProcedureSelector,
         EnhancedHierarchicalMemorySystem,
@@ -144,7 +149,7 @@ def test_state_delta_confidence_neutral_when_no_contexts():
     mem = EnhancedHierarchicalMemorySystem()
     sel = BayesianProcedureSelector(mem)
     entry = ProceduralMemoryEntry(procedure=_mk_procedure())
-    assert sel._state_delta_confidence(entry) == 0.5
+    assert sel._state_delta_confidence(entry) == 1.0
 
 
 def test_state_delta_confidence_high_when_all_contexts_observe_delta():
@@ -196,7 +201,7 @@ def test_state_delta_confidence_ignores_none_contexts():
 
 
 def test_state_delta_confidence_neutral_when_all_none():
-    """All-None contexts (non-structured game) → 0.5 (neutral fallback)."""
+    """All-None contexts (non-structured game) → 1.0 (Stage N neutral)."""
     from agents.macla.macla_lib import (
         BayesianProcedureSelector,
         EnhancedHierarchicalMemorySystem,
@@ -207,7 +212,7 @@ def test_state_delta_confidence_neutral_when_all_none():
     sel = BayesianProcedureSelector(mem)
     entry = ProceduralMemoryEntry(procedure=_mk_procedure())
     entry.success_contexts = [_mk_context(state_delta_observed=None) for _ in range(4)]
-    assert sel._state_delta_confidence(entry) == 0.5
+    assert sel._state_delta_confidence(entry) == 1.0
 
 
 def test_state_delta_confidence_partial():
@@ -286,58 +291,20 @@ def test_is_new_map_false_for_unknown_and_empty():
     assert mem.is_new_map(None) is False
 
 
-# ─── select_procedure: novelty bonus suppresses cached procs on new maps ──
-
-
-def test_select_procedure_raises_theta_on_new_map():
-    """On an unvisited map, cached procedures with marginal EU should be
-    rejected so the LLM explores. A high-EU candidate that would pass the
-    default theta should be filtered out by the bumped theta on a new map.
-    """
-    from agents.macla.macla_lib import (
-        BayesianProcedureSelector,
-        EnhancedHierarchicalMemorySystem,
-        Procedure,
-    )
-
-    mem = EnhancedHierarchicalMemorySystem()
-    # Seed a high-prior procedure that would normally fire
-    proc = Procedure(goal="g", preconditions=[], steps=["s"], alpha=10, beta=1, map_name="unknown")
-    pk = mem.add_procedural_entry(proc, contexts={"general"}, goals={"g"}, performance=0.9)
-    entry = mem.procedural_memory[pk]
-    entry.contexts = {"general"}
-    entry.goals = {"g"}
-
-    sel = BayesianProcedureSelector(mem)
-    obs_known_map = "Map Name: Route1\nScore: 0\n"
-    obs_new_map = "Map Name: Viridian\nScore: 0\n"
-
-    mem.record_map_visit("Route1")  # mark Route1 as visited
-
-    # On a known map: procedure may fire (we just need it to not be blocked
-    # by the novelty path — the actual selection depends on EU which we
-    # don't assert here; just check that the new-map branch is the one
-    # bumping theta).
-    sel.select_procedure(obs_known_map, goal="g", theta_conf=0.25)
-
-    # On the NEW map, raising effective theta to >= 0.6 should reject
-    # the marginal procedure even though its EU passed the default 0.25.
-    selected_new, conf_new = sel.select_procedure(obs_new_map, goal="g", theta_conf=0.25)
-    assert selected_new is None, (
-        f"Stage M (b) failed: cached procedure fired on new map ({selected_new=}, "
-        f"{conf_new=}). On unvisited maps theta should rise to >= 0.6 to bias "
-        f"the agent toward LLM-driven exploration."
-    )
-
-
-def test_select_procedure_records_visit():
-    """After select_procedure runs, the current map should be in visited_maps."""
-    from agents.macla.macla_lib import BayesianProcedureSelector, EnhancedHierarchicalMemorySystem
-
-    mem = EnhancedHierarchicalMemorySystem()
-    sel = BayesianProcedureSelector(mem)
-    sel.select_procedure("Map Name: PalletTown\nScore: 0\n", goal="g")
-    assert "PalletTown" in mem.visited_maps
+# ─── select_procedure novelty contract — moved to planner in Stage N ──────
+#
+# Stage M (b) had ``select_procedure`` raise theta to 0.6 on a new map AND
+# unconditionally call ``record_map_visit``. The Stage M n=5 trajectory
+# introspection showed this fired 0 times across 420 selector events — the
+# cache was OaksLab-only and ``select_procedure`` early-returned on no
+# candidates before the new-map branch was reached. The novelty bonus is
+# now a planner-side hint; the selector no longer reads visited_maps.
+#
+# Coverage for the new contract lives in tests/test_macla_stage_n_bootstrap_fix.py:
+#   - test_select_procedure_does_not_record_visit
+#   - test_select_procedure_no_new_map_theta_bump
+#   - test_map_visit_status_returns_hint_for_unvisited / _none_for_visited /
+#     _none_for_unknown_empty
 
 
 def test_visited_maps_survive_pickle_roundtrip():

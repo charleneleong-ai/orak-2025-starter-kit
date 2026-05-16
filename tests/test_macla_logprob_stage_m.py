@@ -115,12 +115,15 @@ def test_logprob_confidence_neutral_when_entry_logprob_none():
     for lp in range(20):
         mem._recent_logprobs.append(-float(lp))
     entry = ProceduralMemoryEntry(procedure=_mk_procedure(mean_logprob=None))
-    assert sel._logprob_confidence(entry) == 0.5
+    # Stage N: bootstrap returns 1.0 (neutral, no damping). See
+    # tests/test_macla_stage_n_bootstrap_fix.py for the rationale.
+    assert sel._logprob_confidence(entry) == 1.0
 
 
 def test_logprob_confidence_neutral_when_fewer_than_10_samples():
-    """Bootstrap: with < 10 calibration samples, the percentile rank isn't
-    meaningful so we return neutral 0.5."""
+    """Stage N bootstrap-neutral: with < 10 calibration samples the
+    distribution isn't ranked yet — return 1.0 (no damping) so the new
+    proc can fire while it earns its sample."""
     from agents.macla.macla_lib import (
         BayesianProcedureSelector,
         EnhancedHierarchicalMemorySystem,
@@ -132,7 +135,7 @@ def test_logprob_confidence_neutral_when_fewer_than_10_samples():
     for lp in range(5):
         mem._recent_logprobs.append(-float(lp))
     entry = ProceduralMemoryEntry(procedure=_mk_procedure(mean_logprob=-1.0))
-    assert sel._logprob_confidence(entry) == 0.5
+    assert sel._logprob_confidence(entry) == 1.0
 
 
 def test_logprob_confidence_high_when_entry_logprob_above_distribution():
