@@ -1,6 +1,8 @@
 # Stage J — Qwen 3 Thinking-Mode (Extended Reasoning at Decision Time)
 
-**Status:** scaffolded, queued after Stage H iter 3  •  **Branch:** `feat/stage-k-qwen-thinking`  •  **Sequenced before:** Stage K
+**Verdict:** REGRESS — thinking-mode delivered `[28.57, 28.57, 28.57]` × n=3, σ=0 (mean 28.57%) vs Stage H's 57.14% non-thinking baseline. **Δ = −28.57pp** — a full milestone behind. The "more reasoning budget" hypothesis is falsified: extended-reasoning at decision time *halved* the score relative to the cheaper non-thinking model on the same active-param budget.
+
+**Closed:** 2026-05-14  •  **Branch:** `feat/qwen-thinking` (PR #76)  •  **Superseded by:** Stages K → L → M (cumulative-memory + procedure-cache axis)
 
 ## Hypothesis
 
@@ -26,9 +28,66 @@ Stage J tests one specific intervention: **explicit thinking-mode reasoning budg
 | Tool-call parser | `hermes` | `hermes` |
 | Reasoning parser | none | `qwen3` (strips `<think>` blocks) |
 | Agent stack | Stage D (vmem + planner + procedures + self-reflection) | identical |
-| Pokemon n=3 result | 57.14% × n=3, σ=0 | _pending_ |
+| Pokemon n=3 result | 57.14% × n=3, σ=0 | **28.57% × n=3, σ=0** (−28.57pp) |
 
 Same active-param count (3B) controls compute; ~30/35B total params controls total knowledge; same Int4 quant family; same MACLA stack. **The thinking-mode toggle is the only meaningful variable.**
+
+## Results
+
+```
+scores=[28.57, 28.57, 28.57]
+mean=28.57% std=0.00pp
+delta_vs_stage_h = -28.57pp
+verdict = REGRESS
+```
+
+Raw row: `experiments/stage_j_qwen_thinking/qwen3_thinking/results.jsonl`.
+
+| iter | score | Δ vs Stage H |
+|---:|---:|---:|
+| 1 | 28.57% | −28.57pp |
+| 2 | 28.57% | −28.57pp |
+| 3 | 28.57% | −28.57pp |
+
+Zero variance across iters — a structural floor, not noise.
+
+## Interpretation
+
+Pre-launch decision criteria from this PR predicted three outcomes; Stage J landed on the **third**:
+
+| Stage J mean | Reading (pre-launch) | Hit? |
+|---|---|---|
+| ≥ 71.43% | Thinking budget breaks the ceiling. | no |
+| ~ 57.14% (within σ ≤ 7pp) | Same plateau — thinking doesn't lift. | no |
+| ≤ 42% | Thinking interferes with tool emission OR 30B/3B is meaningfully weaker than 35B/3B. | **yes (28.57%)** |
+
+Two plausible causes (not separated by this experiment, both consistent with the data):
+
+1. **Thinking overrun** — Qwen3-Thinking sometimes overthinks and never closes the `<think>` block before `max_tokens=8192`. The agent harness then sees an empty / truncated tool-call and falls back to the default action. Across n=3 every iter ended at the same 28.57% milestone (M2), consistent with a per-iter rate of tool-call corruption pushing the agent to a lower floor.
+2. **30B/3B < 35B/3B at this task** — same active params but smaller total knowledge. The Stage H 35B/3B got to 4/7 milestones; the 30B/3B never crossed M3 in any of the n=3 iters.
+
+Either way, the headline result is decisive: **extended-reasoning at decision time, under this scaffold, is a net negative.** Pokemon's 57.14% ceiling is not gated on reasoning depth at the action boundary.
+
+## What this rules out (and what it doesn't)
+
+**Rules out:** "give the LLM more thinking budget per decision" as a meaningful intervention against the M4 ceiling. This was the core Stage J bet; it's falsified for this model family and scaffold.
+
+**Does not rule out:**
+- A *different* thinking-mode model (e.g. larger total params, or a Gemma-Thinking if one existed)
+- Thinking-mode applied *selectively* (e.g. only on detected stuck-state), rather than always-on per-decision
+- Thinking integrated *into the planner* rather than per-action (Stage M's planner-side novelty hint is a related architectural decision)
+
+## What landed instead
+
+Per the original out-of-scope note ("If Stage J doesn't lift, Stage K becomes the standalone test of a different lever"), the subsequent stages have all targeted the **procedure-cache axis**, not the reasoning-budget axis:
+
+| Stage | Mean | Lever |
+|---|---:|---|
+| Stage J (this PR) | 28.57% | thinking-mode at action time (REGRESS) |
+| Stage K (PR #75, post-fix) | ~57.14% | cumulative cross-episode memory (FLAT) |
+| Stage L (PR #85) | 51.43% | map-aware procedure keys + iter-TTL (NEUTRAL+) |
+| Stage M (PR #86) | 51.43% | multi-signal procedure quality (FLAT — selector tuning a 4-proc cache) |
+| Stage N + O (PR #87) | TBD | bootstrap-neutral signals + broadened acquisition (pending n=5) |
 
 ## Mechanism — how thinking-mode integrates
 
