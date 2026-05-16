@@ -1378,11 +1378,18 @@ class EnhancedMACLAAgent:
             update_info["procedure_key"] = pk
             if actual_success:
                 self.stats["successful_executions"] += 1
-        elif actual_success:
-            ## Fallback was used successfully; learn new procedure
+        else:
+            ## Fallback was used; learn a new procedure if the step
+            ## actually produced something — either a scored success OR
+            ## a salient state move (Stage O: broadens acquisition beyond
+            ## the rare score-increase signal so the cache can grow past
+            ## the ~4-proc plateau observed in Stages K/L/M).
+            obs = execution_result.get("observation", "")
+            should_learn = actual_success or _state_delta_observed(obs, next_observation)
+            if not should_learn:
+                return update_info
             action_seq = execution_result.get("action_sequence", [])
             goal = execution_result.get("goal", "")
-            obs = execution_result.get("observation", "")
 
             if action_seq and goal and obs:
                 # Basic context extraction
