@@ -131,6 +131,13 @@ class BaseMaclaAgent(BaseModel):
             base_url=self.config.base_url,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
+            # Stage M (third signal): request per-token logprobs from vLLM
+            # so safe_structured_invoke can extract a mean_logprob and feed
+            # the rolling distribution used by procedure-quality calibration.
+            # If the server silently drops the kwarg, _extract_mean_logprob
+            # returns None and logprob_confidence bootstraps to neutral 0.5.
+            logprobs=True,
+            top_logprobs=1,
         )
         if extra_body:
             llm_kwargs["extra_body"] = extra_body

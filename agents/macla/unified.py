@@ -542,6 +542,15 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             # Stash usage so BaseMaclaAgent.get_action can pull it off and
             # surface tokens_prompt/completion/total into log_extras.
             self._last_llm_usage = usage
+            # Stage M (third signal): hand off the per-call mean_logprob to
+            # the macla memory system. Append to the rolling deque used by
+            # the selector's percentile-rank calibration, and stash as
+            # _pending_logprob so provide_feedback can stamp it on any
+            # newly-learned Procedure. Cleared automatically next step.
+            if usage and usage.get("mean_logprob") is not None:
+                mem = self._macla_agent.memory_system
+                mem._recent_logprobs.append(usage["mean_logprob"])
+                mem._pending_logprob = usage["mean_logprob"]
             return [action], reasoning
         except Exception as e:
             logger.error(f"Unified fallback failed after retries: {e}")
