@@ -59,15 +59,32 @@ def main(
     ax.bar(xs, means, yerr=stds, capsize=4, color=colors, edgecolor="white", linewidth=1.2)
 
     for x, m, s, v, n in zip(xs, means, stds, verdicts, ns):
-        ax.text(x, m + (s if s else 0) + 1.8, f"{m:.2f}%", ha="center", fontsize=10, fontweight="bold")
+        ax.text(
+            x, m + (s if s else 0) + 1.8, f"{m:.2f}%", ha="center", fontsize=10, fontweight="bold"
+        )
         n_label = f"  n={n}" if n else ""
-        ax.text(x, m / 2, f"{v}{n_label}", ha="center", va="center", fontsize=9,
-                color="white", fontweight="bold", rotation=90)
+        ax.text(
+            x,
+            m / 2,
+            f"{v}{n_label}",
+            ha="center",
+            va="center",
+            fontsize=9,
+            color="white",
+            fontweight="bold",
+            rotation=90,
+        )
 
     for t in thresholds:
         ax.axhline(t["value"], linestyle="--", color=t["color"], linewidth=1.0, alpha=0.7)
-        ax.text(-0.45, t["value"] + 0.6, f'{t["label"]} ({t["value"]:.2f}%)',
-                ha="left", fontsize=8, color=t["color"])
+        ax.text(
+            -0.45,
+            t["value"] + 0.6,
+            f"{t['label']} ({t['value']:.2f}%)",
+            ha="left",
+            fontsize=8,
+            color=t["color"],
+        )
 
     ax.set_ylim(0, max(78, max(means) + max(stds) + 10))
     ax.set_xlim(-0.6, len(labels) - 0.4)
@@ -79,19 +96,31 @@ def main(
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    legend_labels = sorted({v for v in verdicts},
-                           key=lambda v: ["BASELINE", "FLAT", "NEUTRAL+", "LIFT", "REGRESS"].index(v))
+    legend_labels = sorted(
+        {v for v in verdicts},
+        key=lambda v: ["BASELINE", "FLAT", "NEUTRAL+", "LIFT", "REGRESS"].index(v),
+    )
     ax.legend(
         [plt.Rectangle((0, 0), 1, 1, color=VERDICT_COLOR[v]) for v in legend_labels],
-        legend_labels, loc="upper right", fontsize=9, framealpha=0.95, ncol=len(legend_labels),
+        legend_labels,
+        loc="upper right",
+        fontsize=9,
+        framealpha=0.95,
+        ncol=len(legend_labels),
         bbox_to_anchor=(1.0, 1.0),
     )
 
-    footer = "\n".join(
-        f"  {lab:<22s} {desc}" for lab, desc in zip(labels, descriptions)
+    footer = "\n".join(f"  {lab:<22s} {desc}" for lab, desc in zip(labels, descriptions))
+    fig.text(
+        0.06,
+        -0.02,
+        "Levers tested:\n" + footer,
+        ha="left",
+        va="top",
+        fontsize=8,
+        color="#444",
+        family="monospace",
     )
-    fig.text(0.06, -0.02, "Levers tested:\n" + footer, ha="left", va="top",
-             fontsize=8, color="#444", family="monospace")
 
     fig.tight_layout(rect=[0, 0.18, 1, 1])
     out.parent.mkdir(parents=True, exist_ok=True)
