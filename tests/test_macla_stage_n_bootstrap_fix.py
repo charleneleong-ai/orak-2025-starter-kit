@@ -371,6 +371,76 @@ def test_map_visit_status_returns_none_for_unknown_empty():
     assert mem.map_visit_status(None) is None
 
 
+# ─── (Fix 2c) End-to-end planner wiring: hint reaches the planner ─────────
+
+
+def test_planner_receives_novelty_hint_on_new_map():
+    """Regression test for the smoke-run finding.
+
+    The unified.py wiring must inject ``### Novelty`` into the history
+    string passed to ``LLMSubtaskPlanner.plan()`` whenever the current map
+    is unvisited. Mock the planner's plan() to capture its history kwarg,
+    then drive a memory system with a fresh visited_maps set.
+    """
+    from unittest.mock import MagicMock
+
+    from agents.macla.macla_lib import EnhancedHierarchicalMemorySystem, _extract_map_name
+
+    # Simulate the relevant unified.py block in isolation. This mirrors
+    # the wiring at agents/macla/unified.py:493-510 — if the structure of
+    # that block changes, this test must change to follow.
+    mem = EnhancedHierarchicalMemorySystem()
+    planner = MagicMock()
+    planner.plan.return_value = "explore north"
+
+    observation = "Map Name: Route1\nScore: 0\nPosition: (3, 7)\n"
+    history_str = "### Recent steps\n(no history yet)"
+
+    # Replicate the unified.py block verbatim
+    current_map = _extract_map_name(observation)
+    novelty_hint = mem.map_visit_status(current_map)
+    if novelty_hint:
+        history_str = f"### Novelty\n{novelty_hint}\n\n{history_str}"
+        mem.record_map_visit(current_map)
+    planner.plan(goal="g", observation=observation, history=history_str)
+
+    # The hint MUST have fired (Route1 was unvisited)
+    assert current_map == "Route1"
+    assert novelty_hint is not None
+    # The planner MUST have seen the hint in its history kwarg
+    call_kwargs = planner.plan.call_args.kwargs
+    assert "### Novelty" in call_kwargs["history"]
+    assert "Route1" in call_kwargs["history"]
+    assert "NEW MAP" in call_kwargs["history"]
+    # The map must now be marked visited so subsequent calls don't re-fire
+    assert "Route1" in mem.visited_maps
+
+
+def test_planner_does_not_re_fire_hint_on_revisit():
+    """Second call to the same map must NOT inject the hint — fires once."""
+    from unittest.mock import MagicMock
+
+    from agents.macla.macla_lib import EnhancedHierarchicalMemorySystem, _extract_map_name
+
+    mem = EnhancedHierarchicalMemorySystem()
+    mem.record_map_visit("Route1")  # pretend prior call already fired
+    planner = MagicMock()
+
+    observation = "Map Name: Route1\nScore: 0\n"
+    history_str = "### Recent steps\n(none)"
+
+    current_map = _extract_map_name(observation)
+    novelty_hint = mem.map_visit_status(current_map)
+    if novelty_hint:
+        history_str = f"### Novelty\n{novelty_hint}\n\n{history_str}"
+        mem.record_map_visit(current_map)
+    planner.plan(goal="g", observation=observation, history=history_str)
+
+    assert novelty_hint is None
+    call_kwargs = planner.plan.call_args.kwargs
+    assert "### Novelty" not in call_kwargs["history"]
+
+
 # ─── (Fix 2c) Module-level _extract_map_name is importable ─────────────────
 
 

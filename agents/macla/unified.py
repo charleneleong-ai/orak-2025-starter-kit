@@ -502,6 +502,7 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                 if novelty_hint:
                     history_str = f"### Novelty\n{novelty_hint}\n\n{history_str}"
                     mem.record_map_visit(current_map)
+                    logger.info(f"[MACLA] novelty hint fired for map={current_map}")
                 subtask = self._subtask_planner.plan(
                     goal=goal,
                     observation=observation,
