@@ -1,0 +1,66 @@
+# Pokemon Red — cross-stage progression milestones.
+#
+# Hand-authored from per-stage verdict docs (n=3/n=5 results.jsonl).
+# Consumed by `experiments/plot_pokemon_progression.py` to render
+# experiments/progress/pokemon_stage_progression.png.
+#
+# Refresh after each stage verdict — edit this file in place, then run:
+#   uv run python experiments/plot_pokemon_progression.py
+#
+# Score-axis bars to keep in mind:
+#   - M4 ceiling = 57.14% (every selector / scaffold intervention since
+#     Stage D has converged here on pokemon_red; gate is the Charmander
+#     nickname dialog / OaksLab → Route 1 transition).
+#   - M5 ceiling = 71.43% (no stage has crossed; gate is Oak's Parcel
+#     delivery at the Route 1 / Viridian boundary + wild-encounter
+#     gauntlet).
+
+title: "Pokemon Red — Stages D → N+O progression"
+primary_metric: evaluation_score
+thresholds:
+  - { value: 57.14, label: "M4 ceiling", color: "tab:green" }
+  - { value: 71.43, label: "M5 ceiling", color: "tab:gray" }
+
+milestones:
+  - label: "Stage D (post-asm)"
+    description: "vmem + planner + procs"
+    verdict: BASELINE
+    n: 3
+    metrics:
+      evaluation_score: { mean: 57.14, std: 0.0 }
+  - label: "Stage H (post-asm)"
+    description: "qwen35-A3B-Int4 (no thinking)"
+    verdict: BASELINE
+    n: 3
+    metrics:
+      evaluation_score: { mean: 57.14, std: 0.0 }
+  - label: "Stage J"
+    description: "qwen30-A3B-Thinking"
+    verdict: REGRESS
+    n: 3
+    metrics:
+      evaluation_score: { mean: 28.57, std: 0.0 }
+  - label: "Stage K (post-asm)"
+    description: "cumulative cross-ep memory"
+    verdict: FLAT
+    n: 5
+    metrics:
+      evaluation_score: { mean: 57.14, std: 0.0 }
+  - label: "Stage L"
+    description: "iter-TTL + map-aware proc keys"
+    verdict: NEUTRAL+
+    n: 5
+    metrics:
+      evaluation_score: { mean: 51.43, std: 12.78 }
+  - label: "Stage M"
+    description: "sdc × novelty × lpc signals"
+    verdict: FLAT
+    n: 5
+    metrics:
+      evaluation_score: { mean: 51.43, std: 12.78 }
+  - label: "Stage N+O"
+    description: "bootstrap-neutral + state-delta acquisition"
+    verdict: NEUTRAL+
+    n: 5
+    metrics:
+      evaluation_score: { mean: 51.43, std: 12.78 }
