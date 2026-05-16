@@ -503,6 +503,14 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                     history_str = f"### Novelty\n{novelty_hint}\n\n{history_str}"
                     mem.record_map_visit(current_map)
                     logger.info(f"[MACLA] novelty hint fired for map={current_map}")
+                # Stage P: every-step map-graph hint prepended to observation.
+                # 2026-05-15 diagnosis named this as the cheapest M5-gate
+                # intervention — keep the unvisited-neighbour list (eg
+                # "Route1 -> ViridianCity") in front of the planner each
+                # frame so it doesn't lose track of the unexplored exit.
+                graph_hint = mem.map_graph_hint(current_map)
+                if graph_hint:
+                    observation = f"{graph_hint}\n\n{observation}"
                 subtask = self._subtask_planner.plan(
                     goal=goal,
                     observation=observation,
