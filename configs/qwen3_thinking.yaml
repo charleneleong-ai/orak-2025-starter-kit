@@ -1,0 +1,42 @@
+# @package _global_
+#
+# Qwen 3-30B-A3B-Thinking-2507-AWQ-4bit — Stage J thinking-mode test.
+#
+# Hypothesis: Stages A→H all converge at 57.14% (4/7 milestones) on pokemon.
+# Trajectory introspection shows the agent diagnoses stuck-state correctly
+# (self-reflection: "stuck in movement loop, no score gain") but the action
+# layer doesn't change strategy. One general lever the existing scaffold
+# doesn't have: explicit reasoning budget BEFORE action emission.
+#
+# Stage J tests this by swapping to Qwen3-30B-A3B-Thinking-2507 (an always-
+# thinking variant). The model emits <think>...</think> CoT before every
+# response; vLLM's --reasoning-parser qwen3 strips it server-side. The agent
+# harness sees only the final action — but the LLM has used a meaningful
+# extended-reasoning budget to get there.
+#
+# Compares directly to Stage H (Qwen 3.5 35B-A3B-Int4, NO thinking-mode,
+# scored 57.14% × n=3 with σ=0). Stage J isolates the thinking-mode
+# variable on the same model family.
+#
+# Usage:
+#   ./serving/qwen_serve.sh cyankiwi/Qwen3-30B-A3B-Thinking-2507-AWQ-4bit
+#   python run.py -c qwen3_thinking --local --games pokemon_red
+
+ENV: ${oc.env:ENV, "dev"}
+CWD: ${hydra:runtime.cwd}
+LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
+
+defaults:
+  - twenty_fourty_eight: base
+  - super_mario: base
+  - pokemon_red: base
+  # mario/2048 routed to gemma_26b only to satisfy Hydra+pydantic config
+  # validation (the runner is invoked with --games pokemon_red).
+  - override twenty_fourty_eight/agent: gemma_26b
+  - override super_mario/agent: gemma_26b
+  - override pokemon_red/agent: qwen3_thinking
+  - _self_
+
+pokemon_red:
+  wandb:
+    tags: ["qwen", "qwen3-thinking-30b-a3b", "pokemon_red", "stage_j_thinking_mode", "stage_d_planner"]
