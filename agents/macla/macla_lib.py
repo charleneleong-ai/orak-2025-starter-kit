@@ -58,6 +58,19 @@ def _extract_salient_state(observation: str | None) -> tuple[str, ...]:
     return tuple(found)
 
 
+# Stage L parses "Map Name: <Name>" from the structured [Map Info] block.
+# Stage N: hoisted to module level so the planner site (agents/macla/unified.py)
+# can resolve the current map without coupling through BayesianProcedureSelector.
+_MAP_NAME_RE = re.compile(r"Map Name:\s*([^\s,\n]+)", re.IGNORECASE)
+
+
+def _extract_map_name(observation: str | None) -> str:
+    if not observation:
+        return "unknown"
+    m = _MAP_NAME_RE.search(observation)
+    return m.group(1).strip() if m else "unknown"
+
+
 def _state_delta_observed(
     observation_init: str | None, observation_term: str | None
 ) -> bool | None:
@@ -238,6 +251,28 @@ class EnhancedHierarchicalMemorySystem:
             return False
         return map_name not in self.visited_maps
 
+    def map_visit_status(self, map_name: str | None) -> str | None:
+        """Stage N: planner-side novelty hint.
+
+        Returns a natural-language string when the current map is genuinely
+        novel and worth exploring; returns None otherwise (unknown,
+        already-visited, or absence-of-info).
+
+        The hint is consumed by ``agents/macla/unified.py`` and prepended to
+        the LLM subtask planner's history block. Visit-marking still moves
+        through ``record_map_visit`` at the planner site so the hint fires
+        exactly once per new map across the cumulative-memory chain.
+        """
+        if not map_name or map_name == "unknown":
+            return None
+        if map_name in self.visited_maps:
+            return None
+        return (
+            f"NEW MAP — you have never visited {map_name} before. "
+            f"Bias toward exploring unrevealed tiles and warps; do not "
+            f"assume any cached pattern applies here."
+        )
+
     def bump_iter(self) -> int:
         """Increment the iter counter — call when a checkpoint is loaded
         (i.e. each new iter under --load-checkpoint --prev-run-id)."""
@@ -415,17 +450,8 @@ class BayesianProcedureSelector:
         # entirely. EnhancedMACLAAgent flips this from the agent config.
         self.use_procedure_layer = True
 
-    # Stage L: parse the current map name out of the structured observation
-    # text. Pokemon observations carry "Map Name: <Name>, (x_max,..." in the
-    # [Map Info] block. Falls back to "unknown" when the pattern is absent
-    # (e.g. battle screens, dialog screens, non-pokemon games).
-    _MAP_NAME_RE = re.compile(r"Map Name:\s*([^\s,\n]+)", re.IGNORECASE)
-
     def _extract_map_name(self, observation: str) -> str:
-        if not observation:
-            return "unknown"
-        m = self._MAP_NAME_RE.search(observation)
-        return m.group(1).strip() if m else "unknown"
+        return _extract_map_name(observation)
 
     def build_ontology(self, trajectories: list[dict], k_top: int = 100):
         """Build ontology from trajectories to enable semantic retrieval."""
@@ -717,45 +743,56 @@ class BayesianProcedureSelector:
         except Exception:
             return 0.0
 
-    def _state_delta_confidence(self, entry: ProceduralMemoryEntry) -> float:
-        """Stage M: fraction of this entry's success_contexts where the
-        executing step actually moved the salient game state forward.
+    # Stage N: minimum observations before state-delta is calibrated.
+    # Below this, return neutral 1.0 (no damping) so brand-new procedures
+    # are not silenced before they fire and accumulate evidence.
+    _SDC_BOOTSTRAP_N = 3
 
-        Bootstraps to 0.5 (neutral) when there are no success_contexts or
-        when all contexts have ``state_delta_observed=None`` (typical for
-        non-pokemon games whose observations lack structured key:value lines).
+    def _state_delta_confidence(self, entry: ProceduralMemoryEntry) -> float:
+        """Stage M signal, Stage N calibration: fraction of this entry's
+        success_contexts where the executing step moved the salient game
+        state forward.
+
+        Returns **1.0 (neutral, no damping)** when uncalibrated:
+          - no success_contexts at all
+          - fewer than ``_SDC_BOOTSTRAP_N`` not-None observations
+            (typical for early-life procedures or non-structured-obs games)
+
+        Returns ``count(True) / len(not_none)`` once calibrated.
+
+        Why 1.0 not 0.5: under Stage M, bootstrap=0.5 mapped to a 0.75×
+        multiplier on EU. New procs couldn't fire to refine because they
+        were damped before firing (chicken-and-egg). Bootstrap-neutral
+        breaks that loop — uncalibrated procs see the base EU and can
+        fire to earn their calibrated score.
         """
-        if not entry.success_contexts:
-            return 0.5
         observed = [getattr(c, "state_delta_observed", None) for c in entry.success_contexts]
         not_none = [o for o in observed if o is not None]
-        if not not_none:
-            return 0.5
+        if len(not_none) < self._SDC_BOOTSTRAP_N:
+            return 1.0
         return sum(1 for o in not_none if o) / len(not_none)
 
     # Stage M (third signal): minimum sample count before the rolling
-    # logprob distribution is considered calibrated. Below this, every
-    # entry scores neutral 0.5 — distribution-free bootstrap.
+    # logprob distribution is considered calibrated.
     _LOGPROB_BOOTSTRAP_N = 10
 
     def _logprob_confidence(self, entry: ProceduralMemoryEntry) -> float:
-        """Stage M: percentile rank of this entry's ``procedure.mean_logprob``
-        against the memory system's rolling logprob deque.
+        """Stage M signal, Stage N calibration: percentile rank of this
+        entry's ``procedure.mean_logprob`` against the rolling deque.
 
-        Returns 0.5 (neutral) when:
-          - the entry's mean_logprob is None (pre-Stage-M procedure)
-          - fewer than ``_LOGPROB_BOOTSTRAP_N`` samples in the deque
-            (not enough calibration data to rank meaningfully)
+        Returns **1.0 (neutral, no damping)** when uncalibrated:
+          - entry has no mean_logprob (pre-Stage-M procedure)
+          - rolling deque has fewer than ``_LOGPROB_BOOTSTRAP_N`` samples
 
-        Otherwise returns rank / N ∈ [0, 1]. Cross-model safe (each model's
-        procedures calibrate against that model's own distribution).
+        Same Stage N rationale as ``_state_delta_confidence``: don't damp
+        what you cannot measure.
         """
         mlp = getattr(entry.procedure, "mean_logprob", None)
         if mlp is None:
-            return 0.5
+            return 1.0
         recent = self.memory_system._recent_logprobs
         if len(recent) < self._LOGPROB_BOOTSTRAP_N:
-            return 0.5
+            return 1.0
         rank = sum(1 for lp in recent if lp <= mlp)
         return rank / len(recent)
 
@@ -784,13 +821,6 @@ class BayesianProcedureSelector:
         eu *= 0.5 + 0.5 * lpc
         return max(0.0, eu)
 
-    # Stage M (b): on an unvisited map, raise theta_conf to this floor so
-    # cached procedures rarely fire and the LLM is biased toward exploration.
-    # 0.6 sits well above the typical EU range (~0.05-0.3) observed in
-    # Stage L logs, so virtually all cached procs get rejected on a first
-    # visit to a new map.
-    _NEW_MAP_THETA = 0.6
-
     def select_procedure(
         self, observation: str, goal: str, theta_conf: float = 0.25
     ) -> tuple[str | None, float]:
@@ -800,12 +830,6 @@ class BayesianProcedureSelector:
         # the selector).
         if not self.use_procedure_layer:
             return None, 0.0
-
-        # Stage M (b): record the map and bump theta on first visit.
-        current_map = self._extract_map_name(observation)
-        is_new = self.memory_system.is_new_map(current_map)
-        effective_theta = max(theta_conf, self._NEW_MAP_THETA) if is_new else theta_conf
-        self.memory_system.record_map_visit(current_map)
 
         candidates = self._retrieve_candidates(observation, goal, k=10)
         if not candidates:
@@ -824,11 +848,10 @@ class BayesianProcedureSelector:
         utilities.sort(key=lambda x: x[1], reverse=True)
         best_pk, best_eu = utilities[0]
         logger.debug(
-            f"[Selector] best_eu={best_eu:.3f} theta={effective_theta:.3f} "
-            f"(new_map={is_new}) candidates={len(utilities)} pk={best_pk}"
+            f"[Selector] best_eu={best_eu:.3f} theta={theta_conf:.3f} "
+            f"candidates={len(utilities)} pk={best_pk}"
         )
-        # Strict threshold to prevent executing bad cached procedures
-        if best_eu < effective_theta:
+        if best_eu < theta_conf:
             return None, 0.0
         # Stage L: mark the entry as used in the current iter so it survives
         # the next prune_stale_procedures pass.
