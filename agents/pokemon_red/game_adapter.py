@@ -271,3 +271,9 @@ TRAJECTORY_ACTION_SPEC = ActionSpec(extract_target=_traj_move_target)
 TRAJECTORY_SCORE_EXTRACTOR = _traj_score
 TRAJECTORY_ZONE_EXTRACTOR = _traj_zone
 TRAJECTORY_SCORE_MAX = 7.0
+
+# Stage R: minimum raw score an iter must reach for its procedures to
+# survive the next iter's checkpoint-load prune. M4 (4/7 — Charmander
+# nickname dialog crossed) is the gate that distinguishes a productive
+# iter from a stuck-in-Pallet-Town iter (the Stage Q n=5 failure mode).
+PROC_CACHE_MIN_ITER_SCORE = 4.0
