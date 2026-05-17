@@ -153,8 +153,8 @@ def calculate_metrics(game_info: dict) -> dict:
 RECOMMENDED_USE_SELF_REFLECTION = True
 RECOMMENDED_REFLECTION_EVERY = 10
 
-# ── Trajectory introspection adapter (autoresearch-introspect) ─────────
-# Consumed by `autoresearch-introspect --adapter agents.pokemon_red.game_adapter`.
+# ── Trajectory introspection adapter (introspect) ─────────
+# Consumed by `introspect --adapter agents.pokemon_red.game_adapter`.
 # Mario / 2048 ship their own equivalent blocks when they need introspection.
 
 from autoresearch.trajectory import ActionSpec, DwellSpec, MilestoneSpec  # noqa: E402
