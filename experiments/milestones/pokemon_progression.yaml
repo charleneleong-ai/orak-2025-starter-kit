@@ -65,8 +65,8 @@ milestones:
     metrics:
       evaluation_score: { mean: 51.43, std: 12.78 }
   - label: "Stage P"
-    description: "every-step map-graph hint (n=5 in flight)"
-    verdict: PENDING
-    n: 0
+    description: "every-step map-graph hint"
+    verdict: FLAT
+    n: 5
     metrics:
-      evaluation_score: { mean: 0.0, std: 0.0 }
+      evaluation_score: { mean: 57.14, std: 0.0 }
