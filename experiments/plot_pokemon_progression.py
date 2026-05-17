@@ -29,6 +29,7 @@ VERDICT_COLOR = {
     "NEUTRAL+": "#2ecc71",
     "REGRESS": "#e74c3c",
     "LIFT": "#9b59b6",
+    "PENDING": "#bdc3c7",
 }
 
 
@@ -56,21 +57,46 @@ def main(
 
     fig, ax = plt.subplots(figsize=(13, 7))
     xs = list(range(len(labels)))
-    ax.bar(xs, means, yerr=stds, capsize=4, color=colors, edgecolor="white", linewidth=1.2)
+
+    # PENDING bars render as hatched placeholders at the M5 ceiling so they
+    # read as "sweep in flight, score TBD" rather than "0% measured".
+    pending_h = max((t["value"] for t in thresholds), default=70.0)
+    plot_means = [pending_h if v == "PENDING" else m for v, m in zip(verdicts, means)]
+    plot_stds = [0 if v == "PENDING" else s for v, s in zip(verdicts, stds)]
+    hatches = ["//" if v == "PENDING" else None for v in verdicts]
+    alphas = [0.45 if v == "PENDING" else 1.0 for v in verdicts]
+
+    bars = ax.bar(
+        xs, plot_means, yerr=plot_stds, capsize=4, color=colors, edgecolor="white", linewidth=1.2
+    )
+    for b, h, a in zip(bars, hatches, alphas):
+        if h:
+            b.set_hatch(h)
+        b.set_alpha(a)
 
     for x, m, s, v, n in zip(xs, means, stds, verdicts, ns):
-        ax.text(
-            x, m + (s if s else 0) + 1.8, f"{m:.2f}%", ha="center", fontsize=10, fontweight="bold"
-        )
+        if v == "PENDING":
+            ax.text(
+                x, pending_h + 1.8, "TBD", ha="center", fontsize=10, fontweight="bold", color="#666"
+            )
+        else:
+            ax.text(
+                x,
+                m + (s if s else 0) + 1.8,
+                f"{m:.2f}%",
+                ha="center",
+                fontsize=10,
+                fontweight="bold",
+            )
         n_label = f"  n={n}" if n else ""
         ax.text(
             x,
-            m / 2,
+            (pending_h if v == "PENDING" else m) / 2,
             f"{v}{n_label}",
             ha="center",
             va="center",
             fontsize=9,
-            color="white",
+            color="white" if v != "PENDING" else "#444",
             fontweight="bold",
             rotation=90,
         )
@@ -98,7 +124,7 @@ def main(
 
     legend_labels = sorted(
         {v for v in verdicts},
-        key=lambda v: ["BASELINE", "FLAT", "NEUTRAL+", "LIFT", "REGRESS"].index(v),
+        key=lambda v: ["BASELINE", "FLAT", "NEUTRAL+", "LIFT", "REGRESS", "PENDING"].index(v),
     )
     ax.legend(
         [plt.Rectangle((0, 0), 1, 1, color=VERDICT_COLOR[v]) for v in legend_labels],
