@@ -83,8 +83,15 @@ class TestMilestones:
     def test_milestone_predicates_threshold_correctly(self):
         row3 = _row(score=3)
         fired = {m.name: m.predicate(row3) for m in TRAJECTORY_MILESTONES}
-        assert fired == {"M1": True, "M2": True, "M3": True, "M4": False,
-                         "M5": False, "M6": False, "M7": False}
+        assert fired == {
+            "M1": True,
+            "M2": True,
+            "M3": True,
+            "M4": False,
+            "M5": False,
+            "M6": False,
+            "M7": False,
+        }
 
 
 class TestDwellSpecs:
