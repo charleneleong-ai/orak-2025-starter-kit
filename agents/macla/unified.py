@@ -503,15 +503,21 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                     history_str = f"### Novelty\n{novelty_hint}\n\n{history_str}"
                     mem.record_map_visit(current_map)
                     logger.info(f"[MACLA] novelty hint fired for map={current_map}")
-                # Stage P: every-step map-graph hint prepended to observation.
-                # 2026-05-15 diagnosis named this as the cheapest M5-gate
-                # intervention — keep the unvisited-neighbour list (eg
-                # "Route1 -> ViridianCity") in front of the planner each
-                # frame so it doesn't lose track of the unexplored exit.
-                graph_hint = mem.map_graph_hint(current_map)
+                # Stage P/Q: every-step map-graph + exit-tile hint prepended
+                # to observation. Stage Q (2026-05-17) routes through the
+                # per-game adapter so non-pokemon games can plug in their
+                # own layout hint, and surfaces exit-tile coords (the FLAT
+                # verdict on Stage P showed map-name-only wasn't enough —
+                # the planner needed (x, y) to find the Route1 → Viridian
+                # transition). Falls back to None silently for adapters
+                # without the symbol (mario, 2048).
+                adapter_hint_fn = getattr(self._adapter, "graph_hint", None)
+                graph_hint = (
+                    adapter_hint_fn(current_map, mem.visited_maps) if adapter_hint_fn else None
+                )
                 if graph_hint:
                     observation = f"{graph_hint}\n\n{observation}"
-                    logger.info(f"[MACLA] map_graph_hint fired for map={current_map}")
+                    logger.info(f"[MACLA] graph_hint fired for map={current_map}")
                 subtask = self._subtask_planner.plan(
                     goal=goal,
                     observation=observation,

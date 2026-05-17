@@ -56,26 +56,33 @@ def test_pokemon_adapter_graph_hint_returns_none_for_unknown_map():
     assert pokemon_adapter.graph_hint("unknown", set()) is None
 
 
-# ─── parity with the existing memory_system hint ───────────────────────────
+# ─── Stage P parity check (intentionally relaxed by Stage Q) ───────────────
+#
+# Stage Q (2026-05-17) deliberately diverges from ``mem.map_graph_hint``
+# by appending an ``### Exit tiles`` section + swapping to the auto-
+# extracted MAP_GRAPH (which has 221 maps + 2 typo fixes vs the
+# hand-authored 14). Byte-equality parity is therefore no longer the
+# correct contract — see ``tests/test_macla_stage_q_exit_tiles.py`` for
+# the Stage Q assertions. We keep the Stage P sub-string check here so
+# the legacy hint shape is still surfaced unchanged inside the new
+# adapter output.
 
 
-def test_pokemon_adapter_graph_hint_matches_memory_system():
-    """The adapter must produce the SAME string as the existing
-    memory_system.map_graph_hint method — that's what guarantees the
-    eventual runtime swap is behaviour-preserving."""
+def test_pokemon_adapter_graph_hint_preserves_stage_p_section():
+    """The original ``### Map graph`` section format must remain
+    embedded in the Stage Q adapter output — the new exit-tile section
+    is *additive*, not a rewrite."""
     mem = EnhancedHierarchicalMemorySystem()
     for m in ["RedsHouse2f", "RedsHouse1f", "PalletTown"]:
         mem.record_map_visit(m)
     visited = set(mem.visited_maps)
 
     adapter_hint = pokemon_adapter.graph_hint("PalletTown", visited)
-    mem_hint = mem.map_graph_hint("PalletTown")
-
-    assert adapter_hint == mem_hint, (
-        f"Adapter / memory_system hints diverged — swap would change runtime.\n"
-        f"  adapter: {adapter_hint!r}\n"
-        f"  mem    : {mem_hint!r}"
-    )
+    assert adapter_hint is not None
+    # Stage P section header preserved.
+    assert adapter_hint.startswith("### Map graph")
+    # Visited-maps line still present with same format.
+    assert f"Visited so far ({len(visited)}): " in adapter_hint
 
 
 # ─── other games don't export it (deliberate) ──────────────────────────────
