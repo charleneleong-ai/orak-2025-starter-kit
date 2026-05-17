@@ -159,7 +159,7 @@ RECOMMENDED_REFLECTION_EVERY = 10
 
 from autoresearch.trajectory import ActionSpec, DwellSpec, MilestoneSpec  # noqa: E402
 
-_MOVE_TO_RE = re.compile(r"move_to[^()]*\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)")
+_MOVE_TO_RE = re.compile(r"move_to[^()]*\(\s*x_dest=(-?\d+)\s*,\s*y_dest=(-?\d+)\s*\)")
 
 
 def _traj_score(row: dict) -> float:
