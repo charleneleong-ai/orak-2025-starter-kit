@@ -511,6 +511,7 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                 graph_hint = mem.map_graph_hint(current_map)
                 if graph_hint:
                     observation = f"{graph_hint}\n\n{observation}"
+                    logger.info(f"[MACLA] map_graph_hint fired for map={current_map}")
                 subtask = self._subtask_planner.plan(
                     goal=goal,
                     observation=observation,
