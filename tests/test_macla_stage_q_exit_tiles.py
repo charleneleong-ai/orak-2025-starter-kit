@@ -140,21 +140,17 @@ def test_map_graph_section_format_preserved():
     assert "Visited so far (1): PalletTown" in hint
 
 
-# ─── Auto-extracted MAP_GRAPH fixes the hand-authored typos ────────────────
+# ─── Canonical map names from .asm ─────────────────────────────────────────
 
 
-def test_auto_extracted_graph_fixes_viridian_typos():
-    """Stage P PR #90's auto-extractor test caught two hand-authored
-    typos (ViridianPokeCenter, ViridianHouse) that silently dropped real
-    edges. Stage Q swaps to the auto graph, so the canonical names must
-    now appear."""
-    # On entering Viridian City, the surrounding maps must include the
-    # CORRECT canonical names.
+def test_graph_uses_canonical_map_names_from_asm():
+    """The adapter must use the names that pokered's .asm sources emit
+    (e.g. ``ViridianPokecenter`` with lowercase ``c``, ``ViridianNicknameHouse``
+    full form) so the hint matches what the runtime ``_extract_map_name``
+    parser produces."""
     hint = pokemon_adapter.graph_hint("ViridianCity", {"ViridianCity"})
     assert hint is not None
-    # Game's canonical lowercase 'c' name.
     assert "ViridianPokecenter" in hint
-    # Game's full canonical name.
     assert "ViridianNicknameHouse" in hint
 
 

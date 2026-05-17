@@ -71,43 +71,6 @@ def _extract_map_name(observation: str | None) -> str:
     return m.group(1).strip() if m else "unknown"
 
 
-# Stage P: hand-authored adjacency for pokemon_red early-game maps (M1-M6
-# territory). The 2026-05-15 cross-stage diagnosis traced the 57.14%
-# ceiling to the M5 navigation gate — 0/6 post-asm-fix Stage D+H runs
-# ever entered Viridian City because the agent doesn't know Route1 has a
-# north exit. ``map_graph_hint`` surfaces this directly into every
-# observation the planner sees.
-#
-# Adjacency is bidirectional (the agent can always walk back through a
-# warp/edge in pokemon_red). Edges drawn from pokered/data/maps/*.asm.
-# Extend this dict as later-game stages need it.
-MAP_GRAPH: dict[str, set[str]] = {
-    "RedsHouse2f": {"RedsHouse1f"},
-    "RedsHouse1f": {"RedsHouse2f", "PalletTown"},
-    "BluesHouse": {"PalletTown"},
-    "PalletTown": {"RedsHouse1f", "BluesHouse", "OaksLab", "Route1"},
-    "OaksLab": {"PalletTown"},
-    "Route1": {"PalletTown", "ViridianCity"},
-    "ViridianCity": {
-        "Route1",
-        "ViridianMart",
-        "Route2",
-        "Route22",
-        "ViridianPokeCenter",
-        "ViridianSchoolHouse",
-        "ViridianHouse",
-        "ViridianGym",
-    },
-    "ViridianMart": {"ViridianCity"},
-    "ViridianPokeCenter": {"ViridianCity"},
-    "ViridianSchoolHouse": {"ViridianCity"},
-    "ViridianHouse": {"ViridianCity"},
-    "ViridianGym": {"ViridianCity"},
-    "Route2": {"ViridianCity"},
-    "Route22": {"ViridianCity"},
-}
-
-
 def _state_delta_observed(
     observation_init: str | None, observation_term: str | None
 ) -> bool | None:
@@ -320,39 +283,6 @@ class EnhancedHierarchicalMemorySystem:
             f"Bias toward exploring unrevealed tiles and warps; do not "
             f"assume any cached pattern applies here."
         )
-
-    def map_graph_hint(self, map_name: str | None) -> str | None:
-        """Stage P: every-step navigation hint built from MAP_GRAPH.
-
-        Returns a multi-line natural-language block listing unvisited
-        adjacent maps (the call-out the planner should act on) and the
-        visited-maps memory so far (explicit evidence of what's been
-        explored). Returns None when there's no useful info to add —
-        the map is unknown, outside the hand-authored graph, or every
-        neighbour has already been visited.
-
-        Unlike ``map_visit_status`` (Stage N — one-shot novelty fire on
-        first visit, lives in history block), this hint fires every
-        step and lives in the observation block. The 2026-05-15
-        diagnosis named this as the cheapest intervention to break the
-        M5 ceiling: surface "Route1 → ViridianCity (unvisited)" each
-        frame so the planner doesn't lose track of the unexplored exit.
-        """
-        if not map_name or map_name == "unknown":
-            return None
-        if map_name not in MAP_GRAPH:
-            return None
-        neighbours = MAP_GRAPH[map_name]
-        unvisited = sorted(n for n in neighbours if n not in self.visited_maps)
-        visited_sorted = sorted(self.visited_maps)
-        if not unvisited and not visited_sorted:
-            return None
-        lines = ["### Map graph"]
-        if unvisited:
-            lines.append(f"Unvisited maps reachable from {map_name}: " + ", ".join(unvisited))
-        if visited_sorted:
-            lines.append(f"Visited so far ({len(visited_sorted)}): " + ", ".join(visited_sorted))
-        return "\n".join(lines)
 
     def bump_iter(self) -> int:
         """Increment the iter counter — call when a checkpoint is loaded

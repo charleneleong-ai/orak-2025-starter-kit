@@ -1,9 +1,8 @@
 """Auto-extract MAP_GRAPH + EXIT_TILES from pokered's .asm map metadata.
 
-The hand-authored ``MAP_GRAPH`` in :mod:`agents.macla.macla_lib` only
-covers M1-M6 territory (14 maps out of pokered's 224 headers). This
-module parses the .asm source-of-truth so later-game stages get
-adjacency for free.
+Source-of-truth for the pokemon adapter's ``graph_hint`` (Stage P/Q).
+Covers all 221 pokered headers and 404 exit tiles — the hand-authored
+14-map dict that previously lived in ``macla_lib`` is gone.
 
 Two .asm conventions are consumed:
 
@@ -28,10 +27,6 @@ Header CamelCase: ``RedsHouse1F``. Warp SCREAMING_SNAKE:
 suffix). All references resolve through :func:`snake_to_canonical`
 which targets the game-observation format so the auto graph composes
 cleanly with the runtime ``_extract_map_name`` output.
-
-Not wired into the runtime yet. The current ``MAP_GRAPH`` constant
-stays the source-of-truth until the Stage P n=5 verdict determines
-whether expanding coverage is the right intervention.
 """
 
 from __future__ import annotations
@@ -132,7 +127,7 @@ def parse_warps(object_path: Path) -> list[tuple[int, int, str]]:
 
 
 def build_map_graph(pokered_root: Path) -> dict[str, set[str]]:
-    """Build the full pokemon_red MAP_GRAPH from .asm files.
+    """Build the full pokemon_red map adjacency graph from .asm files.
 
     Edges are bidirectional — for every parsed A→B, the B→A reverse
     is added so the dict is symmetric (matching the hand-authored
