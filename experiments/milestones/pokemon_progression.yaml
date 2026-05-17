@@ -15,7 +15,7 @@
 #     delivery at the Route 1 / Viridian boundary + wild-encounter
 #     gauntlet).
 
-title: "Pokemon Red — Stages D → P progression"
+title: "Pokemon Red — Stages D → Q progression"
 primary_metric: evaluation_score
 thresholds:
   - { value: 57.14, label: "M4 ceiling", color: "tab:green" }
@@ -84,3 +84,9 @@ milestones:
     n: 5
     metrics:
       evaluation_score: { mean: 57.14, std: 0.0 }
+  - label: "Stage Q"
+    description: "exit-tile coords in graph_hint (iter 1 breached M5; iters 3-5 collapsed)"
+    verdict: REGRESS
+    n: 5
+    metrics:
+      evaluation_score: { mean: 42.86, std: 20.20 }
