@@ -1,5 +1,6 @@
 """Game-specific adapter for Pokemon Red — used by UnifiedMaclaAgent."""
 
+import json
 import re
 
 from loguru import logger
@@ -151,3 +152,44 @@ def calculate_metrics(game_info: dict) -> dict:
 # long-horizon dialog-heavy progression.
 RECOMMENDED_USE_SELF_REFLECTION = True
 RECOMMENDED_REFLECTION_EVERY = 10
+
+# ── Trajectory introspection adapter (autoresearch-introspect) ─────────
+# Consumed by `autoresearch-introspect --adapter agents.pokemon_red.game_adapter`.
+# Mario / 2048 ship their own equivalent blocks when they need introspection.
+
+from autoresearch.trajectory import ActionSpec, DwellSpec, MilestoneSpec  # noqa: E402
+
+_MOVE_TO_RE = re.compile(r"move_to[^()]*\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)")
+
+
+def _traj_score(row: dict) -> float:
+    gi = row.get("obs", {}).get("game_info", {})
+    try:
+        return float(int(gi.get("score", 0)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _traj_zone(row: dict) -> str:
+    return row.get("obs", {}).get("game_info", {}).get("map_name", "?") or "?"
+
+
+def _traj_move_target(row: dict) -> tuple[int, int] | None:
+    s = row.get("action", "")
+    if not isinstance(s, str):
+        s = json.dumps(s)
+    m = _MOVE_TO_RE.search(s)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+TRAJECTORY_MILESTONES: list[MilestoneSpec] = [
+    MilestoneSpec(f"M{i}", lambda row, i=i: _traj_score(row) >= i) for i in range(1, 8)
+]
+TRAJECTORY_DWELL_SPECS: list[DwellSpec] = [
+    DwellSpec("Route1", lambda row: _traj_zone(row) == "Route1"),
+    DwellSpec("Viridian", lambda row: "Viridian" in _traj_zone(row)),
+]
+TRAJECTORY_ACTION_SPEC = ActionSpec(extract_target=_traj_move_target)
+TRAJECTORY_SCORE_EXTRACTOR = _traj_score
+TRAJECTORY_ZONE_EXTRACTOR = _traj_zone
+TRAJECTORY_SCORE_MAX = 7.0
