@@ -151,3 +151,38 @@ def calculate_metrics(game_info: dict) -> dict:
 # long-horizon dialog-heavy progression.
 RECOMMENDED_USE_SELF_REFLECTION = True
 RECOMMENDED_REFLECTION_EVERY = 10
+
+
+# ── Map-graph hint (Stage P generalisable adapter surface) ────────────
+# UnifiedMaclaAgent reads this via ``getattr(self._adapter, 'graph_hint',
+# None)``. Games without spatial navigation (2048, currently mario) simply
+# don't export the symbol — getattr returns None and the planner sees no
+# hint. Pokemon delegates to the same MAP_GRAPH the existing hint uses, so
+# the eventual swap of unified.py from ``mem.map_graph_hint(...)`` to
+# ``self._adapter.graph_hint(...)`` is a one-liner that preserves runtime
+# behaviour. Gated on the Stage P n=5 verdict before flipping.
+from agents.macla.macla_lib import MAP_GRAPH  # noqa: E402
+
+
+def graph_hint(current_map: str | None, visited_maps: set[str]) -> str | None:
+    """Render the Stage P map-graph hint for pokemon_red.
+
+    Mirrors ``EnhancedHierarchicalMemorySystem.map_graph_hint`` exactly
+    so the runtime swap (unified.py) is behaviour-preserving — see the
+    parity test in ``tests/test_pokemon_adapter_graph_hint.py``.
+    """
+    if not current_map or current_map == "unknown":
+        return None
+    if current_map not in MAP_GRAPH:
+        return None
+    neighbours = MAP_GRAPH[current_map]
+    unvisited = sorted(n for n in neighbours if n not in visited_maps)
+    visited_sorted = sorted(visited_maps)
+    if not unvisited and not visited_sorted:
+        return None
+    lines = ["### Map graph"]
+    if unvisited:
+        lines.append(f"Unvisited maps reachable from {current_map}: " + ", ".join(unvisited))
+    if visited_sorted:
+        lines.append(f"Visited so far ({len(visited_sorted)}): " + ", ".join(visited_sorted))
+    return "\n".join(lines)
