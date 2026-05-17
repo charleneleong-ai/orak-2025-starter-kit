@@ -193,7 +193,7 @@ class ProceduralMemoryEntry:
     # Stage L: iter at which this entry was last selected. prune_stale_procedures
     # retires entries with `last_used_iter < current_iter - max_age`.
     last_used_iter: int = 0
-    # Stage R: iter at which this entry was added. prune_low_score_iter
+    # Stage Q2: iter at which this entry was added. prune_low_score_iter
     # drops every proc with `origin_iter == prev_iter` when the prev iter
     # scored below the per-game threshold (e.g. M4 = 4/7 for pokemon).
     origin_iter: int = 0
@@ -240,7 +240,7 @@ class EnhancedHierarchicalMemorySystem:
         # the macla_lib procedure-creation site. Set by the agent before
         # provide_feedback; consumed (set back to None) on use.
         self._pending_logprob: float | None = None
-        # Stage R: final score (raw, pre-percentage) of the most-recently-
+        # Stage Q2: final score (raw, pre-percentage) of the most-recently-
         # completed episode in this cumulative-memory chain. Written at
         # episode end; consumed by prune_low_score_iter on the next iter's
         # checkpoint load. ``None`` means "no score recorded yet" — the
@@ -312,7 +312,7 @@ class EnhancedHierarchicalMemorySystem:
         return removed
 
     def prune_low_score_iter(self, score_threshold: float) -> list[str]:
-        """Stage R: drop every proc whose ``origin_iter`` matches the
+        """Stage Q2: drop every proc whose ``origin_iter`` matches the
         most-recently-completed iter when that iter scored below
         ``score_threshold``. Returns the keys removed.
 

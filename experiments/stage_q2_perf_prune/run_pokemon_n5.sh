@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage R — performance-gated proc-cache prune (exit-tile hint + Stage R prune).
+# Stage Q2 — performance-gated proc-cache prune (exit-tile hint + Stage Q2 prune).
 # n=5 cumulative-memory sweep against the Stage Q regression.
 #
 # Baselines (post-asm-fix, 300 steps, n=5 cumulative):
@@ -11,11 +11,11 @@
 #       prior iter's proc cache; bad iters add PalletTown-loiter procs
 #       that survive Stage L's age-based prune and trap late iters.
 #
-# Stage R intervention: on checkpoint load, BEFORE bumping iter, drop
+# Stage Q2 intervention: on checkpoint load, BEFORE bumping iter, drop
 # every proc whose origin_iter == prev_iter if that iter scored below
 # the per-game M4 threshold (4/7 for pokemon).
 #
-# Stage R bars:
+# Stage Q2 bars:
 #   Minimum: sigma(scores) lower than Stage Q's ~21pp variance.
 #   Lift:    >=2 iters past 57.14% OR mean > 57.14%.
 set -uo pipefail
@@ -30,8 +30,8 @@ ENV_CFG="configs/pokemon_red/env/default.yaml"
 AGENT_CFG_NAME="gemma_26b"
 AGENT_CFG="configs/pokemon_red/agent/${AGENT_CFG_NAME}.yaml"
 N=5
-TAG="stage_r_perf_prune"
-RESULTS_DIR="experiments/stage_r_perf_prune"
+TAG="stage_q2_perf_prune"
+RESULTS_DIR="experiments/stage_q2_perf_prune"
 mkdir -p "$RESULTS_DIR"
 
 export GAME_DATA_DIR="/tmp/orak-stage-r"
@@ -61,9 +61,9 @@ grep -q "build_exit_tiles" agents/pokemon_red/game_adapter.py \
     || { echo "FATAL: adapter not using build_exit_tiles"; exit 1; }
 echo "[preflight] Stage Q code present (adapter graph_hint + exit-tile rendering)"
 
-# Pre-flight: Stage R code present
+# Pre-flight: Stage Q2 code present
 grep -q "def prune_low_score_iter" agents/macla/macla_lib.py \
-    || { echo "FATAL: Stage R prune_low_score_iter missing"; exit 1; }
+    || { echo "FATAL: Stage Q2 prune_low_score_iter missing"; exit 1; }
 grep -q "PROC_CACHE_MIN_ITER_SCORE" agents/pokemon_red/game_adapter.py \
     || { echo "FATAL: pokemon adapter PROC_CACHE_MIN_ITER_SCORE missing"; exit 1; }
 grep -q "origin_iter" agents/macla/macla_lib.py \
@@ -72,7 +72,7 @@ grep -q "prune_low_score_iter" agents/macla/base.py \
     || { echo "FATAL: base.py not wired to call prune_low_score_iter on load"; exit 1; }
 grep -q "mem.last_iter_score = float(score)" agents/macla/base.py \
     || { echo "FATAL: base.py not recording per-iter score at episode end"; exit 1; }
-echo "[preflight] Stage R code present (origin_iter tagging + prune_low_score_iter wiring)"
+echo "[preflight] Stage Q2 code present (origin_iter tagging + prune_low_score_iter wiring)"
 
 restore() { sed -i 's/^max_steps: .*/max_steps: 300/' "$ENV_CFG"; }
 trap restore EXIT
@@ -94,7 +94,7 @@ for iter in $(seq 1 $N); do
         -c "$AGENT_CFG_NAME"
         --local --games pokemon_red
         --run-id "$run_id"
-        -d "Stage R perf-prune: iter $iter (inherit from ${prev_run_id:-NONE})"
+        -d "Stage Q2 perf-prune: iter $iter (inherit from ${prev_run_id:-NONE})"
     )
     [[ -n "$prev_run_id" ]] && cmd+=(--load-checkpoint --prev-run-id "$prev_run_id")
 
@@ -157,9 +157,9 @@ row = {
     "scores": scores,
     "steps": 300,
     "status": "KEEP",
-    "description": f"Stage R: exit-tile hint + performance-gated proc-cache prune; {len(scores)}x pokemon cumulative memory",
+    "description": f"Stage Q2: exit-tile hint + performance-gated proc-cache prune; {len(scores)}x pokemon cumulative memory",
     "notes": f"n={len(scores)}: mean={mean:.2f}% std={std:.2f}pp scores=[{fmt}] learning_delta={delta:+.2f}pp",
-    "tags": ["stage_r_perf_prune", "cumulative_memory", "pokemon_red"],
+    "tags": ["stage_q2_perf_prune", "cumulative_memory", "pokemon_red"],
     "timestamp": dt.datetime.now(dt.UTC).isoformat(),
 }
 with out.open("a") as f:

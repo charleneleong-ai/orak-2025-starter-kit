@@ -1,4 +1,4 @@
-"""Stage R: performance-gated proc-cache prune on checkpoint load.
+"""Stage Q2: performance-gated proc-cache prune on checkpoint load.
 
 Tags each procedure with its origin iter; on checkpoint load, drops all
 procedures added during a prior iter that scored below the per-game M4
@@ -10,7 +10,7 @@ escaped, even with the exit-tile hint. Cause: Stage L's age-based prune
 (``prune_stale_procedures``) only retires unused procs — bad iters with
 plenty of selected-but-useless procs survive intact and trap late iters.
 
-Stage R rule: if prev_iter_score < threshold, drop every proc with
+Stage Q2 rule: if prev_iter_score < threshold, drop every proc with
 ``origin_iter == prev_iter``. Keeps only procedures from iters that
 actually made progress.
 """
@@ -40,7 +40,7 @@ def _proc(name: str, steps: tuple = ("up",), map_name: str = "PalletTown") -> Pr
 
 
 def _add_proc_in_iter(mem, name: str, map_name: str = "PalletTown") -> str:
-    """Add a proc and tag it with the current_iter — what Stage R requires."""
+    """Add a proc and tag it with the current_iter — what Stage Q2 requires."""
     return mem.add_procedural_entry(
         procedure=_proc(name, map_name=map_name),
         contexts={f"ctx_{name}"},
@@ -57,7 +57,7 @@ class TestOriginIterTagging:
         key = _add_proc_in_iter(mem, "p1")
         assert mem.procedural_memory[key].origin_iter == 3
 
-    def test_origin_iter_zero_for_pre_stage_r_checkpoints(self):
+    def test_origin_iter_zero_for_pre_stage_q2_checkpoints(self):
         """Procs without explicit origin (legacy load) default to 0."""
         mem = EnhancedHierarchicalMemorySystem()
         # Don't set current_iter — defaults to 0

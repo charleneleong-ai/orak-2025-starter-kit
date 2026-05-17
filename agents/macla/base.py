@@ -520,7 +520,7 @@ class BaseMaclaAgent(BaseModel):
         if self._macla_agent and hasattr(self._macla_agent, "update_episode_score"):
             self._macla_agent.update_episode_score(score)
 
-        # Stage R: stamp the iter's raw final score onto the memory system
+        # Stage Q2: stamp the iter's raw final score onto the memory system
         # so the next iter's checkpoint load can decide whether to prune
         # this iter's procs (see EnhancedHierarchicalMemorySystem.prune_low_score_iter).
         if self._macla_agent and hasattr(self._macla_agent, "memory_system"):
@@ -775,7 +775,7 @@ class BaseMaclaAgent(BaseModel):
             mem = self._macla_agent.memory_system
             if not hasattr(mem, "current_iter"):
                 mem.current_iter = 0
-            # Stage R: BEFORE bumping iter, prune procs from the just-completed
+            # Stage Q2: BEFORE bumping iter, prune procs from the just-completed
             # iter if it scored below the per-game threshold. The adapter
             # exposes the threshold; absence (mario/2048) skips the prune.
             adapter = getattr(self, "_adapter", None)
@@ -784,7 +784,7 @@ class BaseMaclaAgent(BaseModel):
                 pruned_low = mem.prune_low_score_iter(score_threshold=threshold)
                 if pruned_low:
                     logger.info(
-                        f"Stage R: pruned {len(pruned_low)} procs from iter "
+                        f"Stage Q2: pruned {len(pruned_low)} procs from iter "
                         f"{mem.current_iter} (scored {mem.last_iter_score} < {threshold})"
                     )
             if hasattr(mem, "bump_iter"):
