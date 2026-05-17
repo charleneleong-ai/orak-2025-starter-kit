@@ -90,3 +90,6 @@ milestones:
     n: 5
     metrics:
       evaluation_score: { mean: 42.86, std: 20.20 }
+    # Per-iter scores overlay as scatter on the bar — surfaces the iter 1
+    # M5 breach (71.43%) that the mean ± std band hides.
+    scores: [71.43, 57.14, 28.57, 28.57, 28.57]
