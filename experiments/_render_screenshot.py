@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-from autoresearch.render import _kill_tag as _upstream_kill_tag
+from autoresearch.render import _format_kill_label as _upstream_format_kill_label
 from autoresearch.results import KILL_NO_LEARNING, categorize_kill_reason
 
 # ────────────────────────── EDIT FOR YOUR PROJECT ──────────────────────────
@@ -107,13 +107,13 @@ def _kill_tag(kill_reason: str) -> str:
     """Map a long triage reason to a short category for the inline label.
 
     Dispatches orak-specific categories (returned by `_orak_kill_classifier`)
-    locally; delegates everything else to upstream's `_kill_tag`, so new
-    upstream KILL_* categories (e.g. GPU_HANG / GPU_WASTED / GPU_UNDERSIZED
+    locally; delegates everything else to upstream's `_format_kill_label`, so
+    new upstream KILL_* categories (e.g. GPU_HANG / GPU_WASTED / GPU_UNDERSIZED
     / TIMEOUT) get canonical labels for free without per-consumer plumbing.
 
     KILL_NO_LEARNING is kept locally because `_orak_kill_classifier` extends
     upstream's matcher with orak's "no improvement" / "no_learn" wording —
-    delegating to `_upstream_kill_tag` would re-classify without the hook
+    delegating to `_upstream_format_kill_label` would re-classify without the hook
     and miss those phrasings.
     """
     if not (kill_reason or "").strip():
@@ -130,7 +130,7 @@ def _kill_tag(kill_reason: str) -> str:
         return "killed: iter timeout"
     if category == KILL_NO_LEARNING:
         return "killed: no learning"
-    return _upstream_kill_tag(kill_reason)
+    return _upstream_format_kill_label(kill_reason)
 
 
 def _load(path: Path) -> list[dict]:

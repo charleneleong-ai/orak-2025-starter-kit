@@ -22,7 +22,7 @@ Usage:
 
 import json
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 import plotly.graph_objects as go
@@ -650,7 +650,7 @@ def plot_progress(
 app = typer.Typer(help="MACLA Experiment Progress Tracker (autoresearch-style)")
 
 
-class Status(str, Enum):
+class Status(StrEnum):
     KEEP = "KEEP"
     DISCARD = "DISCARD"
     BASELINE = "BASELINE"
