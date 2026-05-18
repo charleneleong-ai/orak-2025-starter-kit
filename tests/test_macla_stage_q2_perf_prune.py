@@ -121,4 +121,5 @@ class TestPruneLowScoreIter:
 def test_pokemon_adapter_exposes_proc_cache_threshold():
     # Per-game threshold lives in the adapter so mario/2048 can set their own.
     from agents.pokemon_red.game_adapter import PROC_CACHE_MIN_ITER_SCORE
+
     assert PROC_CACHE_MIN_ITER_SCORE == 4.0
