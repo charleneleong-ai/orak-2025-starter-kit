@@ -1,9 +1,6 @@
-"""Tests for the auto-extractor that builds MAP_GRAPH + EXIT_TILES from
-the pokered repo's .asm map metadata.
-
-Stage P's hand-authored ``MAP_GRAPH`` only covers M1-M6 territory
-(14 maps). The pokered submodule has 224 map headers — auto-extraction
-gives full-game coverage without hand-authoring.
+"""Tests for the auto-extractor that builds the map adjacency graph
+and exit-tile dict from the pokered repo's .asm map metadata. Sole
+source-of-truth for the pokemon adapter's ``graph_hint`` (Stage P/Q).
 
 The extractor consumes two .asm conventions:
 
@@ -39,7 +36,6 @@ from pathlib import Path
 
 import pytest
 
-from agents.macla.macla_lib import MAP_GRAPH
 from agents.macla.pokered_map_extractor import (
     build_exit_tiles,
     build_map_graph,
@@ -131,44 +127,25 @@ def test_parse_warps_drops_last_map_sentinel():
 # ─── Full graph build ──────────────────────────────────────────────────────
 
 
-def test_build_map_graph_is_superset_of_handauthored():
-    """Regression check: every edge in the hand-authored MAP_GRAPH must
-    be present in the auto-extracted graph (modulo known typos in the
-    hand-authored data).
-
-    Catching these typos is part of the value the auto-extractor adds:
-        * ``ViridianPokeCenter`` — game uses ``ViridianPokecenter``
-          (lowercase 'c'), see ``map_names.json`` id=41.
-        * ``ViridianHouse``     — game uses ``ViridianNicknameHouse``,
-          see ``map_names.json`` id=44.
-
-    Both bad keys mean those nodes never matched a runtime map_name
-    anyway — the hand-authored hint silently dropped them. Fix the
-    hand-authored graph (or swap to the auto graph) to recover.
-
-    This test gates the swap: once both typos are reconciled, the
-    whitelist below should be empty.
-    """
-    known_handauthored_typos = {"ViridianPokeCenter", "ViridianHouse"}
+def test_build_map_graph_covers_early_game_corridor():
+    """The early-game corridor (M1-M5 territory) used by the diagnosis
+    must all be in the auto graph. Catches parser regressions silently
+    dropping maps the runtime needs."""
     auto = build_map_graph(POKERED)
-
-    missing: list[tuple[str, str]] = []
-    for src, dsts in MAP_GRAPH.items():
-        if src in known_handauthored_typos:
-            continue
-        if src not in auto:
-            missing.append((src, "<no src node>"))
-            continue
-        for dst in dsts:
-            if dst in known_handauthored_typos:
-                continue
-            if dst not in auto[src]:
-                missing.append((src, dst))
-
-    assert not missing, (
-        f"Auto-extracted graph is missing hand-authored edges: {missing}. "
-        f"Either the parser is broken or the hand-authored graph has a "
-        f"new typo to add to known_handauthored_typos."
+    required = {
+        "RedsHouse2f",
+        "RedsHouse1f",
+        "PalletTown",
+        "OaksLab",
+        "Route1",
+        "ViridianCity",
+        "ViridianMart",
+    }
+    missing = required - set(auto.keys())
+    assert not missing, f"Auto graph missing early-game maps: {missing}"
+    assert "ViridianCity" in auto["Route1"], (
+        "Route1 → ViridianCity is the M5 unblock the whole stage targets; "
+        "missing it makes the graph hint a no-op."
     )
 
 
@@ -185,9 +162,8 @@ def test_build_map_graph_is_symmetric():
     assert not asymmetric, f"Asymmetric edges in auto graph: {asymmetric[:5]}"
 
 
-def test_build_map_graph_covers_more_maps_than_handauthored():
-    """The whole point: auto graph should cover most of the 224 maps in
-    pokered, vastly more than the 14-map hand-authored graph."""
+def test_build_map_graph_covers_most_of_pokered():
+    """Pokered has 224 map headers; the parser should yield >100."""
     auto = build_map_graph(POKERED)
     assert len(auto) > 100, (
         f"Auto graph only has {len(auto)} maps; expected >100. Parser is likely dropping most maps."

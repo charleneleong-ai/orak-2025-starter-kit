@@ -3,29 +3,20 @@ that lets other games plug in their own layout-graph hint.
 
 Game adapters in this repo are duck-typed modules (see
 ``agents/macla/unified.py: _load_adapter``). UnifiedMaclaAgent reads
-capabilities via ``getattr(self._adapter, NAME, default)``. The
-existing Stage P hint lives in ``EnhancedHierarchicalMemorySystem.
-map_graph_hint`` and is hard-wired to ``unified.py`` — fine for
-pokemon-only, but other games (Mario level→level, StarCraft
-base→expansion, Sokoban room→room) can't reuse it.
+capabilities via ``getattr(self._adapter, NAME, default)``, so games
+that don't expose ``graph_hint`` (currently mario, 2048) get None and
+no hint is prepended — safe default.
 
 These tests cover the per-game adapter surface:
 
     pokemon_red.game_adapter.graph_hint(current_map, visited_maps)
 
-The pokemon adapter delegates to the same MAP_GRAPH the runtime uses,
-so the strings are byte-identical to ``mem.map_graph_hint(...)``.
-Mario/2048 adapters simply don't export the symbol — ``getattr(...,
-'graph_hint', None)`` returns None for them, which the planned
-``unified.py`` swap will treat as a no-op (no hint prepended).
-
-Not yet wired into unified.py — that flip is a one-liner gated on
-the Stage P n=5 verdict.
+Pokemon's implementation reads the auto-extracted graph + exit tiles
+from ``agents.macla.pokered_map_extractor`` (221 maps, 404 exits).
 """
 
 from __future__ import annotations
 
-from agents.macla.macla_lib import EnhancedHierarchicalMemorySystem
 from agents.pokemon_red import game_adapter as pokemon_adapter
 
 # ─── pokemon adapter exports graph_hint ────────────────────────────────────
@@ -56,26 +47,15 @@ def test_pokemon_adapter_graph_hint_returns_none_for_unknown_map():
     assert pokemon_adapter.graph_hint("unknown", set()) is None
 
 
-# ─── parity with the existing memory_system hint ───────────────────────────
-
-
-def test_pokemon_adapter_graph_hint_matches_memory_system():
-    """The adapter must produce the SAME string as the existing
-    memory_system.map_graph_hint method — that's what guarantees the
-    eventual runtime swap is behaviour-preserving."""
-    mem = EnhancedHierarchicalMemorySystem()
-    for m in ["RedsHouse2f", "RedsHouse1f", "PalletTown"]:
-        mem.record_map_visit(m)
-    visited = set(mem.visited_maps)
-
-    adapter_hint = pokemon_adapter.graph_hint("PalletTown", visited)
-    mem_hint = mem.map_graph_hint("PalletTown")
-
-    assert adapter_hint == mem_hint, (
-        f"Adapter / memory_system hints diverged — swap would change runtime.\n"
-        f"  adapter: {adapter_hint!r}\n"
-        f"  mem    : {mem_hint!r}"
-    )
+def test_pokemon_adapter_graph_hint_renders_map_graph_section():
+    """The ``### Map graph`` header + visited-maps line must always be
+    present when there's something to say. Stage Q's exit-tile section
+    is additive — it appends, never rewrites."""
+    visited = {"RedsHouse2f", "RedsHouse1f", "PalletTown"}
+    hint = pokemon_adapter.graph_hint("PalletTown", visited)
+    assert hint is not None
+    assert hint.startswith("### Map graph")
+    assert f"Visited so far ({len(visited)}): " in hint
 
 
 # ─── other games don't export it (deliberate) ──────────────────────────────

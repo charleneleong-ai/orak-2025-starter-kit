@@ -15,7 +15,7 @@
 #     delivery at the Route 1 / Viridian boundary + wild-encounter
 #     gauntlet).
 
-title: "Pokemon Red — Stages D → P progression"
+title: "Pokemon Red — Stages D → Q2 progression"
 primary_metric: evaluation_score
 thresholds:
   - { value: 57.14, label: "M4 ceiling", color: "tab:green" }
@@ -84,3 +84,29 @@ milestones:
     n: 5
     metrics:
       evaluation_score: { mean: 57.14, std: 0.0 }
+  - label: "Stage Q"
+    description: "exit-tile coords in graph_hint (iter 1 breached M5; iters 3-5 collapsed)"
+    verdict: REGRESS
+    n: 5
+    metrics:
+      # Per-iter scores overlay as scatter on the bar — surfaces the iter 1
+      # M5 breach (71.43%, first ever) that the mean ± std band hides.
+      # Source: experiments/stage_q_exit_tiles/results.jsonl
+      evaluation_score:
+        mean: 42.86
+        std: 20.20
+        scores: [71.43, 57.14, 28.57, 28.57, 28.57]
+  - label: "Stage Q2"
+    description: "exit-tile + performance-gated proc-cache prune (broke iter 1's M5 breach)"
+    verdict: REGRESS
+    n: 5
+    metrics:
+      # Source: experiments/stage_q2_perf_prune/results.jsonl
+      # Q2's perf-prune was meant to protect Q's iter 1 M5 breach from
+      # cache poisoning, but ended up regressing iter 1 to M4 (57.14%)
+      # while iters 2-5 stayed at the 28.57% floor. Net learning_delta
+      # = -14.29pp; Q2 strictly worse than Q.
+      evaluation_score:
+        mean: 34.28
+        std: 12.78
+        scores: [57.14, 28.57, 28.57, 28.57, 28.57]

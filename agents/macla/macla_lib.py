@@ -71,43 +71,6 @@ def _extract_map_name(observation: str | None) -> str:
     return m.group(1).strip() if m else "unknown"
 
 
-# Stage P: hand-authored adjacency for pokemon_red early-game maps (M1-M6
-# territory). The 2026-05-15 cross-stage diagnosis traced the 57.14%
-# ceiling to the M5 navigation gate — 0/6 post-asm-fix Stage D+H runs
-# ever entered Viridian City because the agent doesn't know Route1 has a
-# north exit. ``map_graph_hint`` surfaces this directly into every
-# observation the planner sees.
-#
-# Adjacency is bidirectional (the agent can always walk back through a
-# warp/edge in pokemon_red). Edges drawn from pokered/data/maps/*.asm.
-# Extend this dict as later-game stages need it.
-MAP_GRAPH: dict[str, set[str]] = {
-    "RedsHouse2f": {"RedsHouse1f"},
-    "RedsHouse1f": {"RedsHouse2f", "PalletTown"},
-    "BluesHouse": {"PalletTown"},
-    "PalletTown": {"RedsHouse1f", "BluesHouse", "OaksLab", "Route1"},
-    "OaksLab": {"PalletTown"},
-    "Route1": {"PalletTown", "ViridianCity"},
-    "ViridianCity": {
-        "Route1",
-        "ViridianMart",
-        "Route2",
-        "Route22",
-        "ViridianPokeCenter",
-        "ViridianSchoolHouse",
-        "ViridianHouse",
-        "ViridianGym",
-    },
-    "ViridianMart": {"ViridianCity"},
-    "ViridianPokeCenter": {"ViridianCity"},
-    "ViridianSchoolHouse": {"ViridianCity"},
-    "ViridianHouse": {"ViridianCity"},
-    "ViridianGym": {"ViridianCity"},
-    "Route2": {"ViridianCity"},
-    "Route22": {"ViridianCity"},
-}
-
-
 def _state_delta_observed(
     observation_init: str | None, observation_term: str | None
 ) -> bool | None:
@@ -230,6 +193,10 @@ class ProceduralMemoryEntry:
     # Stage L: iter at which this entry was last selected. prune_stale_procedures
     # retires entries with `last_used_iter < current_iter - max_age`.
     last_used_iter: int = 0
+    # Stage Q2: iter at which this entry was added. prune_low_score_iter
+    # drops every proc with `origin_iter == prev_iter` when the prev iter
+    # scored below the per-game threshold (e.g. M4 = 4/7 for pokemon).
+    origin_iter: int = 0
 
 
 # =========================================================
@@ -254,6 +221,7 @@ class EnhancedHierarchicalMemorySystem:
             "procedures_refined": 0,
             "meta_procedures_added": 0,
             "procedures_pruned_stale": 0,
+            "procedures_pruned_low_score": 0,
         }
         self._meta_counter = 0
         # Stage L: iter counter for the cumulative-memory chain. Bumped each
@@ -272,6 +240,12 @@ class EnhancedHierarchicalMemorySystem:
         # the macla_lib procedure-creation site. Set by the agent before
         # provide_feedback; consumed (set back to None) on use.
         self._pending_logprob: float | None = None
+        # Stage Q2: final score (raw, pre-percentage) of the most-recently-
+        # completed episode in this cumulative-memory chain. Written at
+        # episode end; consumed by prune_low_score_iter on the next iter's
+        # checkpoint load. ``None`` means "no score recorded yet" — the
+        # prune is a no-op in that case (fail-safe for fresh runs).
+        self.last_iter_score: float | None = None
 
     def record_map_visit(self, map_name: str | None) -> None:
         """Stage M: record that the agent has been on ``map_name`` in this
@@ -310,39 +284,6 @@ class EnhancedHierarchicalMemorySystem:
             f"assume any cached pattern applies here."
         )
 
-    def map_graph_hint(self, map_name: str | None) -> str | None:
-        """Stage P: every-step navigation hint built from MAP_GRAPH.
-
-        Returns a multi-line natural-language block listing unvisited
-        adjacent maps (the call-out the planner should act on) and the
-        visited-maps memory so far (explicit evidence of what's been
-        explored). Returns None when there's no useful info to add —
-        the map is unknown, outside the hand-authored graph, or every
-        neighbour has already been visited.
-
-        Unlike ``map_visit_status`` (Stage N — one-shot novelty fire on
-        first visit, lives in history block), this hint fires every
-        step and lives in the observation block. The 2026-05-15
-        diagnosis named this as the cheapest intervention to break the
-        M5 ceiling: surface "Route1 → ViridianCity (unvisited)" each
-        frame so the planner doesn't lose track of the unexplored exit.
-        """
-        if not map_name or map_name == "unknown":
-            return None
-        if map_name not in MAP_GRAPH:
-            return None
-        neighbours = MAP_GRAPH[map_name]
-        unvisited = sorted(n for n in neighbours if n not in self.visited_maps)
-        visited_sorted = sorted(self.visited_maps)
-        if not unvisited and not visited_sorted:
-            return None
-        lines = ["### Map graph"]
-        if unvisited:
-            lines.append(f"Unvisited maps reachable from {map_name}: " + ", ".join(unvisited))
-        if visited_sorted:
-            lines.append(f"Visited so far ({len(visited_sorted)}): " + ", ".join(visited_sorted))
-        return "\n".join(lines)
-
     def bump_iter(self) -> int:
         """Increment the iter counter — call when a checkpoint is loaded
         (i.e. each new iter under --load-checkpoint --prev-run-id)."""
@@ -368,6 +309,40 @@ class EnhancedHierarchicalMemorySystem:
                     self.goal_index[goal].discard(key)
                 del self.procedural_memory[key]
         self.stats["procedures_pruned_stale"] += len(removed)
+        return removed
+
+    def prune_low_score_iter(self, score_threshold: float) -> list[str]:
+        """Stage Q2: drop every proc whose ``origin_iter`` matches the
+        most-recently-completed iter when that iter scored below
+        ``score_threshold``. Returns the keys removed.
+
+        Diagnosis (Stage Q n=5): iter 1 lifted past M5 then iters 2-5
+        collapsed to PalletTown and never escaped — the cumulative proc
+        cache accumulated PalletTown-loiter procs from bad iters and
+        late iters kept selecting them. Stage L's age-based prune misses
+        this because the bad procs are still being selected.
+
+        Threshold semantics: < is dropped, == is kept. For pokemon the
+        per-game ``PROC_CACHE_MIN_ITER_SCORE = 4.0`` requires the iter
+        to have crossed M4 (the Charmander gate) to retain its procs.
+
+        No-op when ``last_iter_score is None`` (fresh run, fail-safe).
+        """
+        if self.last_iter_score is None:
+            return []
+        if self.last_iter_score >= score_threshold:
+            return []
+        target_iter = self.current_iter
+        removed: list[str] = []
+        for key, entry in list(self.procedural_memory.items()):
+            if entry.origin_iter == target_iter:
+                removed.append(key)
+                for context in entry.contexts:
+                    self.context_index[context].discard(key)
+                for goal in entry.goals:
+                    self.goal_index[goal].discard(key)
+                del self.procedural_memory[key]
+        self.stats["procedures_pruned_low_score"] += len(removed)
         return removed
 
     @weave.op()
@@ -422,6 +397,7 @@ class EnhancedHierarchicalMemorySystem:
             contexts=contexts,
             goals=goals,
             performance_score=performance,
+            origin_iter=self.current_iter,
         )
         self.procedural_memory[proc_key] = entry
 

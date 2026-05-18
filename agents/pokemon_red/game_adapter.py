@@ -153,38 +153,89 @@ def calculate_metrics(game_info: dict) -> dict:
 RECOMMENDED_USE_SELF_REFLECTION = True
 RECOMMENDED_REFLECTION_EVERY = 10
 
-# ── Map-graph hint (Stage P generalisable adapter surface) ────────────
+# ── Map-graph hint (Stage P/Q generalisable adapter surface) ──────────
 # UnifiedMaclaAgent reads this via ``getattr(self._adapter, 'graph_hint',
-# None)``. Games without spatial navigation (2048, currently mario) simply
-# don't export the symbol — getattr returns None and the planner sees no
-# hint. Pokemon delegates to the same MAP_GRAPH the existing hint uses, so
-# the eventual swap of unified.py from ``mem.map_graph_hint(...)`` to
-# ``self._adapter.graph_hint(...)`` is a one-liner that preserves runtime
-# behaviour. Gated on the Stage P n=5 verdict before flipping.
-from agents.macla.macla_lib import MAP_GRAPH  # noqa: E402
+# None)``. Games without spatial navigation (2048, currently mario) don't
+# export the symbol — getattr returns None and the planner sees no hint.
+#
+# Stage Q (2026-05-17): extends the Stage P hint with per-neighbour exit
+# tile coordinates. The Stage P n=5 verdict (FLAT, 57.14% × 5) confirmed
+# the planner consumed the map names but couldn't translate them into a
+# move_to(x, y) call — the agent stalled at Route 1 (10, 35) every iter,
+# never finding the north-edge transition tile to Viridian. The exit-tile
+# hint surfaces that coordinate directly:
+#
+#     ### Exit tiles
+#       → OaksLab: walk to (12, 11)
+#       → Route1: walk off the north edge
+#
+# Indoor warps render as ``walk to (x, y)`` from the warp_event tile;
+# outdoor connections render as ``walk off the <direction> edge`` from
+# the header connection. Both auto-extracted from pokered .asm.
+from pathlib import Path  # noqa: E402
+
+from agents.macla.pokered_map_extractor import build_exit_tiles, build_map_graph  # noqa: E402
+
+# pokered repo path matches the runtime hard-fail location.
+_POKERED = Path("evaluation_utils/mcp_game_servers/pokemon_red/game/pokered")
+
+
+def _load_graph_and_exits() -> tuple[dict[str, set[str]], dict]:
+    """Load auto-extracted MAP_GRAPH + EXIT_TILES once at module import.
+
+    Falls back to empty dicts if pokered isn't present (e.g. CI without
+    the submodule symlinked); the hint then just returns None and the
+    planner sees no graph block — safe degradation.
+    """
+    if not (_POKERED / "data/maps/headers").is_dir():
+        return {}, {}
+    return build_map_graph(_POKERED), build_exit_tiles(_POKERED)
+
+
+_MAP_GRAPH, _EXIT_TILES = _load_graph_and_exits()
+
+
+def _render_exit(target: str, info) -> str:
+    """Render a single exit-tile line. Tuple = indoor coord; str = direction."""
+    if isinstance(info, tuple):
+        x, y = info
+        return f"  → {target}: walk to ({x}, {y})"
+    return f"  → {target}: walk off the {info} edge"
 
 
 def graph_hint(current_map: str | None, visited_maps: set[str]) -> str | None:
-    """Render the Stage P map-graph hint for pokemon_red.
+    """Render the Stage Q map-graph + exit-tile hint for pokemon_red.
 
-    Mirrors ``EnhancedHierarchicalMemorySystem.map_graph_hint`` exactly
-    so the runtime swap (unified.py) is behaviour-preserving — see the
-    parity test in ``tests/test_pokemon_adapter_graph_hint.py``.
+    Extends the Stage P hint with a per-unvisited-neighbour exit-tile
+    section. Returns None when there's nothing useful to say (unknown
+    map, outside the graph, no neighbours and nothing visited).
     """
     if not current_map or current_map == "unknown":
         return None
-    if current_map not in MAP_GRAPH:
+    if current_map not in _MAP_GRAPH:
         return None
-    neighbours = MAP_GRAPH[current_map]
+    neighbours = _MAP_GRAPH[current_map]
     unvisited = sorted(n for n in neighbours if n not in visited_maps)
     visited_sorted = sorted(visited_maps)
     if not unvisited and not visited_sorted:
         return None
+
     lines = ["### Map graph"]
     if unvisited:
         lines.append(f"Unvisited maps reachable from {current_map}: " + ", ".join(unvisited))
     if visited_sorted:
         lines.append(f"Visited so far ({len(visited_sorted)}): " + ", ".join(visited_sorted))
+
+    exit_lines = [
+        _render_exit(n, _EXIT_TILES[(current_map, n)])
+        for n in unvisited
+        if (current_map, n) in _EXIT_TILES
+    ]
+    if exit_lines:
+        lines.append("")
+        lines.append("### Exit tiles")
+        lines.extend(exit_lines)
+
     return "\n".join(lines)
 
 
@@ -228,3 +279,9 @@ TRAJECTORY_ACTION_SPEC = ActionSpec(extract_target=_traj_move_target)
 TRAJECTORY_SCORE_EXTRACTOR = _traj_score
 TRAJECTORY_ZONE_EXTRACTOR = _traj_zone
 TRAJECTORY_SCORE_MAX = 7.0
+
+# Stage Q2: minimum raw score an iter must reach for its procedures to
+# survive the next iter's checkpoint-load prune. M4 (4/7 — Charmander
+# nickname dialog crossed) is the gate that distinguishes a productive
+# iter from a stuck-in-Pallet-Town iter (the Stage Q n=5 failure mode).
+PROC_CACHE_MIN_ITER_SCORE = 4.0
