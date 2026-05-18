@@ -79,8 +79,11 @@ grep -q "record_subgoal_step" agents/macla/macla_lib.py \
     || { echo "FATAL: v3 stagnation counter missing in memory"; exit 1; }
 grep -q "Currently pursuing" agents/_cognitive/subtask_planner.py \
     || { echo "FATAL: v3 soft phrasing not applied to planner template"; exit 1; }
-grep -q "HARD CONSTRAINT" agents/_cognitive/subtask_planner.py \
-    && { echo "FATAL: v2 HARD CONSTRAINT phrasing still present"; exit 1; }
+# Check the LIVE template string (post-soften), not historical docstring
+# mentions — the v3-soften file may reference v2's old wording in a
+# comment so the maintainer can find the diagnosis when reading the code.
+grep -q "### Currently pursuing" agents/_cognitive/subtask_planner.py \
+    || { echo "FATAL: v3 active-subgoal template missing 'Currently pursuing' header"; exit 1; }
 echo "[preflight] v3 soft phrasing + escape valve code present"
 
 restore() { sed -i 's/^max_steps: .*/max_steps: 300/' "$ENV_CFG"; }
