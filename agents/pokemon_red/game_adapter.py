@@ -285,3 +285,77 @@ TRAJECTORY_SCORE_MAX = 7.0
 # nickname dialog crossed) is the gate that distinguishes a productive
 # iter from a stuck-in-Pallet-Town iter (the Stage Q n=5 failure mode).
 PROC_CACHE_MIN_ITER_SCORE = 4.0
+
+
+# ── hierarchical subgoal templates ──────────────────────────────────
+# Each subgoal carries an explicit completion predicate. The planner
+# emits a stack of these; per step the executor checks the top
+# subgoal's completion(obs) and pops on fire.
+#
+# Predicates must be picklable (existing checkpoint code uses pickle),
+# so we use module-level functions + functools.partial — not lambdas.
+from functools import partial as _partial  # noqa: E402
+
+from agents.macla.macla_lib import Subgoal  # noqa: E402
+
+
+def _completes_when_map_is(target: str, obs: dict) -> bool:
+    return obs.get("map_name") == target
+
+
+def _completes_when_dialog_mentions(npc: str, obs: dict) -> bool:
+    return npc in (obs.get("recent_dialog", "") or "")
+
+
+def _completes_when_score_at_least(threshold: int, obs: dict) -> bool:
+    try:
+        return int(obs.get("score", 0)) >= threshold
+    except (TypeError, ValueError):
+        return False
+
+
+def _navigate_to_map(target: str) -> Subgoal:
+    return Subgoal(
+        name=f"NavigateToMap({target})",
+        description=f"Walk until the current map is {target}.",
+        completion=_partial(_completes_when_map_is, target),
+        suggested_tools=["move_to"],
+    )
+
+
+def _talk_to(npc: str) -> Subgoal:
+    return Subgoal(
+        name=f"TalkTo({npc})",
+        description=f"Interact with {npc} (dialog should mention them).",
+        completion=_partial(_completes_when_dialog_mentions, npc),
+        suggested_tools=["interact_with_object", "continue_dialog", "a"],
+    )
+
+
+def _defeat_trainer(trainer: str, score_after: int) -> Subgoal:
+    return Subgoal(
+        name=f"DefeatTrainer({trainer})",
+        description=f"Win the battle vs {trainer} — score should reach {score_after}.",
+        completion=_partial(_completes_when_score_at_least, score_after),
+        suggested_tools=["a", "interact_with_object"],
+    )
+
+
+SUBGOAL_TEMPLATES = {
+    "NavigateToMap": _navigate_to_map,
+    "TalkTo": _talk_to,
+    "DefeatTrainer": _defeat_trainer,
+}
+
+
+def initial_subgoal_stack() -> list[Subgoal]:
+    """Per-game default subgoal stack pushed at fresh-iter start.
+
+    Bottom..top ordering: top of stack is the next subgoal to pursue, bottom
+    is the long-horizon target. For pokemon the early-game critical path is
+    Pallet -> Route1 -> Viridian (the M5 unblock).
+    """
+    return [
+        _navigate_to_map("ViridianCity"),  # bottom: M5 unblock target
+        _navigate_to_map("Route1"),  # top: immediate next step from Pallet
+    ]

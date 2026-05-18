@@ -9,6 +9,7 @@ import os
 import re
 import time
 from collections import Counter, defaultdict, deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -69,6 +70,43 @@ def _extract_map_name(observation: str | None) -> str:
         return "unknown"
     m = _MAP_NAME_RE.search(observation)
     return m.group(1).strip() if m else "unknown"
+
+
+# Stage P: hand-authored adjacency for pokemon_red early-game maps (M1-M6
+# territory). The 2026-05-15 cross-stage diagnosis traced the 57.14%
+# ceiling to the M5 navigation gate — 0/6 post-asm-fix Stage D+H runs
+# ever entered Viridian City because the agent doesn't know Route1 has a
+# north exit. ``map_graph_hint`` surfaces this directly into every
+# observation the planner sees.
+#
+# Adjacency is bidirectional (the agent can always walk back through a
+# warp/edge in pokemon_red). Edges drawn from pokered/data/maps/*.asm.
+# Extend this dict as later-game stages need it.
+MAP_GRAPH: dict[str, set[str]] = {
+    "RedsHouse2f": {"RedsHouse1f"},
+    "RedsHouse1f": {"RedsHouse2f", "PalletTown"},
+    "BluesHouse": {"PalletTown"},
+    "PalletTown": {"RedsHouse1f", "BluesHouse", "OaksLab", "Route1"},
+    "OaksLab": {"PalletTown"},
+    "Route1": {"PalletTown", "ViridianCity"},
+    "ViridianCity": {
+        "Route1",
+        "ViridianMart",
+        "Route2",
+        "Route22",
+        "ViridianPokeCenter",
+        "ViridianSchoolHouse",
+        "ViridianHouse",
+        "ViridianGym",
+    },
+    "ViridianMart": {"ViridianCity"},
+    "ViridianPokeCenter": {"ViridianCity"},
+    "ViridianSchoolHouse": {"ViridianCity"},
+    "ViridianHouse": {"ViridianCity"},
+    "ViridianGym": {"ViridianCity"},
+    "Route2": {"ViridianCity"},
+    "Route22": {"ViridianCity"},
+}
 
 
 def _state_delta_observed(
@@ -181,6 +219,27 @@ class ContrastiveContext:
 
 
 @dataclass
+class Subgoal:
+    """A hierarchical subgoal with an explicit completion predicate.
+
+    The planner emits a *stack* of these at iter start (or on stack-empty).
+    Per step, the executor checks the top subgoal's ``completion(obs)``;
+    when it fires the subgoal pops and the next one becomes active. This
+    gives the planner commitment teeth — a flat "go to Viridian" hint has
+    no way to hold the executor to it.
+
+    ``suggested_tools`` is a hint to the action LLM about which primitive
+    tools are most useful for this subgoal (e.g. ``["move_to"]`` for
+    NavigateToMap). Empty list means no constraint.
+    """
+
+    name: str
+    description: str
+    completion: Callable[[dict[str, Any]], bool]
+    suggested_tools: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ProceduralMemoryEntry:
     procedure: Procedure
     success_contexts: list[ContrastiveContext] = field(default_factory=list)
@@ -246,6 +305,77 @@ class EnhancedHierarchicalMemorySystem:
         # checkpoint load. ``None`` means "no score recorded yet" — the
         # prune is a no-op in that case (fail-safe for fresh runs).
         self.last_iter_score: float | None = None
+        # Hierarchical subgoal stack with explicit completion predicates.
+        # The planner emits a stack at iter start; per step the top
+        # subgoal's completion(obs) is checked and the subgoal pops when
+        # it fires. Persists via pickle across iters. Internal list
+        # represents the stack as bottom..top — `peek` and `pop` operate
+        # on the last element.
+        self._subgoal_stack: list[Subgoal] = []
+        # Stage R v3 (F2): count steps the top of the stack has stayed
+        # the same. Reset when the top changes (push/pop/replace) or
+        # drops to empty. Read by unified.py to gate the planner
+        # active_subgoal block — at a threshold the block is dropped
+        # so the planner can break out of a stuck subgoal.
+        self._subgoal_stagnation_key: str | None = None
+        self._subgoal_stagnation_steps: int = 0
+
+    # ── subgoal stack ─────────────────────────────────────────────────
+    def push_subgoal(self, subgoal: Subgoal) -> None:
+        self._subgoal_stack.append(subgoal)
+
+    def peek_subgoal(self) -> Subgoal | None:
+        return self._subgoal_stack[-1] if self._subgoal_stack else None
+
+    def pop_subgoal(self) -> Subgoal | None:
+        return self._subgoal_stack.pop() if self._subgoal_stack else None
+
+    def subgoal_depth(self) -> int:
+        return len(self._subgoal_stack)
+
+    @property
+    def subgoal_stagnation_steps(self) -> int:
+        return self._subgoal_stagnation_steps
+
+    def record_subgoal_step(self) -> None:
+        """Call once per act-loop step. Increments the stagnation counter
+        if the top of the stack is the same as last call; resets to 1 on
+        a new top, or 0 when the stack is empty."""
+        top = self.peek_subgoal()
+        top_key = top.name if top else None
+        if top_key != self._subgoal_stagnation_key:
+            self._subgoal_stagnation_key = top_key
+            self._subgoal_stagnation_steps = 1 if top_key else 0
+        elif top_key:
+            self._subgoal_stagnation_steps += 1
+
+    def set_subgoal_stack(self, stack: list[Subgoal]) -> None:
+        """Replace the entire stack. Used by the planner when emitting a
+        fresh subgoal sequence at iter start. First element is the bottom
+        (executed last); last element is the top (executed first)."""
+        self._subgoal_stack = list(stack)
+
+    def check_active_subgoal_completion(self, obs: dict[str, Any]) -> Subgoal | None:
+        """Pop every subgoal whose completion predicate fires against the
+        current observation, in order from top of stack. Returns the
+        last (deepest) subgoal popped, or None if nothing fired.
+
+        Cascade is important: completing subgoal A often reveals subgoal B
+        which the agent may also have already satisfied (e.g. two adjacent
+        NavigateToMap nodes that share a target).
+        """
+        last_popped: Subgoal | None = None
+        while self._subgoal_stack:
+            top = self._subgoal_stack[-1]
+            try:
+                fired = bool(top.completion(obs))
+            except Exception as e:
+                logger.warning(f"[MACLA] subgoal completion predicate raised: {e}")
+                fired = False
+            if not fired:
+                break
+            last_popped = self._subgoal_stack.pop()
+        return last_popped
 
     def record_map_visit(self, map_name: str | None) -> None:
         """Stage M: record that the agent has been on ``map_name`` in this
@@ -283,6 +413,39 @@ class EnhancedHierarchicalMemorySystem:
             f"Bias toward exploring unrevealed tiles and warps; do not "
             f"assume any cached pattern applies here."
         )
+
+    def map_graph_hint(self, map_name: str | None) -> str | None:
+        """Stage P: every-step navigation hint built from MAP_GRAPH.
+
+        Returns a multi-line natural-language block listing unvisited
+        adjacent maps (the call-out the planner should act on) and the
+        visited-maps memory so far (explicit evidence of what's been
+        explored). Returns None when there's no useful info to add —
+        the map is unknown, outside the hand-authored graph, or every
+        neighbour has already been visited.
+
+        Unlike ``map_visit_status`` (Stage N — one-shot novelty fire on
+        first visit, lives in history block), this hint fires every
+        step and lives in the observation block. The 2026-05-15
+        diagnosis named this as the cheapest intervention to break the
+        M5 ceiling: surface "Route1 → ViridianCity (unvisited)" each
+        frame so the planner doesn't lose track of the unexplored exit.
+        """
+        if not map_name or map_name == "unknown":
+            return None
+        if map_name not in MAP_GRAPH:
+            return None
+        neighbours = MAP_GRAPH[map_name]
+        unvisited = sorted(n for n in neighbours if n not in self.visited_maps)
+        visited_sorted = sorted(self.visited_maps)
+        if not unvisited and not visited_sorted:
+            return None
+        lines = ["### Map graph"]
+        if unvisited:
+            lines.append(f"Unvisited maps reachable from {map_name}: " + ", ".join(unvisited))
+        if visited_sorted:
+            lines.append(f"Visited so far ({len(visited_sorted)}): " + ", ".join(visited_sorted))
+        return "\n".join(lines)
 
     def bump_iter(self) -> int:
         """Increment the iter counter — call when a checkpoint is loaded
