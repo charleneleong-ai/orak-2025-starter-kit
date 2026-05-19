@@ -1,6 +1,6 @@
 # Orak 2025 — Architecture & Roadmap
 
-**Last updated:** 2026-05-15 (post-asm-fix verdict, PR #81 merged; full experiment audit added)
+**Last updated:** 2026-05-19 (added "Generalization beyond games" section; experimental snapshot frozen at post-asm-fix Stage K — see [`cross-stage-diagnosis.md`](experiments/gemma/cross-stage-diagnosis.md) for Stage L → Q progression)
 
 One-page snapshot of the cognitive architecture, what we've proven useful, what we've ruled out, and what's still open. For depth see [`docs/experiments/gemma/cross-stage-diagnosis.md`](experiments/gemma/cross-stage-diagnosis.md) and [`docs/experiments/gemma/macla_findings.md`](experiments/gemma/macla_findings.md).
 
@@ -298,6 +298,44 @@ Rule of thumb:
 - **Game-specific tuning** (2048 state-abstraction, mario carry-over) → that game only.
 
 GPU cost rationale: cross-game is roughly 3× per sweep on a single A100 (300 steps × 3 games). For interventions that haven't shown signal on pokemon, 3× cost is wasted on confirming the obvious (no change).
+
+---
+
+## Generalization beyond games — what would port to real-world tasks
+
+The architecture has explicit task-agnostic seams; what's game-shaped is a specific *task class* (long-horizon observe → act loops with sub-structure), not most components. The MaCLA core never branches on game — game-specific bits live behind the `GAME_ADAPTERS` registry in [`agents/macla/unified.py`](../agents/macla/unified.py#L30-L44) and have already proven adapter-portable across 3 games.
+
+### What's already task-agnostic
+
+| Component | Why it generalizes | Caveat |
+|---|---|---|
+| **Adapter seam** ([`unified.py:30-44`](../agents/macla/unified.py#L30-L44)) | `UnifiedMaclaAgent` is game-blind. Game-specific action schema + success/progress patterns export from `agents/{game}/game_adapter.py`. Already proven across pokemon_red, super_mario, twenty_fourty_eight. | Adapter contract assumes a *structured action schema* (pydantic). Open-ended action spaces (free-text shell) need a different contract. |
+| **`autoresearch`** ([`experiments/autoresearch.py`](../experiments/autoresearch.py)) | Schedule-driven sweep orchestrator, milestone bars, kill triage, per-iter `metric_scores`. Already a separate package; zero game-specific code. | Drop-in. |
+| **Procedure cache + score-gated prune** (Stage B / Stage Q2) | Caches successful sub-policies, prunes by outcome quality. Pattern applies to any task with reusable substructure. | Assumes "useful procedures recur." Tasks where each instance is fully novel (creative writing) gain nothing. |
+| **Milestone-based eval + per-iter scatter** | `Milestone.metric_scores` is task-shape-agnostic — SWE-bench partial credit, WebArena sub-goals all fit. | Needs a checkpointable progress signal. |
+| **Vector memory + MMR rerank + temporal decay** | No game knowledge; only operates on embedded observation text. | Cheap to keep; lift outside dense-context games is unproven. |
+
+### What's game-shaped (would need rework)
+
+| Component | Why it's game-shaped | What changes for real-world tasks |
+|---|---|---|
+| Tight observe → act loop | Assumes discrete steps with structured per-step observations. | Browser / OS / robotics fit. Long-form generation, dialogue, research don't — no step boundary. |
+| `graph_hint` + map extraction ([`pokered_map_extractor.py`](../agents/macla/pokered_map_extractor.py)) | Curated structural prior from `pokered/*.asm`. The *pattern* (inject domain priors into obs) generalizes; the extractor doesn't. | Replace with task-domain prior: sitemap for browsers, repo tree for SWE-bench, scene graph for robotics. |
+| Self-reflection cadence | Per-game `RECOMMENDED_REFLECTION_EVERY`. Tuned to game pacing. | Re-tune per task class. Mechanism is generic; cadence is not. |
+| LoopDetector action taxonomy | Game-defined action classes (movement / interact / menu). | Re-define per task. Detector itself is task-agnostic. |
+
+### Task classes likely to port cleanly
+
+| Class | Fit | Why |
+|---|---|---|
+| Browser automation (BrowserGym, WebArena, VisualWebArena) | ✅ Strong | Same observe/act shape; sitemap as `graph_hint` analogue; recurring sub-procedures (login, search, form fill). |
+| OS / terminal agents (OSWorld, SWE-bench Verified) | ✅ Strong | Adapter pattern fits; procedure cache for repo-nav primitives; milestones → partial credit. |
+| Robotics sim (ManiSkill, Habitat, RoboArena) | ✅ Likely | Discrete-ish obs/action; scene graph as structural prior; sub-skills as procedures. |
+| Embodied AI (AI2THOR, Habitat) | ✅ Likely | Map-aware procedure keying ([Stage L](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/85)) is already the right shape. |
+| Long-form generation, dialogue, research writing | ❌ Doesn't fit | No observe/act loop, no procedure reuse, no checkpointable milestones. |
+| One-shot novel-instance tasks | ❌ Doesn't fit | Procedure cache and vmem degrade to per-instance state. |
+
+The sweet spot is **long-horizon agentic tasks with sub-structure**: multiple steps, checkpointable progress, sub-procedures that recur within and across instances. Pokemon's M5 navigation gate (cross-map traversal under sparse signal) is structurally analogous to "navigate a multi-page checkout flow" or "find the failing test in this repo." If map-aware procedures + observation priors break M5 (the Stage L → Q working theory), the same shape should drop into the agentic-benchmark family.
 
 ---
 
