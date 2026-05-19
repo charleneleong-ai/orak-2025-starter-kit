@@ -19,6 +19,53 @@ def _is_warp(cell) -> bool:
     return isinstance(cell, str) and (cell == "WarpPoint" or cell.startswith("Warp→"))
 
 
+def classify_post_move_outcome(
+    *,
+    prev_map: str,
+    current_map: str,
+    current_pos: tuple[int, int],
+    target: tuple[int, int],
+    state: str,
+    x_dest: int,
+    y_dest: int,
+) -> tuple[bool, str] | None:
+    """Stage S (F4): post-walk verdict for ``move_to``.
+
+    Returns:
+      - ``(True, "Crossed map boundary …")`` if ``current_map != prev_map`` —
+        the walk transitioned the player into an adjacent map (usually
+        because the destination was at / past a map edge and the warp
+        tile auto-fired). Map-change takes priority over a coincidental
+        target-coord match in the new map, since the target was meant
+        in ``prev_map``.
+      - ``(True, "Successfully Move to (x, y)")`` if landed on target
+        in the same map.
+      - ``(False, "Interrupt by … Dialog/Battle.")`` on interrupt.
+      - ``None`` if there's no verdict yet — the caller's retry loop
+        continues. The "state != Field" check lives in the caller's
+        inner action loop, not here.
+    """
+    if current_map != prev_map:
+        return (
+            True,
+            f"Crossed map boundary from {prev_map} to {current_map} at "
+            f"({current_pos[0]}, {current_pos[1]}). Destination "
+            f"({x_dest}, {y_dest}) was in {prev_map}; current map is "
+            f"now {current_map}."
+        )
+    if current_pos == target:
+        return (True, f"Successfully Move to ({x_dest}, {y_dest}).")
+    if state == "Dialog":
+        return (
+            False,
+            f"Interrupt by Someone's Dialog before you move to "
+            f"({x_dest}, {y_dest}).",
+        )
+    if "Battle" in state:
+        return (False, "Interrupt by Battle.")
+    return None
+
+
 def execute_action_response(toolset, action_response: str):
     try:
         inside = action_response[len("use_tool("):-1]
@@ -458,13 +505,17 @@ class PokemonToolset:
                 return (False, f"Cannot move the position. Currently in {state_dict['state']} state.")
             x_player = state_dict['map_info']["player_pos_x"]
             y_player = state_dict['map_info']["player_pos_y"]
-
-            if (x_player, y_player) == target_coord:
-                return (True, f"Successfully Move to ({x_dest}, {y_dest}).")
-            elif state_dict["state"] == 'Dialog':
-                return (False, f"Interrupt by Someone's Dialog before you move to ({x_dest}, {y_dest}).")
-            elif 'Battle' in state_dict["state"]:
-                return (False, "Interrupt by Battle.")
+            verdict = classify_post_move_outcome(
+                prev_map=prev_map,
+                current_map=state_dict['map_info']['map_name'],
+                current_pos=(x_player, y_player),
+                target=target_coord,
+                state=state_dict['state'],
+                x_dest=x_dest,
+                y_dest=y_dest,
+            )
+            if verdict is not None:
+                return verdict
         return (False, f"Unable to move to ({x_dest}, {y_dest}) after {max_attempts} attempts.")
     
     def warp_with_warp_point(self, x_dest, y_dest, max_attempts=3):
