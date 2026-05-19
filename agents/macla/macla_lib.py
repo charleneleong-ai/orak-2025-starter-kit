@@ -72,43 +72,6 @@ def _extract_map_name(observation: str | None) -> str:
     return m.group(1).strip() if m else "unknown"
 
 
-# Stage P: hand-authored adjacency for pokemon_red early-game maps (M1-M6
-# territory). The 2026-05-15 cross-stage diagnosis traced the 57.14%
-# ceiling to the M5 navigation gate — 0/6 post-asm-fix Stage D+H runs
-# ever entered Viridian City because the agent doesn't know Route1 has a
-# north exit. ``map_graph_hint`` surfaces this directly into every
-# observation the planner sees.
-#
-# Adjacency is bidirectional (the agent can always walk back through a
-# warp/edge in pokemon_red). Edges drawn from pokered/data/maps/*.asm.
-# Extend this dict as later-game stages need it.
-MAP_GRAPH: dict[str, set[str]] = {
-    "RedsHouse2f": {"RedsHouse1f"},
-    "RedsHouse1f": {"RedsHouse2f", "PalletTown"},
-    "BluesHouse": {"PalletTown"},
-    "PalletTown": {"RedsHouse1f", "BluesHouse", "OaksLab", "Route1"},
-    "OaksLab": {"PalletTown"},
-    "Route1": {"PalletTown", "ViridianCity"},
-    "ViridianCity": {
-        "Route1",
-        "ViridianMart",
-        "Route2",
-        "Route22",
-        "ViridianPokeCenter",
-        "ViridianSchoolHouse",
-        "ViridianHouse",
-        "ViridianGym",
-    },
-    "ViridianMart": {"ViridianCity"},
-    "ViridianPokeCenter": {"ViridianCity"},
-    "ViridianSchoolHouse": {"ViridianCity"},
-    "ViridianHouse": {"ViridianCity"},
-    "ViridianGym": {"ViridianCity"},
-    "Route2": {"ViridianCity"},
-    "Route22": {"ViridianCity"},
-}
-
-
 def _state_delta_observed(
     observation_init: str | None, observation_term: str | None
 ) -> bool | None:
@@ -319,6 +282,32 @@ class EnhancedHierarchicalMemorySystem:
         # so the planner can break out of a stuck subgoal.
         self._subgoal_stagnation_key: str | None = None
         self._subgoal_stagnation_steps: int = 0
+        # Stage R v4 (1): per-(map, x, y) visit counter for the
+        # anti-perseveration hint. v3 introspect found iter 5 revisited
+        # PalletTown(7,10) 44 times — the LLM wasn't catching loops
+        # from text history alone, so we inject the count directly.
+        # Per-episode signal: zeroed in __setstate__ alongside the
+        # stagnation counter so cumulative iters don't carry stale
+        # loop trauma forward (a tile that looped in iter 1 might be
+        # the right move in iter 5 with richer procedural memory).
+        self._position_visits: Counter[tuple[str, int, int]] = Counter()
+
+    def __setstate__(self, state: dict) -> None:
+        """Stage R v4 (4): zero out per-episode stagnation tracking on
+        checkpoint load. Without this, iter N+1 begins with iter N's
+        tail counter (v3 sweep symptom: iter 2 started at
+        stagnation=440, so the escape valve fired from step 1 and the
+        planner never saw the active_subgoal block).
+
+        The stagnation counter is a *per-episode* signal — what the
+        next iter inherits is the procedural memory and subgoal stack,
+        not the bookkeeping that watches them. Same shape will apply
+        to v4(1)'s anti-perseveration position counter.
+        """
+        self.__dict__.update(state)
+        self._subgoal_stagnation_key = None
+        self._subgoal_stagnation_steps = 0
+        self._position_visits = Counter()
 
     # ── subgoal stack ─────────────────────────────────────────────────
     def push_subgoal(self, subgoal: Subgoal) -> None:
@@ -348,6 +337,35 @@ class EnhancedHierarchicalMemorySystem:
             self._subgoal_stagnation_steps = 1 if top_key else 0
         elif top_key:
             self._subgoal_stagnation_steps += 1
+
+    # ── anti-perseveration position counter (Stage R v4) ───────────────
+    @property
+    def position_visits(self) -> Counter[tuple[str, int, int]]:
+        return self._position_visits
+
+    def record_position(self, map_name: str | None, x: int, y: int) -> None:
+        """Tally a visit to (map, x, y). No-op when the map is unknown
+        — we don't want to mix "unknown" tiles into the loop hint."""
+        if not map_name or map_name == "unknown":
+            return
+        self._position_visits[(map_name, x, y)] += 1
+
+    def looped_positions_hint(
+        self, threshold: int = 5, max_display: int = 5
+    ) -> str | None:
+        """Render the "### Recently looped" block for the planner.
+
+        Lists positions whose visit count has crossed ``threshold``,
+        most-visited first, capped at ``max_display`` entries. Returns
+        None when nothing is over threshold (no perseveration to flag).
+        """
+        looped = [(cell, n) for cell, n in self._position_visits.most_common() if n >= threshold]
+        if not looped:
+            return None
+        lines = ["### Recently looped (avoid revisiting these)"]
+        for (map_name, x, y), n in looped[:max_display]:
+            lines.append(f"- {map_name}({x}, {y}): visited {n}× this episode")
+        return "\n".join(lines)
 
     def set_subgoal_stack(self, stack: list[Subgoal]) -> None:
         """Replace the entire stack. Used by the planner when emitting a
@@ -413,39 +431,6 @@ class EnhancedHierarchicalMemorySystem:
             f"Bias toward exploring unrevealed tiles and warps; do not "
             f"assume any cached pattern applies here."
         )
-
-    def map_graph_hint(self, map_name: str | None) -> str | None:
-        """Stage P: every-step navigation hint built from MAP_GRAPH.
-
-        Returns a multi-line natural-language block listing unvisited
-        adjacent maps (the call-out the planner should act on) and the
-        visited-maps memory so far (explicit evidence of what's been
-        explored). Returns None when there's no useful info to add —
-        the map is unknown, outside the hand-authored graph, or every
-        neighbour has already been visited.
-
-        Unlike ``map_visit_status`` (Stage N — one-shot novelty fire on
-        first visit, lives in history block), this hint fires every
-        step and lives in the observation block. The 2026-05-15
-        diagnosis named this as the cheapest intervention to break the
-        M5 ceiling: surface "Route1 → ViridianCity (unvisited)" each
-        frame so the planner doesn't lose track of the unexplored exit.
-        """
-        if not map_name or map_name == "unknown":
-            return None
-        if map_name not in MAP_GRAPH:
-            return None
-        neighbours = MAP_GRAPH[map_name]
-        unvisited = sorted(n for n in neighbours if n not in self.visited_maps)
-        visited_sorted = sorted(self.visited_maps)
-        if not unvisited and not visited_sorted:
-            return None
-        lines = ["### Map graph"]
-        if unvisited:
-            lines.append(f"Unvisited maps reachable from {map_name}: " + ", ".join(unvisited))
-        if visited_sorted:
-            lines.append(f"Visited so far ({len(visited_sorted)}): " + ", ".join(visited_sorted))
-        return "\n".join(lines)
 
     def bump_iter(self) -> int:
         """Increment the iter counter — call when a checkpoint is loaded

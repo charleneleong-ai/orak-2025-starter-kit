@@ -44,6 +44,18 @@ SUBGOAL_STAGNATION_THRESHOLD = 30
 # act-loop has a single source for what each subgoal sees.
 _DIALOG_RE = re.compile(r"\[Filtered Screen Text\]\s*(.*?)\s*(?:\[|$)", re.DOTALL)
 _SCORE_RE = re.compile(r"[Ss]core:?\s*(\d+)")
+# Stage R v4 (1): pull (x, y) from "Your position (x, y): (X, Y)" so the
+# anti-perseveration counter can track per-tile dwell. Pokemon-only
+# format today; games without this line return None and the counter
+# stays at zero (no hint, no harm).
+_POSITION_RE = re.compile(r"Your position \(x, y\): \((-?\d+),\s*(-?\d+)\)")
+
+
+def _extract_position(observation: str | None) -> tuple[int, int] | None:
+    if not observation:
+        return None
+    m = _POSITION_RE.search(observation)
+    return (int(m.group(1)), int(m.group(2))) if m else None
 
 
 def _extract_recent_dialog(observation: str) -> str:
@@ -596,15 +608,37 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                     history_str = f"### Novelty\n{novelty_hint}\n\n{history_str}"
                     mem.record_map_visit(current_map)
                     logger.info(f"[MACLA] novelty hint fired for map={current_map}")
-                # Stage P: every-step map-graph hint prepended to observation.
-                # 2026-05-15 diagnosis named this as the cheapest M5-gate
-                # intervention — keep the unvisited-neighbour list (eg
-                # "Route1 -> ViridianCity") in front of the planner each
-                # frame so it doesn't lose track of the unexplored exit.
-                graph_hint = mem.map_graph_hint(current_map)
+                # Stage P + Q + R v4: every-step map-graph hint prepended
+                # to the observation. The 2026-05-15 diagnosis named this
+                # as the cheapest M5-gate intervention. v4 routes through
+                # the per-game adapter so we pick up Stage Q's exit-tile
+                # coordinates (which were defined but never reached the
+                # planner because unified.py was still calling the
+                # hand-authored ~30-map MAP_GRAPH in macla_lib). Mario /
+                # 2048 don't export graph_hint — getattr returns None and
+                # the block is skipped.
+                graph_hint_fn = getattr(self._adapter, "graph_hint", None)
+                graph_hint = (
+                    graph_hint_fn(current_map, mem.visited_maps)
+                    if graph_hint_fn is not None
+                    else None
+                )
                 if graph_hint:
                     observation = f"{graph_hint}\n\n{observation}"
                     logger.info(f"[MACLA] map_graph_hint fired for map={current_map}")
+                # Stage R v4 (1): record this step's position and surface
+                # any over-threshold loops. v3 introspect found single
+                # tiles revisited 44× per episode without the planner
+                # noticing — injecting the count directly closes that
+                # blind spot. Per-iter reset (see macla_lib __setstate__)
+                # so cumulative iters don't inherit stale loop trauma.
+                pos = _extract_position(observation)
+                if pos is not None:
+                    mem.record_position(current_map, pos[0], pos[1])
+                looped_hint = mem.looped_positions_hint()
+                if looped_hint:
+                    observation = f"{looped_hint}\n\n{observation}"
+                    logger.info(f"[MACLA] looped_positions_hint fired ({sum(1 for v in mem.position_visits.values() if v >= 5)} cells over threshold)")
                 # Prepend the per-iter Reflexion summary (built once
                 # per episode in record_episode_end_into_reflexion).
                 reflexion = getattr(self, "_reflexion_summary", "")
@@ -738,6 +772,15 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
     def record_episode_end(self, episode, game_name, seed, score):
         BaseOrakAgent.record_episode_end(self, episode, game_name, seed, score)
         self._record_episode_end(episode, score)
+        # Stage R v4 (5): feed the iter's raw score into the memory so
+        # the next iter's prune_low_score_iter (called on checkpoint
+        # load) can actually fire. The write site was missing — v2/v3
+        # iter 1+2 scored 2.0/7 (below PROC_CACHE_MIN_ITER_SCORE = 4.0)
+        # but procedures_pruned_low_score stayed at 0 forever because
+        # mem.last_iter_score stayed None. Both threshold and score
+        # are on the raw 0-7 scale — no normalisation here.
+        if self._macla_agent and hasattr(self._macla_agent, "memory_system"):
+            self._macla_agent.memory_system.last_iter_score = float(score)
         if self._memory_provider is not None:
             stats = self._memory_provider.stats()
             logger.info(f"[MACLA] vector memory ep={episode} stats: {stats}")
