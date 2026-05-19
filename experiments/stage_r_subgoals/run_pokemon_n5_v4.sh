@@ -125,6 +125,8 @@ prev_run_id=""
 for iter in $(seq 1 $N); do
     run_id="${TAG}_iter${iter}_$(date -u +%Y%m%dT%H%M%SZ)"
     started=$(date +%s)
+    # autoresearch-current-run "default" log format: [ts] Iter N/M: rest
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Iter $iter/$N: $TAG inherit_from=${prev_run_id:-NONE} run_id=$run_id"
     echo "================================================================"
     echo "[$(date -u +%H:%M:%SZ)] $TAG iter $iter/$N"
     echo "  inherit from: ${prev_run_id:-NONE (fresh)}"
@@ -157,6 +159,37 @@ print(f'{(raw/7.0)*100:.2f}')
 " 2>/dev/null || echo "0.0")
     scores+=("$score")
     echo "[iter $iter] eval=${score}%, runtime=${elapsed}min, inherited=${prev_run_id:-NONE}"
+    # autoresearch-current-run "default" iter-done marker
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Iter $iter/$N finished"
+
+    # Per-iter results.jsonl row via autoresearch.log_experiment — the
+    # canonical schema (matches gemma4-rlvr and any future sweep). Mid-sweep
+    # cancellation now leaves a record because the row writes as soon as
+    # each iter completes (v2 symptom was only the stale v1 row surviving).
+    ITER=$iter SCORE=$score ELAPSED=$elapsed RUN_ID="$run_id" \
+    PREV_RUN_ID="$prev_run_id" TAG="$TAG" N_ITERS=$N STEPS=$MAX_STEPS \
+    .venv/bin/python - <<'PYEOF'
+import os
+from autoresearch import log_experiment
+
+log_experiment(
+    experiments_dir="experiments",
+    tag=os.environ["TAG"],
+    game="pokemon_red",
+    score=float(os.environ["SCORE"]),
+    steps=int(os.environ["STEPS"]),
+    status="IN_PROGRESS",
+    description=f"Stage R v4 iter {os.environ['ITER']}/{os.environ['N_ITERS']} (inherit_from={os.environ['PREV_RUN_ID'] or 'NONE'})",
+    runtime_min=float(os.environ["ELAPSED"]),
+    extra={
+        "record_type": "per_iter",
+        "iter": int(os.environ["ITER"]),
+        "n_iters": int(os.environ["N_ITERS"]),
+        "run_id": os.environ["RUN_ID"],
+        "inherited_from": os.environ["PREV_RUN_ID"] or None,
+    },
+)
+PYEOF
     prev_run_id="$run_id"
 done
 
@@ -164,15 +197,17 @@ echo
 echo "================================================================"
 echo "[$(date -u +%H:%M:%SZ)] $TAG SUMMARY"
 echo "================================================================"
-python3 <<PYEOF
-import json, statistics, datetime as dt
-from pathlib import Path
+SCORES_CSV=$(IFS=,; echo "${scores[*]}") \
+TAG="$TAG" AGENT_CFG_NAME="$AGENT_CFG_NAME" STEPS=$MAX_STEPS \
+.venv/bin/python <<'PYEOF'
+import os, statistics
+from autoresearch import log_experiment
 
-scores = [$(IFS=,; echo "${scores[*]}")]
-mean = statistics.mean(scores) if scores else 0
+scores = [float(s) for s in os.environ["SCORES_CSV"].split(",") if s]
+mean = statistics.mean(scores) if scores else 0.0
 std = statistics.stdev(scores) if len(scores) > 1 else 0.0
-early = statistics.mean(scores[:2]) if len(scores) >= 2 else scores[0]
-late = statistics.mean(scores[-2:]) if len(scores) >= 2 else scores[-1]
+early = statistics.mean(scores[:2]) if len(scores) >= 2 else (scores[0] if scores else 0.0)
+late = statistics.mean(scores[-2:]) if len(scores) >= 2 else (scores[-1] if scores else 0.0)
 delta = late - early
 fmt = ", ".join(f"{s:.2f}%" for s in scores)
 print(f"  Per-iter scores: {fmt}")
@@ -181,30 +216,34 @@ print(f"  Early (1-2):     {early:.2f}%")
 print(f"  Late (4-5):      {late:.2f}%")
 print(f"  Learning delta:  {delta:+.2f}pp ({'LIFT' if delta>7 else 'FLAT' if abs(delta)<=7 else 'REGRESS'})")
 
-out = Path("$RESULTS_DIR/results.jsonl")
-row = {
-    "experiment": 1,
-    "variant": "$TAG",
-    "game": "pokemon_red",
-    "agent_config": "$AGENT_CFG_NAME",
-    "evaluation_score": mean,
-    "evaluation_score_std": std,
-    "evaluation_score_min": min(scores),
-    "evaluation_score_max": max(scores),
-    "early_mean": early,
-    "late_mean": late,
-    "learning_delta": delta,
-    "n_episodes": len(scores),
-    "scores": scores,
-    "steps": $MAX_STEPS,
-    "status": "KEEP",
-    "description": f"Stage R v4: adapter graph_hint + anti-perseveration + budget$MAX_STEPS + setstate-reset + perf-prune-fix; {len(scores)}x pokemon cumulative memory",
-    "notes": f"n={len(scores)}: mean={mean:.2f}% std={std:.2f}pp scores=[{fmt}] learning_delta={delta:+.2f}pp",
-    "tags": ["stage_r_subgoals_v4", "cumulative_memory", "pokemon_red"],
-    "timestamp": dt.datetime.now(dt.UTC).isoformat(),
-}
-with out.open("a") as f:
-    f.write(json.dumps(row) + "\n")
-print(f"  Appended to {out}")
+tag = os.environ["TAG"]
+steps = int(os.environ["STEPS"])
+results_path = log_experiment(
+    experiments_dir="experiments",
+    tag=tag,
+    game="pokemon_red",
+    score=mean,
+    steps=steps,
+    status="KEEP",
+    description=(
+        f"Stage R v4: adapter graph_hint + anti-perseveration + budget{steps} + "
+        f"setstate-reset + perf-prune-fix; {len(scores)}x pokemon cumulative memory"
+    ),
+    notes=f"n={len(scores)}: mean={mean:.2f}% std={std:.2f}pp scores=[{fmt}] learning_delta={delta:+.2f}pp",
+    extra={
+        "record_type": "sweep_summary",
+        "agent_config": os.environ["AGENT_CFG_NAME"],
+        "evaluation_score_std": std,
+        "evaluation_score_min": min(scores) if scores else 0.0,
+        "evaluation_score_max": max(scores) if scores else 0.0,
+        "early_mean": early,
+        "late_mean": late,
+        "learning_delta": delta,
+        "n_episodes": len(scores),
+        "scores": scores,
+        "tags": [tag, "cumulative_memory", "pokemon_red"],
+    },
+)
+print(f"  Appended sweep_summary row to {results_path}")
 PYEOF
 echo "================================================================"
