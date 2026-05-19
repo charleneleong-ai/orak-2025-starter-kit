@@ -101,6 +101,16 @@ grep -q "### Currently pursuing" agents/_cognitive/subtask_planner.py \
     || { echo "FATAL: v3 soft phrasing missing"; exit 1; }
 echo "[preflight] v3 carry-overs (escape valve, soft phrasing) present"
 
+# (6) Subgoal stack extended to full M5-M7 ladder via generic
+# build_score_milestone_stack — pokemon adapter is data-only.
+grep -q "def build_score_milestone_stack" agents/macla/macla_lib.py \
+    || { echo "FATAL: v4(6) generic helper missing in macla_lib"; exit 1; }
+grep -q "_POKEMON_MILESTONE_LIBRARY" agents/pokemon_red/game_adapter.py \
+    || { echo "FATAL: v4(6) pokemon milestone library missing"; exit 1; }
+grep -q "build_score_milestone_stack" agents/pokemon_red/game_adapter.py \
+    || { echo "FATAL: v4(6) pokemon adapter not using generic helper"; exit 1; }
+echo "[preflight] v4(6) M5-M7 subgoal ladder + generic framework helper wired"
+
 # (3) Step budget bump 300 → 600 — applied to env config with restore trap
 restore() { sed -i 's/^max_steps: .*/max_steps: 300/' "$ENV_CFG"; }
 trap restore EXIT

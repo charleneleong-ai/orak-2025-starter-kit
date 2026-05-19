@@ -202,6 +202,73 @@ class Subgoal:
     suggested_tools: list[str] = field(default_factory=list)
 
 
+# ── generic score-milestone helpers ─────────────────────────────────
+# Any adapter whose env emits a monotone integer ``score`` in the
+# observation can build its initial subgoal stack from a declarative
+# milestone library + optional preamble. Adapter ships the data; this
+# module ships the wiring. Predicates use ``functools.partial`` rather
+# than lambdas to stay pickle-safe (checkpoints round-trip the stack).
+from functools import partial as _partial  # noqa: E402
+
+
+def completes_when_score_at_least(threshold: int, obs: dict[str, Any]) -> bool:
+    """Picklable completion predicate: fires when ``obs["score"] >= threshold``.
+
+    Robust to missing / non-numeric score values (returns False) — the
+    observation may lack a score before the first eval tick.
+    """
+    try:
+        return int(obs.get("score", 0)) >= threshold
+    except (TypeError, ValueError):
+        return False
+
+
+def make_score_milestone_subgoal(
+    threshold: int,
+    name: str,
+    description: str,
+    suggested_tools: list[str] | None = None,
+) -> Subgoal:
+    """Build a score-gated ``Subgoal`` with picklable completion.
+
+    The ``Subgoal``'s ``completion`` predicate fires when the observation's
+    raw ``score`` field reaches ``threshold``. Descriptive ``name`` /
+    ``description`` / ``suggested_tools`` come from the caller so the
+    LLM can plan toward the milestone — opaque score thresholds aren't
+    enough on their own.
+    """
+    return Subgoal(
+        name=name,
+        description=description,
+        completion=_partial(completes_when_score_at_least, threshold),
+        suggested_tools=list(suggested_tools or []),
+    )
+
+
+def build_score_milestone_stack(
+    milestone_library: dict[int, tuple[str, str, list[str]]],
+    preamble: list[Subgoal] | None = None,
+) -> list[Subgoal]:
+    """Assemble a bottom..top subgoal stack from a score->(name, description,
+    tools) registry plus an optional ``preamble`` to push on top.
+
+    Sorted by score descending so the highest-score (long-horizon)
+    milestone lands at the bottom. ``preamble`` entries are appended
+    on top in the order given — the last preamble entry becomes the
+    top of the stack and the immediate next subgoal to pursue.
+
+    Adapters just declare the library + preamble; no framework edits
+    needed to add games or extend the milestone ladder.
+    """
+    milestones = [
+        make_score_milestone_subgoal(threshold, name, description, tools)
+        for threshold, (name, description, tools) in sorted(
+            milestone_library.items(), reverse=True
+        )
+    ]
+    return [*milestones, *(preamble or [])]
+
+
 @dataclass
 class ProceduralMemoryEntry:
     procedure: Procedure
