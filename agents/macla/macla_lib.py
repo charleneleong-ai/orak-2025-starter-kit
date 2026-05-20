@@ -356,6 +356,16 @@ class EnhancedHierarchicalMemorySystem:
         # loop trauma forward (a tile that looped in iter 1 might be
         # the right move in iter 5 with richer procedural memory).
         self._position_visits: Counter[tuple[str, int, int]] = Counter()
+        # Stage S: cache veto under escape-valve fire. Stage R v5 proved
+        # the perf-prune write-side is correct but the cache wins the
+        # selector arbitration at fresh boot (iter1's PalletTown procs
+        # match iter2's PalletTown obs at theta=0.050 even after the
+        # escape valve drops the subgoal from the planner). When set
+        # to K, ``select_procedure`` short-circuits to (None, 0.0) for
+        # K consecutive steps so fresh planning can win without nuking
+        # the cache wholesale. Per-episode like the stagnation counter
+        # above — zeroed in __setstate__.
+        self._cache_veto_remaining: int = 0
 
     def __setstate__(self, state: dict) -> None:
         """Stage R v4 (4): zero out per-episode stagnation tracking on
@@ -373,6 +383,7 @@ class EnhancedHierarchicalMemorySystem:
         self._subgoal_stagnation_key = None
         self._subgoal_stagnation_steps = 0
         self._position_visits = Counter()
+        self._cache_veto_remaining = 0
 
     # ── subgoal stack ─────────────────────────────────────────────────
     def push_subgoal(self, subgoal: Subgoal) -> None:
@@ -414,6 +425,24 @@ class EnhancedHierarchicalMemorySystem:
         if not map_name or map_name == "unknown":
             return
         self._position_visits[(map_name, x, y)] += 1
+
+    # ── cache veto (Stage S) ──────────────────────────────────────────
+    @property
+    def cache_vetoed(self) -> bool:
+        return self._cache_veto_remaining > 0
+
+    def set_cache_veto(self, k_steps: int) -> None:
+        """Open the veto window for the next ``k_steps`` calls. Replaces
+        any in-flight remaining count rather than stacking — escape
+        valve fires once per stagnation event, the intent is "veto for
+        K more steps", not the sum across all prior fires."""
+        self._cache_veto_remaining = max(0, int(k_steps))
+
+    def tick_cache_veto(self) -> None:
+        """Decrement the veto countdown by one, floored at zero. Called
+        once per act-loop step alongside ``record_subgoal_step``."""
+        if self._cache_veto_remaining > 0:
+            self._cache_veto_remaining -= 1
 
     def looped_positions_hint(self, threshold: int = 5, max_display: int = 5) -> str | None:
         """Render the "### Recently looped" block for the planner.
@@ -1088,6 +1117,14 @@ class BayesianProcedureSelector:
         # vmem + planner + reflection wired (those live on the agent, not
         # the selector).
         if not self.use_procedure_layer:
+            return None, 0.0
+
+        # Stage S: cache veto. When the subgoal escape valve fires
+        # (subgoal stagnation >= 30), unified.py opens a K-step veto
+        # window so fresh planning wins the arbitration. The cache
+        # itself is preserved; we just step aside.
+        if self.memory_system.cache_vetoed:
+            logger.debug("[Selector] cache-vetoed by escape valve — falling through to planner")
             return None, 0.0
 
         candidates = self._retrieve_candidates(observation, goal, k=10)

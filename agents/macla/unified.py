@@ -36,6 +36,11 @@ from agents.macla.structured_output import safe_structured_invoke
 # v2 PalletTown lock — move_to(12,0) reliably stalled at (12,5)). The
 # block re-engages automatically the next time the stack mutates.
 SUBGOAL_STAGNATION_THRESHOLD = 30
+# Stage S: when the subgoal escape valve fires, veto cached-proc selection
+# for this many steps so fresh planning can win the selector arbitration.
+# Same time-scale as the stagnation threshold — a stagnated subgoal needs
+# roughly that many steps of un-cached exploration to break out.
+CACHE_VETO_K_STEPS = 30
 
 
 # Regex helpers for subgoal completion predicates. The adapter's
@@ -672,6 +677,7 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                         )
 
                     mem.record_subgoal_step()
+                    mem.tick_cache_veto()
                     active = mem.peek_subgoal()
                     if (
                         active is not None
@@ -684,10 +690,16 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                         )
                         active_subgoal_str = f"{active.name}: {active.description}{suggested}"
                     elif active is not None:
+                        # Stage S: dropping the subgoal from the planner alone
+                        # didn't break the M5 ceiling in v4/v5 — the cache kept
+                        # winning arbitration. Open a veto window so fresh
+                        # planning can compete.
+                        mem.set_cache_veto(CACHE_VETO_K_STEPS)
                         logger.info(
                             f"[MACLA] subgoal escape valve fired: {active.name} "
                             f"stagnation={mem.subgoal_stagnation_steps} "
-                            f">= {SUBGOAL_STAGNATION_THRESHOLD} — dropping from planner prompt"
+                            f">= {SUBGOAL_STAGNATION_THRESHOLD} — dropping from "
+                            f"planner prompt + cache-veto for {CACHE_VETO_K_STEPS} steps"
                         )
 
                 subtask = self._subtask_planner.plan(
