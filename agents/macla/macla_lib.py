@@ -262,9 +262,7 @@ def build_score_milestone_stack(
     """
     milestones = [
         make_score_milestone_subgoal(threshold, name, description, tools)
-        for threshold, (name, description, tools) in sorted(
-            milestone_library.items(), reverse=True
-        )
+        for threshold, (name, description, tools) in sorted(milestone_library.items(), reverse=True)
     ]
     return [*milestones, *(preamble or [])]
 
@@ -417,9 +415,7 @@ class EnhancedHierarchicalMemorySystem:
             return
         self._position_visits[(map_name, x, y)] += 1
 
-    def looped_positions_hint(
-        self, threshold: int = 5, max_display: int = 5
-    ) -> str | None:
+    def looped_positions_hint(self, threshold: int = 5, max_display: int = 5) -> str | None:
         """Render the "### Recently looped" block for the planner.
 
         Lists positions whose visit count has crossed ``threshold``,

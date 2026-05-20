@@ -58,10 +58,11 @@ def build_reflexion_summary(run_dir: Path, adapter: Any) -> str:
     ]
     milestones_str = ", ".join(hit_milestones) if hit_milestones else "none"
 
-    dwell_str = ", ".join(
-        f"{name}={count}"
-        for name, count in metrics.dwell_counts.items()
-    ) if metrics.dwell_counts else ""
+    dwell_str = (
+        ", ".join(f"{name}={count}" for name, count in metrics.dwell_counts.items())
+        if metrics.dwell_counts
+        else ""
+    )
 
     lines = [
         "### Previous iter (Reflexion)",

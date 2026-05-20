@@ -135,9 +135,7 @@ class TestSubgoalCompletion:
         B should pop too. Returns the deepest-popped subgoal."""
         mem = EnhancedHierarchicalMemorySystem()
         # Bottom: be in Route1. Top: be in Route1 (same — pops as cascade).
-        mem.set_subgoal_stack(
-            [_navigate_to("Route1"), _navigate_to("Route1")]
-        )
+        mem.set_subgoal_stack([_navigate_to("Route1"), _navigate_to("Route1")])
         completed = mem.check_active_subgoal_completion({"map_name": "Route1"})
         # Both should pop
         assert completed is not None
@@ -167,11 +165,13 @@ class TestPokemonAdapterSubgoalTemplates:
 
     def test_pokemon_adapter_exposes_templates(self):
         from agents.pokemon_red.game_adapter import SUBGOAL_TEMPLATES
+
         assert "NavigateToMap" in SUBGOAL_TEMPLATES
         assert "TalkTo" in SUBGOAL_TEMPLATES
 
     def test_navigate_to_map_template_builds_subgoal(self):
         from agents.pokemon_red.game_adapter import SUBGOAL_TEMPLATES
+
         builder = SUBGOAL_TEMPLATES["NavigateToMap"]
         sg = builder("ViridianCity")
         assert "ViridianCity" in sg.name
@@ -181,6 +181,7 @@ class TestPokemonAdapterSubgoalTemplates:
 
     def test_talk_to_template_fires_on_dialog_keyword(self):
         from agents.pokemon_red.game_adapter import SUBGOAL_TEMPLATES
+
         builder = SUBGOAL_TEMPLATES["TalkTo"]
         sg = builder("OAK")
         # Completion: obs shows the NPC's name in recent dialog text
@@ -219,9 +220,7 @@ class TestReflexionSummary:
         from agents.macla.reflexion import build_reflexion_summary
         from agents.pokemon_red import game_adapter
 
-        summary = build_reflexion_summary(
-            tmp_path / "does_not_exist", adapter=game_adapter
-        )
+        summary = build_reflexion_summary(tmp_path / "does_not_exist", adapter=game_adapter)
         assert summary == ""
 
     def test_summary_no_op_when_adapter_lacks_trajectory_constants(self, tmp_path: Path):

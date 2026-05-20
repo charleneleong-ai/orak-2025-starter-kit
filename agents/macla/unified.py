@@ -71,6 +71,7 @@ def _extract_raw_score(observation: str) -> int:
     m = _SCORE_RE.search(observation or "")
     return int(m.group(1)) if m else 0
 
+
 # ── Game adapter registry ────────────────────────────────────────────
 
 GAME_ADAPTERS: dict[str, str] = {
@@ -315,8 +316,11 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             game_dir = Path(GAME_DATA_DIR) / self._game_name
             if game_dir.exists():
                 completed = sorted(
-                    (d for d in game_dir.iterdir()
-                     if d.is_dir() and (d / "evaluation_summary.json").exists()),
+                    (
+                        d
+                        for d in game_dir.iterdir()
+                        if d.is_dir() and (d / "evaluation_summary.json").exists()
+                    ),
                     key=lambda p: p.stat().st_mtime,
                 )
                 # Exclude the current run dir (last-modified is itself); take
@@ -326,9 +330,7 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                     summary = build_reflexion_summary(prev_run, self._adapter)
                     if summary:
                         self._reflexion_summary = summary
-                        logger.info(
-                            f"[MACLA] built Reflexion summary from {prev_run.name}"
-                        )
+                        logger.info(f"[MACLA] built Reflexion summary from {prev_run.name}")
         except Exception as e:
             logger.warning(f"[MACLA] Reflexion build failed: {e}")
 
@@ -638,7 +640,9 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                 looped_hint = mem.looped_positions_hint()
                 if looped_hint:
                     observation = f"{looped_hint}\n\n{observation}"
-                    logger.info(f"[MACLA] looped_positions_hint fired ({sum(1 for v in mem.position_visits.values() if v >= 5)} cells over threshold)")
+                    logger.info(
+                        f"[MACLA] looped_positions_hint fired ({sum(1 for v in mem.position_visits.values() if v >= 5)} cells over threshold)"
+                    )
                 # Prepend the per-iter Reflexion summary (built once
                 # per episode in record_episode_end_into_reflexion).
                 reflexion = getattr(self, "_reflexion_summary", "")
@@ -675,11 +679,10 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                     ):
                         suggested = (
                             f" (suggested tools: {', '.join(active.suggested_tools)})"
-                            if active.suggested_tools else ""
+                            if active.suggested_tools
+                            else ""
                         )
-                        active_subgoal_str = (
-                            f"{active.name}: {active.description}{suggested}"
-                        )
+                        active_subgoal_str = f"{active.name}: {active.description}{suggested}"
                     elif active is not None:
                         logger.info(
                             f"[MACLA] subgoal escape valve fired: {active.name} "
@@ -794,6 +797,4 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         if self._macla_agent and hasattr(self._macla_agent, "memory_system"):
             mem = self._macla_agent.memory_system
             if hasattr(mem, "subgoal_depth"):
-                logger.info(
-                    f"[MACLA] episode end — subgoal_stack depth={mem.subgoal_depth()}"
-                )
+                logger.info(f"[MACLA] episode end — subgoal_stack depth={mem.subgoal_depth()}")
