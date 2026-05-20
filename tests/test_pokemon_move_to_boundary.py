@@ -35,12 +35,8 @@ _pkg = types.ModuleType("mcp_game_servers")
 _pkg.__path__ = []
 sys.modules.setdefault("mcp_game_servers", _pkg)
 _map_utils_stub = types.ModuleType("mcp_game_servers.pokemon_red.game.utils.map_utils")
-sys.modules.setdefault(
-    "mcp_game_servers.pokemon_red.game.utils.map_utils", _map_utils_stub
-)
-_TOOLS_PATH = (
-    _REPO / "evaluation_utils/mcp_game_servers/pokemon_red/game/utils/pokemon_tools.py"
-)
+sys.modules.setdefault("mcp_game_servers.pokemon_red.game.utils.map_utils", _map_utils_stub)
+_TOOLS_PATH = _REPO / "evaluation_utils/mcp_game_servers/pokemon_red/game/utils/pokemon_tools.py"
 _spec = importlib.util.spec_from_file_location("pokemon_tools_under_test", _TOOLS_PATH)
 _module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_module)
