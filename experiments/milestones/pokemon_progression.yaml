@@ -15,7 +15,7 @@
 #     delivery at the Route 1 / Viridian boundary + wild-encounter
 #     gauntlet).
 
-title: "Pokemon Red — Stages D → Q2 progression"
+title: "Pokemon Red — Stages D → R progression"
 primary_metric: evaluation_score
 thresholds:
   - { value: 57.14, label: "M4 ceiling", color: "tab:green" }
@@ -110,3 +110,47 @@ milestones:
         mean: 34.28
         std: 12.78
         scores: [57.14, 28.57, 28.57, 28.57, 28.57]
+  - label: "Stage R v3"
+    description: "subgoal stack + Reflexion + soft phrasing + escape valve (restored v1 ceiling cleanly)"
+    verdict: FLAT
+    n: 5
+    metrics:
+      # Source: experiments/stage_r_subgoals_v3/results.jsonl
+      # v3 corrected v2's HARD CONSTRAINT regression. All 5 iters
+      # converged at 57.14% (M4) with zero variance — ceiling-bound,
+      # not plumbing.
+      evaluation_score:
+        mean: 57.14
+        std: 0.0
+        scores: [57.14, 57.14, 57.14, 57.14, 57.14]
+  - label: "Stage R v4"
+    description: "six-lever stack (graph_hint + anti-perseveration + 600 budget + setstate reset + perf-prune-fix + M5–M7 ladder); iter1 broke M5"
+    verdict: MIXED
+    n: 5
+    metrics:
+      # Source: experiments/stage_r_subgoals_v4/results.jsonl
+      # iter1 (fresh slate) first ever lift past 57.14% ceiling (M5
+      # reached at step 426). Inheriting iters regressed to 28.57%
+      # floor (cache poisoning by iter2/iter4 PalletTown-only procs).
+      # Diagnosed → PROC_CACHE_MIN_ITER_SCORE bumped 4.0 → 5.0 in v5.
+      evaluation_score:
+        mean: 48.57
+        std: 19.17
+        scores: [71.43, 57.14, 28.57, 57.14, 28.57]
+  - label: "Stage R v5"
+    description: "v4 + perf-prune threshold 4.0→5.0 (n=4; iter5 ENOSPC-killed, excluded)"
+    verdict: REGRESS
+    n: 4
+    metrics:
+      # Source: experiments/stage_r_subgoals_v5/results.jsonl
+      # Threshold bump correctly gated write-side (iter2/3 procs
+      # discarded as designed) but ceiling unbroken — iter1 still
+      # the only iter to reach M5. iter5 killed at launch by /tmp
+      # ENOSPC (4 iters × 600 steps of checkpoint pickles filled
+      # the partition) — excluded as not a real run. Real failure
+      # mode (read-side cache inheritance arbitration) deferred to
+      # Stage S (feat/macla-stage-s; docs/macla/stage_s_cache_veto.md).
+      evaluation_score:
+        mean: 53.57
+        std: 17.85
+        scores: [71.43, 28.57, 57.14, 57.14]
