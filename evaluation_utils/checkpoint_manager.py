@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from autoresearch.files import keep_recent
 from loguru import logger
 
 from evaluation_utils.checkpointable import Checkpointable
@@ -302,27 +303,19 @@ class CheckpointManager:
     def cleanup_old_checkpoints(
         self, agent_name: str, game_name: str | None = None, keep_last_n: int = 5
     ):
-        """
-        Keep only the N most recent checkpoints for a game/agent pair.
+        """Keep only the N most recent checkpoints for a game/agent pair.
 
-        Args:
-            game_name: Name of the game
-            agent_name: Name of the agent
-            keep_last_n: Number of recent checkpoints to keep
+        Delegates the rolling-window cleanup to `autoresearch.files.keep_recent`;
+        `on_delete=self.delete_checkpoint` handles the `.pkl` + `.json` sidecar pair.
         """
         game_dir = self.checkpoint_dir / game_name if game_name else self.checkpoint_dir
-        if not game_dir.exists():
-            return
-
-        checkpoints = list(game_dir.glob(f"{agent_name}_*.pkl"))
-        if len(checkpoints) <= keep_last_n:
-            return
-
-        # Sort by modification time, oldest first
-        checkpoints.sort(key=lambda p: p.stat().st_mtime)
-
-        # Delete oldest checkpoints
-        for checkpoint in checkpoints[:-keep_last_n]:
-            self.delete_checkpoint(checkpoint)
-
-        logger.info(f"Cleaned up old checkpoints, kept {keep_last_n} most recent")
+        removed = keep_recent(
+            game_dir,
+            f"{agent_name}_*.pkl",
+            n=keep_last_n,
+            on_delete=self.delete_checkpoint,
+        )
+        if removed:
+            logger.info(
+                f"Cleaned up {len(removed)} old checkpoints, kept {keep_last_n} most recent"
+            )

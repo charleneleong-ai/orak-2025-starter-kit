@@ -9,6 +9,7 @@ from typing import Any
 
 import backoff
 import wandb
+from autoresearch.files import warn_if_tmp_data_dir
 from loguru import logger
 
 from config.base import Settings
@@ -648,6 +649,7 @@ class Runner:
             game_run_dir = self._get_game_run_dir(game_name)
             checkpoint_dir = game_run_dir / "checkpoints"
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            warn_if_tmp_data_dir(checkpoint_dir)
 
             self.game_checkpoint_managers[game_name] = CheckpointManager(
                 checkpoint_dir=str(checkpoint_dir)
