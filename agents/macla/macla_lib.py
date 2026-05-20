@@ -9,6 +9,7 @@ import os
 import re
 import time
 from collections import Counter, defaultdict, deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -181,6 +182,92 @@ class ContrastiveContext:
 
 
 @dataclass
+class Subgoal:
+    """A hierarchical subgoal with an explicit completion predicate.
+
+    The planner emits a *stack* of these at iter start (or on stack-empty).
+    Per step, the executor checks the top subgoal's ``completion(obs)``;
+    when it fires the subgoal pops and the next one becomes active. This
+    gives the planner commitment teeth — a flat "go to Viridian" hint has
+    no way to hold the executor to it.
+
+    ``suggested_tools`` is a hint to the action LLM about which primitive
+    tools are most useful for this subgoal (e.g. ``["move_to"]`` for
+    NavigateToMap). Empty list means no constraint.
+    """
+
+    name: str
+    description: str
+    completion: Callable[[dict[str, Any]], bool]
+    suggested_tools: list[str] = field(default_factory=list)
+
+
+# ── generic score-milestone helpers ─────────────────────────────────
+# Any adapter whose env emits a monotone integer ``score`` in the
+# observation can build its initial subgoal stack from a declarative
+# milestone library + optional preamble. Adapter ships the data; this
+# module ships the wiring. Predicates use ``functools.partial`` rather
+# than lambdas to stay pickle-safe (checkpoints round-trip the stack).
+from functools import partial as _partial  # noqa: E402
+
+
+def completes_when_score_at_least(threshold: int, obs: dict[str, Any]) -> bool:
+    """Picklable completion predicate: fires when ``obs["score"] >= threshold``.
+
+    Robust to missing / non-numeric score values (returns False) — the
+    observation may lack a score before the first eval tick.
+    """
+    try:
+        return int(obs.get("score", 0)) >= threshold
+    except (TypeError, ValueError):
+        return False
+
+
+def make_score_milestone_subgoal(
+    threshold: int,
+    name: str,
+    description: str,
+    suggested_tools: list[str] | None = None,
+) -> Subgoal:
+    """Build a score-gated ``Subgoal`` with picklable completion.
+
+    The ``Subgoal``'s ``completion`` predicate fires when the observation's
+    raw ``score`` field reaches ``threshold``. Descriptive ``name`` /
+    ``description`` / ``suggested_tools`` come from the caller so the
+    LLM can plan toward the milestone — opaque score thresholds aren't
+    enough on their own.
+    """
+    return Subgoal(
+        name=name,
+        description=description,
+        completion=_partial(completes_when_score_at_least, threshold),
+        suggested_tools=list(suggested_tools or []),
+    )
+
+
+def build_score_milestone_stack(
+    milestone_library: dict[int, tuple[str, str, list[str]]],
+    preamble: list[Subgoal] | None = None,
+) -> list[Subgoal]:
+    """Assemble a bottom..top subgoal stack from a score->(name, description,
+    tools) registry plus an optional ``preamble`` to push on top.
+
+    Sorted by score descending so the highest-score (long-horizon)
+    milestone lands at the bottom. ``preamble`` entries are appended
+    on top in the order given — the last preamble entry becomes the
+    top of the stack and the immediate next subgoal to pursue.
+
+    Adapters just declare the library + preamble; no framework edits
+    needed to add games or extend the milestone ladder.
+    """
+    milestones = [
+        make_score_milestone_subgoal(threshold, name, description, tools)
+        for threshold, (name, description, tools) in sorted(milestone_library.items(), reverse=True)
+    ]
+    return [*milestones, *(preamble or [])]
+
+
+@dataclass
 class ProceduralMemoryEntry:
     procedure: Procedure
     success_contexts: list[ContrastiveContext] = field(default_factory=list)
@@ -246,6 +333,130 @@ class EnhancedHierarchicalMemorySystem:
         # checkpoint load. ``None`` means "no score recorded yet" — the
         # prune is a no-op in that case (fail-safe for fresh runs).
         self.last_iter_score: float | None = None
+        # Hierarchical subgoal stack with explicit completion predicates.
+        # The planner emits a stack at iter start; per step the top
+        # subgoal's completion(obs) is checked and the subgoal pops when
+        # it fires. Persists via pickle across iters. Internal list
+        # represents the stack as bottom..top — `peek` and `pop` operate
+        # on the last element.
+        self._subgoal_stack: list[Subgoal] = []
+        # Stage R v3 (F2): count steps the top of the stack has stayed
+        # the same. Reset when the top changes (push/pop/replace) or
+        # drops to empty. Read by unified.py to gate the planner
+        # active_subgoal block — at a threshold the block is dropped
+        # so the planner can break out of a stuck subgoal.
+        self._subgoal_stagnation_key: str | None = None
+        self._subgoal_stagnation_steps: int = 0
+        # Stage R v4 (1): per-(map, x, y) visit counter for the
+        # anti-perseveration hint. v3 introspect found iter 5 revisited
+        # PalletTown(7,10) 44 times — the LLM wasn't catching loops
+        # from text history alone, so we inject the count directly.
+        # Per-episode signal: zeroed in __setstate__ alongside the
+        # stagnation counter so cumulative iters don't carry stale
+        # loop trauma forward (a tile that looped in iter 1 might be
+        # the right move in iter 5 with richer procedural memory).
+        self._position_visits: Counter[tuple[str, int, int]] = Counter()
+
+    def __setstate__(self, state: dict) -> None:
+        """Stage R v4 (4): zero out per-episode stagnation tracking on
+        checkpoint load. Without this, iter N+1 begins with iter N's
+        tail counter (v3 sweep symptom: iter 2 started at
+        stagnation=440, so the escape valve fired from step 1 and the
+        planner never saw the active_subgoal block).
+
+        The stagnation counter is a *per-episode* signal — what the
+        next iter inherits is the procedural memory and subgoal stack,
+        not the bookkeeping that watches them. Same shape will apply
+        to v4(1)'s anti-perseveration position counter.
+        """
+        self.__dict__.update(state)
+        self._subgoal_stagnation_key = None
+        self._subgoal_stagnation_steps = 0
+        self._position_visits = Counter()
+
+    # ── subgoal stack ─────────────────────────────────────────────────
+    def push_subgoal(self, subgoal: Subgoal) -> None:
+        self._subgoal_stack.append(subgoal)
+
+    def peek_subgoal(self) -> Subgoal | None:
+        return self._subgoal_stack[-1] if self._subgoal_stack else None
+
+    def pop_subgoal(self) -> Subgoal | None:
+        return self._subgoal_stack.pop() if self._subgoal_stack else None
+
+    def subgoal_depth(self) -> int:
+        return len(self._subgoal_stack)
+
+    @property
+    def subgoal_stagnation_steps(self) -> int:
+        return self._subgoal_stagnation_steps
+
+    def record_subgoal_step(self) -> None:
+        """Call once per act-loop step. Increments the stagnation counter
+        if the top of the stack is the same as last call; resets to 1 on
+        a new top, or 0 when the stack is empty."""
+        top = self.peek_subgoal()
+        top_key = top.name if top else None
+        if top_key != self._subgoal_stagnation_key:
+            self._subgoal_stagnation_key = top_key
+            self._subgoal_stagnation_steps = 1 if top_key else 0
+        elif top_key:
+            self._subgoal_stagnation_steps += 1
+
+    # ── anti-perseveration position counter (Stage R v4) ───────────────
+    @property
+    def position_visits(self) -> Counter[tuple[str, int, int]]:
+        return self._position_visits
+
+    def record_position(self, map_name: str | None, x: int, y: int) -> None:
+        """Tally a visit to (map, x, y). No-op when the map is unknown
+        — we don't want to mix "unknown" tiles into the loop hint."""
+        if not map_name or map_name == "unknown":
+            return
+        self._position_visits[(map_name, x, y)] += 1
+
+    def looped_positions_hint(self, threshold: int = 5, max_display: int = 5) -> str | None:
+        """Render the "### Recently looped" block for the planner.
+
+        Lists positions whose visit count has crossed ``threshold``,
+        most-visited first, capped at ``max_display`` entries. Returns
+        None when nothing is over threshold (no perseveration to flag).
+        """
+        looped = [(cell, n) for cell, n in self._position_visits.most_common() if n >= threshold]
+        if not looped:
+            return None
+        lines = ["### Recently looped (avoid revisiting these)"]
+        for (map_name, x, y), n in looped[:max_display]:
+            lines.append(f"- {map_name}({x}, {y}): visited {n}× this episode")
+        return "\n".join(lines)
+
+    def set_subgoal_stack(self, stack: list[Subgoal]) -> None:
+        """Replace the entire stack. Used by the planner when emitting a
+        fresh subgoal sequence at iter start. First element is the bottom
+        (executed last); last element is the top (executed first)."""
+        self._subgoal_stack = list(stack)
+
+    def check_active_subgoal_completion(self, obs: dict[str, Any]) -> Subgoal | None:
+        """Pop every subgoal whose completion predicate fires against the
+        current observation, in order from top of stack. Returns the
+        last (deepest) subgoal popped, or None if nothing fired.
+
+        Cascade is important: completing subgoal A often reveals subgoal B
+        which the agent may also have already satisfied (e.g. two adjacent
+        NavigateToMap nodes that share a target).
+        """
+        last_popped: Subgoal | None = None
+        while self._subgoal_stack:
+            top = self._subgoal_stack[-1]
+            try:
+                fired = bool(top.completion(obs))
+            except Exception as e:
+                logger.warning(f"[MACLA] subgoal completion predicate raised: {e}")
+                fired = False
+            if not fired:
+                break
+            last_popped = self._subgoal_stack.pop()
+        return last_popped
 
     def record_map_visit(self, map_name: str | None) -> None:
         """Stage M: record that the agent has been on ``map_name`` in this

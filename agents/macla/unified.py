@@ -12,6 +12,7 @@ import base64
 import importlib
 import io
 import re
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
@@ -26,7 +27,50 @@ from agents.base import BaseOrakAgent
 from agents.macla.base import BaseMaclaAgent
 from agents.macla.context_extractors import build_context_extractor
 from agents.macla.macla_lib import _extract_map_name
+from agents.macla.reflexion import build_reflexion_summary
 from agents.macla.structured_output import safe_structured_invoke
+
+# Stage R v3 (F2): drop the planner active_subgoal block once the same
+# top of the subgoal stack has held for this many steps. Lets the planner
+# fall through to its standard heuristics when a subgoal is wedged (cf.
+# v2 PalletTown lock — move_to(12,0) reliably stalled at (12,5)). The
+# block re-engages automatically the next time the stack mutates.
+SUBGOAL_STAGNATION_THRESHOLD = 30
+
+
+# Regex helpers for subgoal completion predicates. The adapter's
+# completion functions read obs dict keys (map_name, recent_dialog,
+# score); we extract those from the raw observation string here so the
+# act-loop has a single source for what each subgoal sees.
+_DIALOG_RE = re.compile(r"\[Filtered Screen Text\]\s*(.*?)\s*(?:\[|$)", re.DOTALL)
+_SCORE_RE = re.compile(r"[Ss]core:?\s*(\d+)")
+# Stage R v4 (1): pull (x, y) from "Your position (x, y): (X, Y)" so the
+# anti-perseveration counter can track per-tile dwell. Pokemon-only
+# format today; games without this line return None and the counter
+# stays at zero (no hint, no harm).
+_POSITION_RE = re.compile(r"Your position \(x, y\): \((-?\d+),\s*(-?\d+)\)")
+
+
+def _extract_position(observation: str | None) -> tuple[int, int] | None:
+    if not observation:
+        return None
+    m = _POSITION_RE.search(observation)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def _extract_recent_dialog(observation: str) -> str:
+    """Lift the filtered screen text block (dialog / menu choices) from the
+    pokemon obs. Other games may return "" — TalkTo predicates simply
+    won't fire, which is fine."""
+    m = _DIALOG_RE.search(observation or "")
+    return m.group(1).strip() if m else ""
+
+
+def _extract_raw_score(observation: str) -> int:
+    """Extract the raw 0-7 score from the obs. Falls back to 0."""
+    m = _SCORE_RE.search(observation or "")
+    return int(m.group(1)) if m else 0
+
 
 # ── Game adapter registry ────────────────────────────────────────────
 
@@ -248,6 +292,62 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         )
         return provider
 
+    def _init_episode_subgoals(self) -> None:
+        """Episode-start setup — build Reflexion summary from prev
+        iter's game_states.jsonl, seed an initial subgoal stack if empty.
+
+        Fires once per episode, gated by _subgoal_init_done in _get_action.
+        Safe no-op when adapter doesn't expose SUBGOAL_TEMPLATES or
+        initial_subgoal_stack.
+        """
+        templates = getattr(self._adapter, "SUBGOAL_TEMPLATES", None)
+        if templates is None:
+            self._reflexion_summary = ""
+            return
+
+        mem = self._macla_agent.memory_system
+
+        # Reflexion: scan GAME_DATA_DIR for the most recently completed
+        # iter (the one with evaluation_summary.json) and build a summary.
+        self._reflexion_summary = ""
+        try:
+            from evaluation_utils.commons import GAME_DATA_DIR  # noqa: PLC0415
+
+            game_dir = Path(GAME_DATA_DIR) / self._game_name
+            if game_dir.exists():
+                completed = sorted(
+                    (
+                        d
+                        for d in game_dir.iterdir()
+                        if d.is_dir() and (d / "evaluation_summary.json").exists()
+                    ),
+                    key=lambda p: p.stat().st_mtime,
+                )
+                # Exclude the current run dir (last-modified is itself); take
+                # the second-most-recent as the prev iter.
+                if len(completed) >= 1:
+                    prev_run = completed[-1]
+                    summary = build_reflexion_summary(prev_run, self._adapter)
+                    if summary:
+                        self._reflexion_summary = summary
+                        logger.info(f"[MACLA] built Reflexion summary from {prev_run.name}")
+        except Exception as e:
+            logger.warning(f"[MACLA] Reflexion build failed: {e}")
+
+        # Seed initial subgoal stack if empty (fresh-iter or post-prune).
+        if mem.subgoal_depth() == 0:
+            builder = getattr(self._adapter, "initial_subgoal_stack", None)
+            if builder is not None:
+                try:
+                    stack = builder()
+                    mem.set_subgoal_stack(stack)
+                    logger.info(
+                        f"[MACLA] seeded initial subgoal stack "
+                        f"({len(stack)} entries; top={stack[-1].name if stack else 'n/a'})"
+                    )
+                except Exception as e:
+                    logger.warning(f"[MACLA] initial_subgoal_stack failed: {e}")
+
     def _determine_game_phase(self, observation: str) -> tuple[str, float]:
         """Game phase based on evaluation score (0-100 scale)."""
         score = getattr(self, "_last_score", 0) or 0
@@ -264,6 +364,13 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         """MACLA action loop: feedback → execute → log → validate → return 8-tuple."""
         if self._obs_preprocessor is not None:
             cur_state_str = self._obs_preprocessor.preprocess(cur_state_str)
+
+        # One-shot episode-start hook — build Reflexion summary from
+        # prev iter's game_states.jsonl and seed the subgoal stack if
+        # empty. Fires on the first _get_action of each episode.
+        if not getattr(self, "_subgoal_init_done", False):
+            self._subgoal_init_done = True
+            self._init_episode_subgoals()
 
         # Refresh the self-reflection critique (cached between reflect_every
         # invocations). _base_fallback reads self._last_critique to inject
@@ -503,25 +610,91 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                     history_str = f"### Novelty\n{novelty_hint}\n\n{history_str}"
                     mem.record_map_visit(current_map)
                     logger.info(f"[MACLA] novelty hint fired for map={current_map}")
-                # Stage P/Q: every-step map-graph + exit-tile hint prepended
-                # to observation. Stage Q (2026-05-17) routes through the
-                # per-game adapter so non-pokemon games can plug in their
-                # own layout hint, and surfaces exit-tile coords (the FLAT
-                # verdict on Stage P showed map-name-only wasn't enough —
-                # the planner needed (x, y) to find the Route1 → Viridian
-                # transition). Falls back to None silently for adapters
-                # without the symbol (mario, 2048).
-                adapter_hint_fn = getattr(self._adapter, "graph_hint", None)
+                # Stage P + Q + R v4: every-step map-graph hint prepended
+                # to the observation. The 2026-05-15 diagnosis named this
+                # as the cheapest M5-gate intervention. v4 routes through
+                # the per-game adapter so we pick up Stage Q's exit-tile
+                # coordinates (which were defined but never reached the
+                # planner because unified.py was still calling the
+                # hand-authored ~30-map MAP_GRAPH in macla_lib). Mario /
+                # 2048 don't export graph_hint — getattr returns None and
+                # the block is skipped.
+                graph_hint_fn = getattr(self._adapter, "graph_hint", None)
                 graph_hint = (
-                    adapter_hint_fn(current_map, mem.visited_maps) if adapter_hint_fn else None
+                    graph_hint_fn(current_map, mem.visited_maps)
+                    if graph_hint_fn is not None
+                    else None
                 )
                 if graph_hint:
                     observation = f"{graph_hint}\n\n{observation}"
-                    logger.info(f"[MACLA] graph_hint fired for map={current_map}")
+                    logger.info(f"[MACLA] map_graph_hint fired for map={current_map}")
+                # Stage R v4 (1): record this step's position and surface
+                # any over-threshold loops. v3 introspect found single
+                # tiles revisited 44× per episode without the planner
+                # noticing — injecting the count directly closes that
+                # blind spot. Per-iter reset (see macla_lib __setstate__)
+                # so cumulative iters don't inherit stale loop trauma.
+                pos = _extract_position(observation)
+                if pos is not None:
+                    mem.record_position(current_map, pos[0], pos[1])
+                looped_hint = mem.looped_positions_hint()
+                if looped_hint:
+                    observation = f"{looped_hint}\n\n{observation}"
+                    logger.info(
+                        f"[MACLA] looped_positions_hint fired ({sum(1 for v in mem.position_visits.values() if v >= 5)} cells over threshold)"
+                    )
+                # Prepend the per-iter Reflexion summary (built once
+                # per episode in record_episode_end_into_reflexion).
+                reflexion = getattr(self, "_reflexion_summary", "")
+                if reflexion:
+                    history_str = f"{reflexion}\n\n{history_str}"
+
+                # Check the top subgoal's completion predicate against
+                # the current obs and pop on fire (may cascade). The
+                # active subgoal is threaded into the planner as a soft
+                # preference (v3 — v2's HARD CONSTRAINT phrasing trapped
+                # the planner in PalletTown). When stagnation crosses
+                # SUBGOAL_STAGNATION_THRESHOLD the block is dropped
+                # entirely so the planner can break out (F2).
+                active_subgoal_str: str | None = None
+                templates = getattr(self._adapter, "SUBGOAL_TEMPLATES", None)
+                if templates is not None:
+                    obs_for_completion = {
+                        "map_name": current_map or "",
+                        "recent_dialog": _extract_recent_dialog(observation),
+                        "score": _extract_raw_score(observation),
+                    }
+                    popped = mem.check_active_subgoal_completion(obs_for_completion)
+                    if popped is not None:
+                        logger.info(
+                            f"[MACLA] subgoal completed: {popped.name} "
+                            f"(remaining depth={mem.subgoal_depth()})"
+                        )
+
+                    mem.record_subgoal_step()
+                    active = mem.peek_subgoal()
+                    if (
+                        active is not None
+                        and mem.subgoal_stagnation_steps < SUBGOAL_STAGNATION_THRESHOLD
+                    ):
+                        suggested = (
+                            f" (suggested tools: {', '.join(active.suggested_tools)})"
+                            if active.suggested_tools
+                            else ""
+                        )
+                        active_subgoal_str = f"{active.name}: {active.description}{suggested}"
+                    elif active is not None:
+                        logger.info(
+                            f"[MACLA] subgoal escape valve fired: {active.name} "
+                            f"stagnation={mem.subgoal_stagnation_steps} "
+                            f">= {SUBGOAL_STAGNATION_THRESHOLD} — dropping from planner prompt"
+                        )
+
                 subtask = self._subtask_planner.plan(
                     goal=goal,
                     observation=observation,
                     history=history_str,
+                    active_subgoal=active_subgoal_str,
                 )
                 if subtask:
                     user_text = (
@@ -602,6 +775,15 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
     def record_episode_end(self, episode, game_name, seed, score):
         BaseOrakAgent.record_episode_end(self, episode, game_name, seed, score)
         self._record_episode_end(episode, score)
+        # Stage R v4 (5): feed the iter's raw score into the memory so
+        # the next iter's prune_low_score_iter (called on checkpoint
+        # load) can actually fire. The write site was missing — v2/v3
+        # iter 1+2 scored 2.0/7 (below PROC_CACHE_MIN_ITER_SCORE = 4.0)
+        # but procedures_pruned_low_score stayed at 0 forever because
+        # mem.last_iter_score stayed None. Both threshold and score
+        # are on the raw 0-7 scale — no normalisation here.
+        if self._macla_agent and hasattr(self._macla_agent, "memory_system"):
+            self._macla_agent.memory_system.last_iter_score = float(score)
         if self._memory_provider is not None:
             stats = self._memory_provider.stats()
             logger.info(f"[MACLA] vector memory ep={episode} stats: {stats}")
@@ -609,3 +791,10 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         if self._subtask_planner is not None:
             stats = self._subtask_planner.stats()
             logger.info(f"[MACLA] subtask planner ep={episode} stats: {stats}")
+        # Reset episode-init flag so next episode rebuilds
+        # Reflexion summary + re-seeds the subgoal stack.
+        self._subgoal_init_done = False
+        if self._macla_agent and hasattr(self._macla_agent, "memory_system"):
+            mem = self._macla_agent.memory_system
+            if hasattr(mem, "subgoal_depth"):
+                logger.info(f"[MACLA] episode end — subgoal_stack depth={mem.subgoal_depth()}")

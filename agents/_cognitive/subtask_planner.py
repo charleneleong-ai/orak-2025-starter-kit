@@ -54,6 +54,14 @@ about exploration and progress.
 
 ## Heuristics (in priority order)
 
+0. **Active subgoal — strong preference, not a lockout.** If the user
+   prompt contains a "### Currently pursuing" section, prefer Subtasks
+   that advance it. The subgoal carries a completion predicate that fires
+   when its target state is observed. Override only when the recent
+   history shows the subgoal is blocked (no progress for many steps,
+   repeated waypoint failures, oscillation) — in that case fall through
+   to heuristics 1 and 3 and propose a different concrete step.
+
 1. **Anti-loop.** If recent history shows the agent oscillating between the
    same 2-3 states/locations, the sub-goal must redirect — explicitly propose
    a new direction or an unvisited region. Never re-emit the sub-goal that
@@ -98,7 +106,7 @@ The sub-goal should be achievable in 5-30 game steps."""
 
 DEFAULT_USER_PROMPT_TEMPLATE = """### Overall goal
 {goal}
-
+{active_subgoal_block}
 ### Current observation
 {observation}
 
@@ -109,6 +117,24 @@ DEFAULT_USER_PROMPT_TEMPLATE = """### Overall goal
 {last_subtask}
 
 What is the right immediate subtask now? Output the two sections only."""
+
+
+def _render_active_subgoal_block(active_subgoal: str | None) -> str:
+    """Render the soft "currently pursuing" block, or empty when none.
+
+    v3 (Stage R) softens v2's HARD CONSTRAINT phrasing — the v2 lockout
+    trapped the planner in PalletTown when ``move_to`` couldn't cross
+    the Pallet→Route1 edge. Soft preference language lets the planner
+    fall through to heuristics 1 and 3 when the subgoal is blocked.
+    """
+    if not active_subgoal:
+        return ""
+    return (
+        "\n### Currently pursuing\n"
+        f"{active_subgoal}\n"
+        "Prefer Subtasks that advance this unless the recent history "
+        "shows it's blocked (no progress, repeated waypoint failures).\n"
+    )
 
 
 class SubtaskPlanner(ABC):
@@ -122,8 +148,14 @@ class SubtaskPlanner(ABC):
         observation: str,
         history: str = "",
         last_subtask: str | None = None,
+        active_subgoal: str | None = None,
     ) -> str:
-        """Return the next subtask description (one short sentence)."""
+        """Return the next subtask description (one short sentence).
+
+        ``active_subgoal`` is a hard constraint surfaced by the agent's
+        subgoal stack. When set, the planner's emit must
+        concretely advance that subgoal.
+        """
 
     def stats(self) -> dict[str, Any]:
         """Optional runtime stats (call count, etc.) for observability."""
@@ -179,6 +211,7 @@ class LLMSubtaskPlanner(SubtaskPlanner):
         observation: str,
         history: str = "",
         last_subtask: str | None = None,
+        active_subgoal: str | None = None,
     ) -> str:
         self._step_count += 1
         self._steps_since_plan += 1
@@ -195,6 +228,7 @@ class LLMSubtaskPlanner(SubtaskPlanner):
             observation=(observation or "")[: self._observation_chars],
             history=history or "(no history yet)",
             last_subtask=cached or "(none yet — this is the first plan)",
+            active_subgoal_block=_render_active_subgoal_block(active_subgoal),
         )
         messages = [
             SystemMessage(content=self._system_prompt),

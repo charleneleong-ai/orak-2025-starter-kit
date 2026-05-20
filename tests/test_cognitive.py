@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -195,14 +197,18 @@ class _FakeMsg:
 
 
 class _FakeLLM:
-    """Mock langchain-style LLM that returns a fixed response."""
+    """Mock langchain-style LLM. Records the last messages so tests can assert
+    against the rendered prompt without a separate capturing subclass."""
 
     def __init__(self, response_text: str = ""):
         self._response_text = response_text
         self.invoke_count = 0
+        self.last_user_text: str | None = None
 
     def invoke(self, messages):
         self.invoke_count += 1
+        if len(messages) > 1:
+            self.last_user_text = getattr(messages[1], "content", None)
         return _FakeMsg(self._response_text)
 
 
@@ -703,3 +709,56 @@ def test_unified_agent_self_reflector_factory_consults_adapter_recommendation():
     src = inspect.getsource(unified.UnifiedMaclaAgent._maybe_init_self_reflector)
     assert "RECOMMENDED_USE_SELF_REFLECTION" in src
     assert "RECOMMENDED_REFLECTION_EVERY" in src
+
+
+# Active subgoal threaded into the planner as a soft preference (v3).
+# v2 used HARD CONSTRAINT phrasing — that locked the planner in PalletTown
+# when move_to could not cross the Pallet→Route1 edge (see PR #93 doc).
+# v3 keeps the same wiring but softens the language and adds a
+# stagnation escape valve in unified.py — both verified in
+# tests/test_macla_stage_r_v3_escape_valve.py.
+
+
+def test_planner_renders_active_subgoal_as_soft_preference():
+    from agents._cognitive import LLMSubtaskPlanner
+
+    fake = _FakeLLM("### Subtask\nWalk north along Route1.\n")
+    p = LLMSubtaskPlanner(fake)
+    p.plan(
+        goal="champion",
+        observation="map=Route1 pos=(8,2)",
+        active_subgoal="NavigateToMap(ViridianCity): Walk until map is ViridianCity",
+    )
+    assert "NavigateToMap(ViridianCity)" in fake.last_user_text
+    assert "Currently pursuing" in fake.last_user_text
+    assert "HARD CONSTRAINT" not in fake.last_user_text
+
+
+def test_planner_omits_active_subgoal_block_when_none():
+    """Legacy behaviour preserved when no subgoal — no empty/misleading section."""
+    from agents._cognitive import LLMSubtaskPlanner
+
+    fake = _FakeLLM("### Subtask\nExplore the area.\n")
+    p = LLMSubtaskPlanner(fake)
+    out = p.plan(goal="g", observation="o", active_subgoal=None)
+    assert out == "Explore the area."
+    assert "Currently pursuing" not in fake.last_user_text
+    assert "HARD CONSTRAINT" not in fake.last_user_text
+
+
+def test_planner_system_prompt_teaches_active_subgoal_preference():
+    from agents._cognitive.subtask_planner import DEFAULT_SYSTEM_PROMPT
+
+    assert "active subgoal" in DEFAULT_SYSTEM_PROMPT.lower()
+    assert "prefer" in DEFAULT_SYSTEM_PROMPT.lower()
+    assert "hard constraint" not in DEFAULT_SYSTEM_PROMPT.lower()
+
+
+def test_unified_act_loop_wires_active_subgoal_into_planner():
+    """Planner call site must thread active_subgoal= AND the legacy
+    standalone [Active subgoal — pursue] block must be gone — two competing
+    instruction blocks was the v1 failure mode."""
+    src = Path("agents/macla/unified.py").read_text()
+    assert "self._subtask_planner.plan(" in src
+    assert "active_subgoal=" in src
+    assert "[Active subgoal — pursue this until" not in src

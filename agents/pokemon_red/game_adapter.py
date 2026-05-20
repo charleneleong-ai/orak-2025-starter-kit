@@ -281,7 +281,125 @@ TRAJECTORY_ZONE_EXTRACTOR = _traj_zone
 TRAJECTORY_SCORE_MAX = 7.0
 
 # Stage Q2: minimum raw score an iter must reach for its procedures to
-# survive the next iter's checkpoint-load prune. M4 (4/7 — Charmander
-# nickname dialog crossed) is the gate that distinguishes a productive
-# iter from a stuck-in-Pallet-Town iter (the Stage Q n=5 failure mode).
-PROC_CACHE_MIN_ITER_SCORE = 4.0
+# survive the next iter's checkpoint-load prune. Stage R v4 n=5
+# introspection (docs/experiments/stage_r_subgoals/v4_n5_introspection.md)
+# showed M4 (4/7) is cutscene-paced and not a real boundary-crossing
+# signal — iters that ended at score 4.0 had never left PalletTown
+# but were retained as "good" and poisoned later iters. M5 (5/7 —
+# EnterViridian) is the smallest score that proves the agent actually
+# crossed Pallet→Route1→Viridian, so it's the right keep gate.
+PROC_CACHE_MIN_ITER_SCORE = 5.0
+
+
+# ── hierarchical subgoal templates ──────────────────────────────────
+# Each subgoal carries an explicit completion predicate. The planner
+# emits a stack of these; per step the executor checks the top
+# subgoal's completion(obs) and pops on fire.
+#
+# Predicates must be picklable (existing checkpoint code uses pickle),
+# so we use module-level functions + functools.partial — not lambdas.
+from functools import partial as _partial  # noqa: E402
+
+from agents.macla.macla_lib import (  # noqa: E402
+    Subgoal,
+    build_score_milestone_stack,
+    completes_when_score_at_least,
+    make_score_milestone_subgoal,
+)
+
+
+def _completes_when_map_is(target: str, obs: dict) -> bool:
+    return obs.get("map_name") == target
+
+
+def _completes_when_dialog_mentions(npc: str, obs: dict) -> bool:
+    return npc in (obs.get("recent_dialog", "") or "")
+
+
+def _navigate_to_map(target: str) -> Subgoal:
+    return Subgoal(
+        name=f"NavigateToMap({target})",
+        description=f"Walk until the current map is {target}.",
+        completion=_partial(_completes_when_map_is, target),
+        suggested_tools=["move_to"],
+    )
+
+
+def _talk_to(npc: str) -> Subgoal:
+    return Subgoal(
+        name=f"TalkTo({npc})",
+        description=f"Interact with {npc} (dialog should mention them).",
+        completion=_partial(_completes_when_dialog_mentions, npc),
+        suggested_tools=["interact_with_object", "continue_dialog", "a"],
+    )
+
+
+def _defeat_trainer(trainer: str, score_after: int) -> Subgoal:
+    return Subgoal(
+        name=f"DefeatTrainer({trainer})",
+        description=f"Win the battle vs {trainer} — score should reach {score_after}.",
+        completion=_partial(completes_when_score_at_least, score_after),
+        suggested_tools=["a", "interact_with_object"],
+    )
+
+
+# Per-milestone registry: score-threshold -> (name, description, suggested_tools).
+# Mirrors pokemon_red_env.py:276-304's 7-point ladder (M1..M7). M1-M4 are
+# cutscene-paced; M5+ requires navigation, so only those land in the
+# initial stack. Adding M8+ = one dict entry — no other edits.
+_POKEMON_MILESTONE_LIBRARY: dict[int, tuple[str, str, list[str]]] = {
+    5: (
+        "EnterViridian",
+        "Walk into Viridian City (any Viridian-named map). Route 1 leads "
+        "directly north from Pallet Town.",
+        ["move_to"],
+    ),
+    6: (
+        "GetOaksParcel",
+        "Pick up Oak's Parcel from the Viridian Mart — enter the Mart "
+        "(blue-roofed building in Viridian City) and talk to the clerk "
+        "at the counter.",
+        ["move_to", "interact_with_object", "continue_dialog", "a"],
+    ),
+    7: (
+        "DeliverOaksParcel",
+        "Return to Pallet Town and deliver Oak's Parcel to Professor Oak "
+        "in his lab (south side of Pallet Town).",
+        ["move_to", "interact_with_object", "continue_dialog", "a"],
+    ),
+}
+
+
+def _reach_pokemon_milestone(idx: int) -> Subgoal:
+    """Thin pokemon-side wrapper over ``make_score_milestone_subgoal`` that
+    looks up descriptive metadata from ``_POKEMON_MILESTONE_LIBRARY``."""
+    name, description, tools = _POKEMON_MILESTONE_LIBRARY[idx]
+    return make_score_milestone_subgoal(idx, name, description, tools)
+
+
+SUBGOAL_TEMPLATES = {
+    "NavigateToMap": _navigate_to_map,
+    "TalkTo": _talk_to,
+    "DefeatTrainer": _defeat_trainer,
+    "ReachMilestone": _reach_pokemon_milestone,
+}
+
+
+def initial_subgoal_stack() -> list[Subgoal]:
+    """Per-game default subgoal stack pushed at fresh-iter start.
+
+    For pokemon the critical path through the 7-point env scoring ladder
+    is: Route1 (top, immediate) → M5 EnterViridian → M6 GetOaksParcel →
+    M7 DeliverOaksParcel (bottom). M1-M4 (leave RedsHouse → encounter Oak
+    → get starter → win rival) are cutscene-paced and don't need stack
+    entries; M5+ are the navigation-bound ones the agent has historically
+    ceiling-bound on.
+
+    Built via the generic ``build_score_milestone_stack`` framework helper
+    so any other game with a monotone integer score can plug in by
+    declaring its own ``MILESTONE_LIBRARY`` + preamble.
+    """
+    return build_score_milestone_stack(
+        _POKEMON_MILESTONE_LIBRARY,
+        preamble=[_navigate_to_map("Route1")],  # immediate next from Pallet
+    )
