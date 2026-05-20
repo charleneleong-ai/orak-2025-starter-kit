@@ -104,28 +104,18 @@ class TestRollingCleanup:
         assert {p.stem for p in pkls} == {j.stem for j in jsons}
 
 
-class TestTmpWarning:
-    """Emit a loud loguru warning at runner start-up when ``GAME_DATA_DIR``
-    points at ``/tmp/`` — that's the exact misconfiguration that killed
-    Stage R v5 iter5."""
+class TestTmpWarningWired:
+    """``runner.py`` must call ``autoresearch.files.warn_if_tmp_data_dir``
+    on each game's checkpoint dir at runner start-up. The helper lives in
+    autoresearch (PR #102, v0.27.0) — orak's job is just to wire it.
+    Source-grep test mirrors the cache-veto wiring tests in the
+    cache-veto module."""
 
-    @pytest.mark.parametrize(
-        "path,expect_warn",
-        [
-            ("/tmp/orak-anything", True),
-            ("/tmp/sub/dir", True),
-            ("/workspace/orak-x", False),
-            ("/var/data", False),
-        ],
-    )
-    def test_warns_on_tmp_root(self, path: str, expect_warn: bool):
-        from evaluation_utils.commons import warn_if_tmp_data_dir
+    def test_runner_imports_and_calls_warn(self):
+        import inspect
 
-        warnings: list[str] = []
-        try:
-            warn_if_tmp_data_dir(path, _warn=warnings.append)
-        except Exception as exc:  # pragma: no cover - regression net
-            pytest.fail(f"warn_if_tmp_data_dir raised: {exc!r}")
-        assert bool(warnings) == expect_warn
-        if expect_warn:
-            assert "/tmp" in warnings[0]
+        from evaluation_utils import runner
+
+        src = inspect.getsource(runner)
+        assert "from autoresearch.files import warn_if_tmp_data_dir" in src
+        assert "warn_if_tmp_data_dir(checkpoint_dir)" in src
