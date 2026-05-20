@@ -53,6 +53,19 @@ This is an **efficiency** fix, not a capability fix — it makes successful runs
 - [ ] n=5 sweep with cache veto enabled — bars: minimum no iter < 50% · lift mean > 57.14% · stretch ≥2 iters > 71.43%
 - [ ] move_to boundary detection — pre-existing commit `ff88e84` needs its own test coverage check (was this already TDD'd?)
 
+## Tertiary: move sweep checkpoints out of `/tmp`
+
+The Stage R v5 sweep was bitten by `/tmp` ENOSPC on 2026-05-20 — 4 iters × 600 steps of `UnifiedMaclaAgent_step_*.pkl` checkpoints filled the partition, iter5 died at launch with `error: No space left on device (os error 28) at /tmp/.tmpH1Rrar`, and the iter4 checkpoint pickle was then lost during the disk cleanup (couldn't re-run iter5).
+
+The default path is `evaluation_utils/checkpoint_manager.py`'s `/tmp/orak-<branch>-<sweep>/.../checkpoints/`. Two changes worth bundling here:
+
+1. **Move default to `/workspace`** — `/workspace` is the 199G partition; `/tmp` was the much smaller scratch budget. Either change the checkpoint-manager default or make the launcher set `CKPT_ROOT=/workspace/orak-<branch>/checkpoints` explicitly.
+2. **Rolling-window cleanup** — keep only the N most recent checkpoints per iter (e.g. N=3) and the *final* checkpoint per iter. Current behaviour writes every step's pickle and never garbage-collects within an iter.
+
+Plus a launcher hygiene fix: `run_pokemon_n5_v5.sh` (and successors) should `rm -rf` the prior sweep's checkpoint dir on start to prevent cross-rerun buildup.
+
+These don't block #1 (cache veto) but should land in the same Stage S PR — preventing a recurrence of the v5 outcome.
+
 ## Out of scope for this branch
 
 - Anything that requires changes to PR #97's Stage R levers (those are stable and shipping)
