@@ -6,6 +6,38 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GAME_DATA_DIR = os.getenv("GAME_DATA_DIR", os.path.join(REPO_ROOT, "game_logs"))
 GAME_RESULTS_PATH = os.path.join(GAME_DATA_DIR, "game_results.json")
 
+
+def warn_if_tmp_data_dir(path: str, *, _warn=None) -> None:
+    """Emit a loud warning when ``GAME_DATA_DIR`` is under ``/tmp/``.
+
+    Stage R v5 iter5 was killed at launch by ENOSPC because the launcher
+    set ``GAME_DATA_DIR=/tmp/orak-...`` and 4 iters × 600 steps of per-step
+    checkpoint pickles saturated ``/tmp`` (much smaller than ``/workspace``
+    on this box). Mitigations are twofold: rolling-window cleanup
+    (``CheckpointManager(keep_last_n=...)``) plus this warning so anyone
+    running an overnight sweep notices the misconfiguration before it
+    bites them.
+
+    ``_warn`` is injected for tests; production code uses loguru.
+    """
+    if not str(path).startswith("/tmp/"):
+        return
+    msg = (
+        f"GAME_DATA_DIR={path!r} is under /tmp/. Long-running sweeps "
+        "will accumulate per-step checkpoint pickles and may hit ENOSPC. "
+        "Set GAME_DATA_DIR=/workspace/<sweep-name>/ instead, or rely on "
+        "the in-repo game_logs/ default."
+    )
+    if _warn is not None:
+        _warn(msg)
+        return
+    from loguru import logger as _loguru_logger  # local — keeps commons cheap
+
+    _loguru_logger.warning(msg)
+
+
+warn_if_tmp_data_dir(GAME_DATA_DIR)
+
 # Get a logger for the module where the client is used
 logger = logging.getLogger(__name__)
 
