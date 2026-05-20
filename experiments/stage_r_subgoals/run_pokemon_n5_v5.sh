@@ -31,7 +31,7 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "$REPO"
+cd "$REPO" || exit 1
 
 # Load API keys if present
 [[ -f "$REPO/.env" ]] && set -a && source "$REPO/.env" && set +a
