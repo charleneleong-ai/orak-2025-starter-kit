@@ -281,10 +281,14 @@ TRAJECTORY_ZONE_EXTRACTOR = _traj_zone
 TRAJECTORY_SCORE_MAX = 7.0
 
 # Stage Q2: minimum raw score an iter must reach for its procedures to
-# survive the next iter's checkpoint-load prune. M4 (4/7 — Charmander
-# nickname dialog crossed) is the gate that distinguishes a productive
-# iter from a stuck-in-Pallet-Town iter (the Stage Q n=5 failure mode).
-PROC_CACHE_MIN_ITER_SCORE = 4.0
+# survive the next iter's checkpoint-load prune. Stage R v4 n=5
+# introspection (docs/experiments/stage_r_subgoals/v4_n5_introspection.md)
+# showed M4 (4/7) is cutscene-paced and not a real boundary-crossing
+# signal — iters that ended at score 4.0 had never left PalletTown
+# but were retained as "good" and poisoned later iters. M5 (5/7 —
+# EnterViridian) is the smallest score that proves the agent actually
+# crossed Pallet→Route1→Viridian, so it's the right keep gate.
+PROC_CACHE_MIN_ITER_SCORE = 5.0
 
 
 # ── hierarchical subgoal templates ──────────────────────────────────

@@ -120,6 +120,11 @@ class TestPruneLowScoreIter:
 
 def test_pokemon_adapter_exposes_proc_cache_threshold():
     # Per-game threshold lives in the adapter so mario/2048 can set their own.
+    # Bumped 4.0 -> 5.0 after Stage R v4 n=5 introspection: iter2/iter4 hit
+    # exactly 4.0 (M4 = cutscene-paced, no boundary crossed) but never left
+    # PalletTown, so their procs were retained as "good" and poisoned
+    # iter3/iter5. M5 (5.0) = actually crossed Pallet→Route1→Viridian and
+    # is the smallest score that proves real boundary-crossing.
     from agents.pokemon_red.game_adapter import PROC_CACHE_MIN_ITER_SCORE
 
-    assert PROC_CACHE_MIN_ITER_SCORE == 4.0
+    assert PROC_CACHE_MIN_ITER_SCORE == 5.0
