@@ -13,8 +13,6 @@ from __future__ import annotations
 import pickle
 from pathlib import Path
 
-import pytest
-
 
 class _StubAgent:
     """Minimal Checkpointable stub — keeps the tests independent of the
