@@ -246,3 +246,52 @@ class TestCollateSweep:
         _write_iter_dir(root, "iter1", n_steps=1, final_score=50.0)
         samples = collate_sweep(root, score_max=100.0)
         assert samples[0].reward == pytest.approx(0.5)
+
+
+class TestGroupIdSidecar:
+    """The re-roll launcher writes ``gspo_group.json`` into each iter dir
+    to tag it with a shared group_id. Collator picks it up — without
+    this, every iter is its own group (variance=0, no gradient signal)."""
+
+    def test_sidecar_overrides_default_group_id(self, tmp_path: Path):
+        d = _write_iter_dir(tmp_path, "iter1", n_steps=2, final_score=5.0)
+        (d / "gspo_group.json").write_text(json.dumps({"group_id": "shared_g"}))
+        samples = collate_iter(d)
+        assert all(s.group_id == "shared_g" for s in samples)
+        # run_id is independent — still the dir name (for traceability).
+        assert all(s.run_id == "iter1" for s in samples)
+
+    def test_no_sidecar_falls_back_to_run_id(self, tmp_path: Path):
+        """Existing collation behavior preserved when no sidecar present."""
+        d = _write_iter_dir(tmp_path, "iter1", n_steps=2, final_score=5.0)
+        samples = collate_iter(d)
+        assert all(s.group_id == "iter1" for s in samples)
+
+    def test_sidecar_missing_group_id_field_falls_back(self, tmp_path: Path):
+        """Defensive: a malformed sidecar (file present but no group_id
+        key) shouldn't crash; falls back to run_id default."""
+        d = _write_iter_dir(tmp_path, "iter1", n_steps=2, final_score=5.0)
+        (d / "gspo_group.json").write_text(json.dumps({"comment": "no group_id key"}))
+        samples = collate_iter(d)
+        assert all(s.group_id == "iter1" for s in samples)
+
+    def test_sweep_aggregates_sidecar_groups(self, tmp_path: Path):
+        """Re-roll case: 3 iter dirs, all tagged with the same group_id
+        via sidecar → collate_sweep produces 1 group, n=3 samples-per-iter
+        × 3 iters = 9 samples sharing a group_id."""
+        root = tmp_path / "pokemon_red"
+        root.mkdir()
+        for name, score in [("k1", 5.0), ("k2", 3.0), ("k3", 7.0)]:
+            d = _write_iter_dir(root, name, n_steps=3, final_score=score)
+            (d / "gspo_group.json").write_text(json.dumps({"group_id": "reroll_g"}))
+        samples = collate_sweep(root)
+        assert len(samples) == 9
+        assert {s.group_id for s in samples} == {"reroll_g"}
+        # Three distinct run_ids, one per K rollout
+        assert {s.run_id for s in samples} == {"k1", "k2", "k3"}
+        # Rewards still per-trajectory (each rollout's final_score)
+        assert {round(s.reward, 4) for s in samples} == {
+            round(5.0 / 7, 4),
+            round(3.0 / 7, 4),
+            round(7.0 / 7, 4),
+        }

@@ -75,6 +75,17 @@ def collate_iter(run_dir: Path, *, score_max: float = 7.0) -> list[GSPOSample]:
     final_score = float(json.loads(summary_path.read_text())["episodes"][0]["final_score"])
     reward = final_score / score_max
     run_id = run_dir.name
+    # Re-roll launcher writes ``gspo_group.json`` to override the default
+    # ``group_id=run_id``. Without this, K trajectories from the same
+    # checkpoint state can't share a group → variance=0 → no gradient.
+    sidecar_path = run_dir / "gspo_group.json"
+    group_id = run_id
+    if sidecar_path.exists():
+        try:
+            sidecar = json.loads(sidecar_path.read_text())
+            group_id = str(sidecar.get("group_id") or run_id)
+        except (json.JSONDecodeError, OSError):
+            pass  # malformed sidecar — fall back to run_id default
     samples: list[GSPOSample] = []
     for line in states_path.read_text().splitlines():
         if not line.strip():
@@ -87,7 +98,7 @@ def collate_iter(run_dir: Path, *, score_max: float = 7.0) -> list[GSPOSample]:
                 prompt=row.get("obs", {}).get("obs_str", ""),
                 completion=row.get("action", ""),
                 reward=reward,
-                group_id=run_id,
+                group_id=group_id,
             )
         )
     return samples
