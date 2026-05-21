@@ -1,12 +1,26 @@
 #!/usr/bin/env bash
-# GSPO re-roll launcher — run K rollouts from a shared checkpoint state,
+# GSPO re-roll launcher — run K rollouts that share MACLA agent state,
 # tag them with a common group_id so the collator can build a real
 # group-relative advantage distribution.
+#
+# What "share a checkpoint" means here (verified against runner.py:360-411):
+#   --load-checkpoint --prev-run-id X restores ONLY the agent's learned
+#   state (procedural memory + vector memory via agent.load_state). The
+#   env is created fresh — the game starts at ROM start every rollout,
+#   not at a mid-game world position. Transient counters (_step_count,
+#   _last_score, _last_action) are explicitly reset on the prev_run_id
+#   branch.
+#
+# Variance source: vLLM sampling at temperature>0 (gemma_26b: 0.7) makes
+# K stochastic rollouts of the same policy diverge into different
+# trajectories with different final scores. That divergence — not shared
+# world state — is what gives the group non-zero variance and thus a
+# meaningful group-relative advantage.
 #
 # Why: train.py refuses on degenerate datasets where every group_id is
 # a singleton (variance=0 → no gradient signal). The default collation
 # uses group_id=run_id so each iter is its own group; this launcher
-# breaks that by re-rolling K times from one checkpoint with a shared
+# breaks that by re-rolling K times from one MACLA state with a shared
 # group_id, written to gspo_group.json in each rollout's iter dir.
 #
 # Usage:
@@ -17,6 +31,7 @@
 #
 # Pre-flights:
 #   * vLLM serving the same model as configs/pokemon_red/agent/<cfg>.yaml
+#   * Agent config temperature > 0 (otherwise K rollouts are identical)
 #   * The checkpoint run_id must exist under $GAME_DATA_DIR/<game>/
 #   * macla state-load mechanism must be intact (--load-checkpoint flag)
 
@@ -99,6 +114,15 @@ served=$(curl -s --max-time 3 http://localhost:8000/v1/models 2>/dev/null \
 declared=$(grep '^model:' "$AGENT_CFG" | head -1 | sed 's/model: *"//;s/" *$//')
 [[ "$served" == "$declared" ]] || { echo "FATAL: vLLM mismatch $served vs $declared"; exit 1; }
 echo "[preflight] vLLM serving $served"
+
+# Temperature gate: K rollouts only diverge if the policy decodes
+# stochastically. If temperature is 0 (or absent → defaults vary by
+# provider), every rollout is identical → group variance=0 → no gradient.
+temp=$(grep '^temperature:' "$AGENT_CFG" | head -1 | awk '{print $2}')
+awk_temp_ok=$(awk -v t="${temp:-0}" 'BEGIN{print (t+0 > 0) ? 1 : 0}')
+[[ "$awk_temp_ok" == "1" ]] \
+    || { echo "FATAL: temperature=$temp in $AGENT_CFG — K rollouts would be identical"; exit 1; }
+echo "[preflight] sampling temperature: $temp"
 
 # ── per-rollout loop ──────────────────────────────────────────────────
 echo "================================================================"
