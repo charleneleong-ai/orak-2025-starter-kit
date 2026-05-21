@@ -347,7 +347,7 @@ def _defeat_trainer(trainer: str, score_after: int) -> Subgoal:
 # Per-milestone registry: score-threshold -> MilestoneSpec.
 # Mirrors pokemon_red_env.py:276-304's 7-point ladder (M1..M7). M1-M4 are
 # cutscene-paced; M5+ requires navigation, so only those land in the
-# initial stack. ``requires_map`` declares the geographic prerequisite for
+# initial stack. ``requires_location`` declares the geographic prerequisite for
 # the score gate to fire — the framework auto-inserts the matching
 # ``NavigateToMap`` bridge subgoal above the milestone, lifting Stage S v1's
 # manual ViridianCity insert into the library. Adding M8+ = one dict entry.
@@ -361,7 +361,7 @@ _POKEMON_MILESTONE_LIBRARY: dict[int, MilestoneSpec] = {
         suggested_tools=["move_to"],
         # Score ticks only on the env detecting Viridian entry — needs a
         # spatial nav subgoal above to give the planner a target.
-        requires_map="ViridianCity",
+        requires_location="ViridianCity",
     ),
     6: MilestoneSpec(
         name="GetOaksParcel",
@@ -413,7 +413,7 @@ def initial_subgoal_stack() -> list[Subgoal]:
     declaring its own ``MILESTONE_LIBRARY`` + preamble.
     """
     # The ViridianCity bridge that Stage S v1 introduced is now declared
-    # on the M5 ``EnterViridian`` milestone via ``requires_map``; the
+    # on the M5 ``EnterViridian`` milestone via ``requires_location``; the
     # framework auto-inserts the matching ``NavigateToMap(ViridianCity)``
     # subgoal above it. Only the immediate-next Route1 nav stays in the
     # preamble (top of stack), since it has no score milestone above it.

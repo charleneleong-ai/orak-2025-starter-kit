@@ -239,37 +239,37 @@ class TestReflexionSummary:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# MilestoneSpec + requires_map auto-bridging
+# MilestoneSpec + requires_location auto-bridging
 # ─────────────────────────────────────────────────────────────────────────
 #
 # Lifts Stage S v1's manual ViridianCity nav insert into the framework:
-# any milestone declaring ``requires_map="X"`` gets a ``NavigateToMap(X)``
+# any milestone declaring ``requires_location="X"`` gets a ``NavigateToMap(X)``
 # subgoal auto-inserted directly above it in the stack — converting the
 # unplannable score-based predicate into a sequence the planner can target.
 
 
 class TestMilestoneSpec:
     """``MilestoneSpec`` is the declarative entry for the score-milestone
-    library. ``requires_map`` is the optional spatial prerequisite for the
+    library. ``requires_location`` is the optional spatial prerequisite for the
     score gate to fire."""
 
     def test_required_fields_only(self):
         spec = MilestoneSpec(name="N", description="D", suggested_tools=["a"])
         assert spec.name == "N" and spec.description == "D"
         assert spec.suggested_tools == ["a"]
-        assert spec.requires_map is None
+        assert spec.requires_location is None
 
-    def test_requires_map_field(self):
+    def test_requires_location_field(self):
         spec = MilestoneSpec(
-            name="EnterX", description="...", suggested_tools=["move_to"], requires_map="X"
+            name="EnterX", description="...", suggested_tools=["move_to"], requires_location="X"
         )
-        assert spec.requires_map == "X"
+        assert spec.requires_location == "X"
 
 
-class TestRequiresMapBridge:
+class TestRequiresLocationBridge:
     """``build_score_milestone_stack`` auto-inserts a
-    ``NavigateToMap(requires_map)`` subgoal directly above any score
-    milestone that declares ``requires_map``. Stack is bottom→top so
+    ``NavigateToMap(requires_location)`` subgoal directly above any score
+    milestone that declares ``requires_location``. Stack is bottom→top so
     the nav bridge sits one slot above (later in list, popped first)."""
 
     @staticmethod
@@ -281,7 +281,7 @@ class TestRequiresMapBridge:
             suggested_tools=["move_to"],
         )
 
-    def test_no_requires_map_no_bridge_inserted(self):
+    def test_no_requires_location_no_bridge_inserted(self):
         library = {
             5: MilestoneSpec(name="A", description="...", suggested_tools=["a"]),
             6: MilestoneSpec(name="B", description="...", suggested_tools=["a"]),
@@ -289,10 +289,10 @@ class TestRequiresMapBridge:
         stack = build_score_milestone_stack(library, nav_factory=self._nav)
         assert [sg.name for sg in stack] == ["B", "A"]
 
-    def test_single_requires_map_inserts_one_bridge(self):
+    def test_single_requires_location_inserts_one_bridge(self):
         library = {
             5: MilestoneSpec(
-                name="EnterX", description="...", suggested_tools=["move_to"], requires_map="X"
+                name="EnterX", description="...", suggested_tools=["move_to"], requires_location="X"
             ),
             6: MilestoneSpec(name="Next", description="...", suggested_tools=["a"]),
         }
@@ -306,7 +306,7 @@ class TestRequiresMapBridge:
                 name="EnterX",
                 description="...",
                 suggested_tools=["move_to"],
-                requires_map="Viridian",
+                requires_location="Viridian",
             ),
         }
         stack = build_score_milestone_stack(library, nav_factory=self._nav)
@@ -314,13 +314,13 @@ class TestRequiresMapBridge:
         assert bridge.completion({"map_name": "Viridian"}) is True
         assert bridge.completion({"map_name": "Other"}) is False
 
-    def test_multiple_requires_map_inserts_each_bridge(self):
+    def test_multiple_requires_location_inserts_each_bridge(self):
         library = {
             5: MilestoneSpec(
-                name="EnterX", description="...", suggested_tools=["move_to"], requires_map="X"
+                name="EnterX", description="...", suggested_tools=["move_to"], requires_location="X"
             ),
             6: MilestoneSpec(
-                name="EnterY", description="...", suggested_tools=["move_to"], requires_map="Y"
+                name="EnterY", description="...", suggested_tools=["move_to"], requires_location="Y"
             ),
         }
         stack = build_score_milestone_stack(library, nav_factory=self._nav)
@@ -332,13 +332,13 @@ class TestRequiresMapBridge:
             "NavigateToMap(X)",
         ]
 
-    def test_requires_map_without_nav_factory_raises(self):
-        """Misconfiguration: library declares ``requires_map`` but caller
+    def test_requires_location_without_nav_factory_raises(self):
+        """Misconfiguration: library declares ``requires_location`` but caller
         didn't supply a ``nav_factory``. Fail loud so the wiring bug is
         caught at startup, not at the M5 wall."""
         library = {
             5: MilestoneSpec(
-                name="EnterX", description="...", suggested_tools=["move_to"], requires_map="X"
+                name="EnterX", description="...", suggested_tools=["move_to"], requires_location="X"
             ),
         }
         with pytest.raises(ValueError, match="nav_factory"):
@@ -347,7 +347,7 @@ class TestRequiresMapBridge:
     def test_preamble_appended_after_bridges(self):
         library = {
             5: MilestoneSpec(
-                name="EnterX", description="...", suggested_tools=["move_to"], requires_map="X"
+                name="EnterX", description="...", suggested_tools=["move_to"], requires_location="X"
             ),
         }
         preamble = [self._nav("Start")]
