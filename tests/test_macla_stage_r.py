@@ -280,7 +280,8 @@ class TestPokemonSubgoalLadder:
     EXPECTED_NAMES = [
         "DeliverOaksParcel",  # bottom: M7 — parcel delivery
         "GetOaksParcel",  # M6 — Mart clerk
-        "EnterViridian",  # M5 — Viridian City
+        "EnterViridian",  # M5 — score-based, fires on env tick
+        "NavigateToMap(ViridianCity)",  # Stage S v1 bridge — exposes M5
         "NavigateToMap(Route1)",  # top: next-from-Pallet
     ]
 

@@ -163,6 +163,65 @@ class TestTmpWarningWired:
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Stage S v1 — ViridianCity nav subgoal bridges Route1 → M5
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class TestViridianCityNavBridge:
+    """Stage S Step 1 (the no-inherit baseline sweep) showed every iter
+    reached Route1 then bounced back to PalletTown — none ever entered
+    ViridianCity. Diagnosis (docs/experiments/stage_s_cache_veto/step1_n5_introspection.md
+    follow-up): ``EnterViridian``'s completion predicate is score-based
+    (``obs["score"] >= 5``), but score only ticks once the agent has
+    already entered Viridian — chicken-and-egg with no spatial pull for
+    the planner once ``NavigateToMap(Route1)`` has popped.
+
+    v1 fix: insert ``NavigateToMap(ViridianCity)`` below the Route1 nav
+    subgoal. After Route1 pops on entry, the planner sees a fresh "walk
+    until current map is ViridianCity" directive → emits ``move_to(x, 0)``
+    in Route1 → engine warps → ViridianCity nav pops → ``EnterViridian``
+    (score) exposed for the env to tick.
+    """
+
+    def test_stack_includes_viridian_city_nav_subgoal(self):
+        from agents.pokemon_red.game_adapter import initial_subgoal_stack
+
+        names = [sg.name for sg in initial_subgoal_stack()]
+        assert "NavigateToMap(ViridianCity)" in names, (
+            "Stage S v1: ViridianCity nav subgoal missing — Route1 → "
+            "Viridian boundary will be unbridged"
+        )
+
+    def test_viridian_nav_sits_above_m5_below_route1(self):
+        """Pop order: Route1 (top) → ViridianCity → EnterViridian (M5).
+        Verifies the *bridge* topology — ViridianCity must be the
+        immediate successor exposed when Route1 pops, with M5 sitting
+        below to fire on env score-tick once the agent is in Viridian."""
+        from agents.pokemon_red.game_adapter import initial_subgoal_stack
+
+        names = [sg.name for sg in initial_subgoal_stack()]  # bottom→top
+        i_m5 = names.index("EnterViridian")
+        i_viridian = names.index("NavigateToMap(ViridianCity)")
+        i_route1 = names.index("NavigateToMap(Route1)")
+        assert i_m5 < i_viridian < i_route1, (
+            f"Expected M5 < ViridianCity-nav < Route1-nav (bottom→top), "
+            f"got {names}"
+        )
+
+    def test_viridian_nav_completion_fires_on_viridiancity_map(self):
+        """``NavigateToMap(ViridianCity)`` pops when ``obs["map_name"]``
+        is ``ViridianCity`` — mirrors the existing Route1 nav predicate."""
+        from agents.pokemon_red.game_adapter import initial_subgoal_stack
+
+        viridian_nav = next(
+            sg for sg in initial_subgoal_stack() if sg.name == "NavigateToMap(ViridianCity)"
+        )
+        assert viridian_nav.completion({"map_name": "ViridianCity"}) is True
+        assert viridian_nav.completion({"map_name": "Route1"}) is False
+        assert viridian_nav.completion({"map_name": "PalletTown"}) is False
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # move_to boundary detection
 # ─────────────────────────────────────────────────────────────────────────
 

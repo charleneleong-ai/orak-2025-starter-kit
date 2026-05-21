@@ -401,5 +401,15 @@ def initial_subgoal_stack() -> list[Subgoal]:
     """
     return build_score_milestone_stack(
         _POKEMON_MILESTONE_LIBRARY,
-        preamble=[_navigate_to_map("Route1")],  # immediate next from Pallet
+        # Stage S v1: bridge Route1 → ViridianCity with an explicit map-name
+        # nav subgoal so the planner has a fresh spatial directive once
+        # Route1's nav pops. Without this, the next subgoal (EnterViridian)
+        # is score-based and only ticks when the env detects entry — chicken
+        # and egg, with no directional pull. Step 1 n=5 sweep showed every
+        # iter reached Route1 then bounced back to PalletTown; this bridge
+        # tests the structural hypothesis.
+        preamble=[
+            _navigate_to_map("ViridianCity"),  # exposed after Route1 pops
+            _navigate_to_map("Route1"),  # top: immediate next from Pallet
+        ],
     )
