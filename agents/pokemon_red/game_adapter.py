@@ -371,6 +371,11 @@ _POKEMON_MILESTONE_LIBRARY: dict[int, MilestoneSpec] = {
             "at the counter."
         ),
         suggested_tools=["move_to", "interact_with_object", "continue_dialog", "a"],
+        # Stage S v2: M6 fires on the parcel-pickup dialog inside ViridianMart.
+        # Without a spatial nav above, the planner sees only a score-based gate
+        # once M5 pops — same chicken-and-egg as v1's wall. The env's map_name
+        # canonically becomes "ViridianMart" on entering the interior tile.
+        requires_location="ViridianMart",
     ),
     7: MilestoneSpec(
         name="DeliverOaksParcel",
@@ -379,6 +384,13 @@ _POKEMON_MILESTONE_LIBRARY: dict[int, MilestoneSpec] = {
             "Oak in his lab (south side of Pallet Town)."
         ),
         suggested_tools=["move_to", "interact_with_object", "continue_dialog", "a"],
+        # Stage S v2: M7 fires inside OaksLab after delivering the parcel
+        # via dialog with Oak. Walking back to PalletTown then entering the
+        # lab is two map transitions; the framework's auto-bridge anchors the
+        # final one. The Route1-south traversal stays implicit — once the
+        # M6 ViridianMart nav pops, the planner's next spatial directive is
+        # NavigateToMap(OaksLab) and the env handles the warp chain.
+        requires_location="OaksLab",
     ),
 }
 
