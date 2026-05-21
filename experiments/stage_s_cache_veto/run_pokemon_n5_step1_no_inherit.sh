@@ -1,33 +1,17 @@
 #!/usr/bin/env bash
-# Stage S Step 1 — no-inherit baseline.
+# Stage S Step 1 — no-inherit baseline. HYPOTHESIS FALSIFIED — KEPT FOR REPLICATION.
 #
-# Stage R v5 n=5 sweep (docs/experiments/stage_r_subgoals/v5_n5_introspection.md)
-# proved the perf-prune write-side gate is correct but doesn't lift the
-# ceiling. Every iter inheriting iter1's procs gets stuck in PalletTown:
-# the cached PalletTown-tagged procs win selector arbitration even when
-# the escape valve fires.
+# Result: 57.14% × 5 (FLAT, std 0.0). Cache inheritance was never the wall.
+# Full diagnosis: docs/experiments/stage_s_cache_veto/step1_n5_introspection.md
+# Reverts on this branch: ef1ab2f (cache veto impl) + e5c3103 (Step 2 launcher).
+# The actual wall (Pallet → Viridian transition, score-based EnterViridian
+# with no spatial pull) was diagnosed from this sweep's per-iter logs and
+# fixed in v1 (commit 1811154): NavigateToMap("ViridianCity") subgoal bridge.
 #
-# Step 1 measures the upper bound when cache inheritance is fully off.
-# All 5 iters run with --load-checkpoint disabled — each iter is a
-# fresh slate. Implementation: drop `prev_run_id="$run_id"` at end of
-# loop so the chain never builds up.
-#
-# Expected outcome:
-#   - 5 × ~71% → cache inheritance was the only wall. Step 2 (cache
-#     veto under escape-valve fire) has a clear target: match this
-#     while keeping inheritance benefits.
-#   - 5 × ~57% → the wall is the M5 ceiling itself, not the cache.
-#     v4 iter1's 71% was a lucky run. Stage S scope reconsidered.
-#
-# This is a diagnostic sweep, not the production fix. The cache veto
-# code is present (Stage S commit d070f07) but dormant — no inheritance
-# means no cache to fight at boot.
-#
-# Stage S Step 1 bars:
-#   Minimum: no iter < 50% (don't regress v3's floor).
-#   Lift:    mean > 57.14% (break the v1/v3 ceiling on average).
-#   Stretch: >=2 iters past 71.43% (turn v4 iter1 outlier into the
-#            n=5 norm).
+# Originally intended as the upper-bound check for the cache-veto hypothesis:
+# every iter --load-checkpoint disabled, each iter a fresh slate. The
+# falsification came from 5 iters all bouncing Route1 → PalletTown without
+# ever entering Viridian — diagnostic signal, not a fix.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -61,16 +45,12 @@ declared=$(grep '^model:' "$AGENT_CFG" | head -1 | sed 's/model: *"//;s/" *$//')
 [[ "$served" == "$declared" ]] || { echo "FATAL: vLLM mismatch $served vs $declared"; exit 1; }
 echo "[preflight] vLLM serving $served"
 
-# Pre-flight: Stage S = v5 levers + cache veto code present (dormant)
+# Pre-flight: v5 lever stack still intact (Stage S = v5 levers; the cache-veto
+# code that was here originally was reverted on this branch — ef1ab2f / e5c3103 —
+# after Step 1's FLAT result falsified the hypothesis).
 grep -q "^PROC_CACHE_MIN_ITER_SCORE = 5.0" agents/pokemon_red/game_adapter.py \
     || { echo "FATAL: PROC_CACHE_MIN_ITER_SCORE not 5.0"; exit 1; }
 echo "[preflight] PROC_CACHE_MIN_ITER_SCORE=5.0 (M5 / EnterViridian gate)"
-
-grep -q "^CACHE_VETO_K_STEPS" agents/macla/unified.py \
-    || { echo "FATAL: Stage S cache veto constant missing"; exit 1; }
-grep -q "def set_cache_veto" agents/macla/macla_lib.py \
-    || { echo "FATAL: Stage S set_cache_veto method missing"; exit 1; }
-echo "[preflight] Stage S cache veto wired (dormant on no-inherit)"
 
 # v4 levers still required
 # (0) Adapter wiring + hand-authored MAP_GRAPH removed

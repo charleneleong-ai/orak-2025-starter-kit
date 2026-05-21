@@ -1,5 +1,21 @@
 # Stage S — cache ↔ escape-valve arbitration (and existing move_to boundary detection)
 
+> **STATUS: HYPOTHESIS FALSIFIED — kept for historical context.**
+>
+> Step 1 (no-inherit baseline + cache veto wired but dormant) landed at
+> exactly v3's M4 ceiling (57.14% × 5, std 0.0). Cache inheritance was
+> never the wall. Cache veto code was reverted on this branch
+> (`ef1ab2f` + `e5c3103`); the actual wall (score-based `EnterViridian`
+> with no spatial pull once `Route1` nav pops) was fixed in **v1** by a
+> `NavigateToMap("ViridianCity")` subgoal bridge (commit `1811154`).
+> v1 n=5 result: **74.29% ± 6.39pp**, iter4 punched M6 at 85.71%.
+>
+> Falsification details: [`docs/experiments/stage_s_cache_veto/step1_n5_introspection.md`](../experiments/stage_s_cache_veto/step1_n5_introspection.md).
+> The text below preserves the original cache-arbitration analysis as it
+> was proposed — useful if a future stage revisits read-side cache
+> inheritance with a discriminating policy. The move_to boundary section
+> (later in this doc) shipped as designed.
+
 This branch consolidates two follow-ups deferred from Stage R (PR #97). Both are MACLA / agent-side improvements identified by the v4 and v5 n=5 introspections, but they sit at very different priorities and don't share files.
 
 ## Primary: cache veto under escape-valve fire
