@@ -301,6 +301,7 @@ PROC_CACHE_MIN_ITER_SCORE = 5.0
 from functools import partial as _partial  # noqa: E402
 
 from agents.macla.macla_lib import (  # noqa: E402
+    MilestoneSpec,
     Subgoal,
     build_score_milestone_stack,
     completes_when_score_at_least,
@@ -343,29 +344,41 @@ def _defeat_trainer(trainer: str, score_after: int) -> Subgoal:
     )
 
 
-# Per-milestone registry: score-threshold -> (name, description, suggested_tools).
+# Per-milestone registry: score-threshold -> MilestoneSpec.
 # Mirrors pokemon_red_env.py:276-304's 7-point ladder (M1..M7). M1-M4 are
 # cutscene-paced; M5+ requires navigation, so only those land in the
-# initial stack. Adding M8+ = one dict entry — no other edits.
-_POKEMON_MILESTONE_LIBRARY: dict[int, tuple[str, str, list[str]]] = {
-    5: (
-        "EnterViridian",
-        "Walk into Viridian City (any Viridian-named map). Route 1 leads "
-        "directly north from Pallet Town.",
-        ["move_to"],
+# initial stack. ``requires_map`` declares the geographic prerequisite for
+# the score gate to fire — the framework auto-inserts the matching
+# ``NavigateToMap`` bridge subgoal above the milestone, lifting Stage S v1's
+# manual ViridianCity insert into the library. Adding M8+ = one dict entry.
+_POKEMON_MILESTONE_LIBRARY: dict[int, MilestoneSpec] = {
+    5: MilestoneSpec(
+        name="EnterViridian",
+        description=(
+            "Walk into Viridian City (any Viridian-named map). Route 1 "
+            "leads directly north from Pallet Town."
+        ),
+        suggested_tools=["move_to"],
+        # Score ticks only on the env detecting Viridian entry — needs a
+        # spatial nav subgoal above to give the planner a target.
+        requires_map="ViridianCity",
     ),
-    6: (
-        "GetOaksParcel",
-        "Pick up Oak's Parcel from the Viridian Mart — enter the Mart "
-        "(blue-roofed building in Viridian City) and talk to the clerk "
-        "at the counter.",
-        ["move_to", "interact_with_object", "continue_dialog", "a"],
+    6: MilestoneSpec(
+        name="GetOaksParcel",
+        description=(
+            "Pick up Oak's Parcel from the Viridian Mart — enter the Mart "
+            "(blue-roofed building in Viridian City) and talk to the clerk "
+            "at the counter."
+        ),
+        suggested_tools=["move_to", "interact_with_object", "continue_dialog", "a"],
     ),
-    7: (
-        "DeliverOaksParcel",
-        "Return to Pallet Town and deliver Oak's Parcel to Professor Oak "
-        "in his lab (south side of Pallet Town).",
-        ["move_to", "interact_with_object", "continue_dialog", "a"],
+    7: MilestoneSpec(
+        name="DeliverOaksParcel",
+        description=(
+            "Return to Pallet Town and deliver Oak's Parcel to Professor "
+            "Oak in his lab (south side of Pallet Town)."
+        ),
+        suggested_tools=["move_to", "interact_with_object", "continue_dialog", "a"],
     ),
 }
 
@@ -373,8 +386,8 @@ _POKEMON_MILESTONE_LIBRARY: dict[int, tuple[str, str, list[str]]] = {
 def _reach_pokemon_milestone(idx: int) -> Subgoal:
     """Thin pokemon-side wrapper over ``make_score_milestone_subgoal`` that
     looks up descriptive metadata from ``_POKEMON_MILESTONE_LIBRARY``."""
-    name, description, tools = _POKEMON_MILESTONE_LIBRARY[idx]
-    return make_score_milestone_subgoal(idx, name, description, tools)
+    spec = _POKEMON_MILESTONE_LIBRARY[idx]
+    return make_score_milestone_subgoal(idx, spec.name, spec.description, spec.suggested_tools)
 
 
 SUBGOAL_TEMPLATES = {
@@ -399,17 +412,13 @@ def initial_subgoal_stack() -> list[Subgoal]:
     so any other game with a monotone integer score can plug in by
     declaring its own ``MILESTONE_LIBRARY`` + preamble.
     """
+    # The ViridianCity bridge that Stage S v1 introduced is now declared
+    # on the M5 ``EnterViridian`` milestone via ``requires_map``; the
+    # framework auto-inserts the matching ``NavigateToMap(ViridianCity)``
+    # subgoal above it. Only the immediate-next Route1 nav stays in the
+    # preamble (top of stack), since it has no score milestone above it.
     return build_score_milestone_stack(
         _POKEMON_MILESTONE_LIBRARY,
-        # Stage S v1: bridge Route1 → ViridianCity with an explicit map-name
-        # nav subgoal so the planner has a fresh spatial directive once
-        # Route1's nav pops. Without this, the next subgoal (EnterViridian)
-        # is score-based and only ticks when the env detects entry — chicken
-        # and egg, with no directional pull. Step 1 n=5 sweep showed every
-        # iter reached Route1 then bounced back to PalletTown; this bridge
-        # tests the structural hypothesis.
-        preamble=[
-            _navigate_to_map("ViridianCity"),  # exposed after Route1 pops
-            _navigate_to_map("Route1"),  # top: immediate next from Pallet
-        ],
+        nav_factory=_navigate_to_map,
+        preamble=[_navigate_to_map("Route1")],
     )
