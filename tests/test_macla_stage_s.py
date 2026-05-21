@@ -204,8 +204,7 @@ class TestViridianCityNavBridge:
         i_viridian = names.index("NavigateToMap(ViridianCity)")
         i_route1 = names.index("NavigateToMap(Route1)")
         assert i_m5 < i_viridian < i_route1, (
-            f"Expected M5 < ViridianCity-nav < Route1-nav (bottom→top), "
-            f"got {names}"
+            f"Expected M5 < ViridianCity-nav < Route1-nav (bottom→top), got {names}"
         )
 
     def test_viridian_nav_completion_fires_on_viridiancity_map(self):
