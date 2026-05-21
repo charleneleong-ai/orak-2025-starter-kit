@@ -295,3 +295,47 @@ class TestGroupIdSidecar:
             round(3.0 / 7, 4),
             round(7.0 / 7, 4),
         }
+
+
+class TestPolicyIdSidecar:
+    """policy_id tags which policy (base or a saved LoRA adapter) generated
+    the rollout. The trainer needs this so it can reconstruct pi_old
+    correctly at iter 2+: rollouts under base load with disable_adapter(),
+    rollouts under lora_v1 load with that adapter active as pi_old."""
+
+    def test_sidecar_policy_id_populates_sample(self, tmp_path: Path):
+        d = _write_iter_dir(tmp_path, "k1", n_steps=2, final_score=5.0)
+        (d / "gspo_group.json").write_text(json.dumps({"group_id": "g1", "policy_id": "lora_v1"}))
+        samples = collate_iter(d)
+        assert all(s.policy_id == "lora_v1" for s in samples)
+
+    def test_no_sidecar_defaults_to_base(self, tmp_path: Path):
+        """Existing data (no sidecar) is iter-1 data — produced by base
+        model with no adapter. Default policy_id='base' so old jsonls
+        and rollouts that pre-date this field keep working."""
+        d = _write_iter_dir(tmp_path, "iter1", n_steps=2, final_score=5.0)
+        samples = collate_iter(d)
+        assert all(s.policy_id == "base" for s in samples)
+
+    def test_sidecar_missing_policy_id_field_defaults_to_base(self, tmp_path: Path):
+        """Group_id-only sidecars (from the original re-roll launcher
+        before policy_id was added) should keep working — backwards
+        compat."""
+        d = _write_iter_dir(tmp_path, "iter1", n_steps=2, final_score=5.0)
+        (d / "gspo_group.json").write_text(json.dumps({"group_id": "g_only"}))
+        samples = collate_iter(d)
+        assert all(s.policy_id == "base" for s in samples)
+        assert all(s.group_id == "g_only" for s in samples)
+
+    def test_gspo_sample_has_policy_id_default(self):
+        """Dataclass-level default lets old jsonl rows deserialize via
+        GSPOSample(**d) even when the row predates the new field."""
+        s = GSPOSample(
+            run_id="r",
+            iter_step=1,
+            prompt="p",
+            completion="c",
+            reward=0.5,
+            group_id="g",
+        )
+        assert s.policy_id == "base"

@@ -164,3 +164,35 @@ class TestTrainCommand:
         assert result.exit_code != 0
         assert isinstance(result.exception, ModuleNotFoundError)
         assert "unsloth" in str(result.exception).lower()
+
+    def test_refuses_mixed_policy_dataset(self, runner: CliRunner, tmp_path: Path):
+        """The trainer reconstructs ONE pi_old per cycle (either base or
+        a specific saved adapter). A dataset mixing rollouts from
+        different policies (e.g. some under "base", some under "lora_v1")
+        can't be trained as a single cycle — the importance ratio would
+        be wrong for half the samples. Refuse early, before model load."""
+        # Two groups with variance, but mixed policy_ids → trainer should
+        # exit with a clear error before doing anything expensive.
+        s_base = GSPOSample(
+            run_id="r1",
+            iter_step=1,
+            prompt="p",
+            completion="c",
+            reward=0.2,
+            group_id="g",
+            policy_id="base",
+        )
+        s_lora = GSPOSample(
+            run_id="r2",
+            iter_step=1,
+            prompt="p",
+            completion="c",
+            reward=0.8,
+            group_id="g",
+            policy_id="lora_v1",
+        )
+        p = tmp_path / "mixed.jsonl"
+        _write_jsonl(p, [s_base, s_lora])
+        result = runner.invoke(app, ["train", str(p), "--dry-run"])
+        assert result.exit_code != 0
+        assert "policy_id" in result.stdout.lower() or "mixed" in result.stdout.lower()

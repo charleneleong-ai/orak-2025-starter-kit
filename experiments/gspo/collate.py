@@ -37,6 +37,12 @@ class GSPOSample:
     completion: str
     reward: float
     group_id: str
+    # Which policy generated this rollout. "base" = no LoRA active (iter 1
+    # case); for iter 2+ this is the saved adapter path/name that vLLM
+    # served at rollout time. Trainer uses this to load the right pi_old
+    # for the GSPO importance ratio. Defaulted so pre-policy_id jsonl
+    # rows still deserialize via GSPOSample(**d).
+    policy_id: str = "base"
 
 
 def collate_sweep(game_root: Path, *, score_max: float = 7.0) -> list[GSPOSample]:
@@ -75,17 +81,21 @@ def collate_iter(run_dir: Path, *, score_max: float = 7.0) -> list[GSPOSample]:
     final_score = float(json.loads(summary_path.read_text())["episodes"][0]["final_score"])
     reward = final_score / score_max
     run_id = run_dir.name
-    # Re-roll launcher writes ``gspo_group.json`` to override the default
-    # ``group_id=run_id``. Without this, K trajectories from the same
-    # checkpoint state can't share a group → variance=0 → no gradient.
+    # Re-roll launcher writes ``gspo_group.json`` to (a) override the default
+    # ``group_id=run_id`` (without this, K trajectories from the same
+    # checkpoint state can't share a group → variance=0 → no gradient),
+    # and (b) record the ``policy_id`` that vLLM served at rollout time so
+    # the trainer can reconstruct ``pi_old`` for the GSPO importance ratio.
     sidecar_path = run_dir / "gspo_group.json"
     group_id = run_id
+    policy_id = "base"
     if sidecar_path.exists():
         try:
             sidecar = json.loads(sidecar_path.read_text())
             group_id = str(sidecar.get("group_id") or run_id)
+            policy_id = str(sidecar.get("policy_id") or "base")
         except (json.JSONDecodeError, OSError):
-            pass  # malformed sidecar — fall back to run_id default
+            pass  # malformed sidecar — fall back to (run_id, base)
     samples: list[GSPOSample] = []
     for line in states_path.read_text().splitlines():
         if not line.strip():
@@ -99,6 +109,7 @@ def collate_iter(run_dir: Path, *, score_max: float = 7.0) -> list[GSPOSample]:
                 completion=row.get("action", ""),
                 reward=reward,
                 group_id=group_id,
+                policy_id=policy_id,
             )
         )
     return samples

@@ -50,6 +50,7 @@ GROUP_ID=""
 AGENT_CFG_NAME="gemma_26b"
 GAME="pokemon_red"
 MAX_STEPS=600
+POLICY_ID="base"
 
 usage() {
     cat <<USAGE
@@ -59,13 +60,19 @@ GSPO re-roll launcher — K rollouts from one checkpoint, shared group_id.
   --k <int>                  number of rollouts (default 4)
   --group-id <name>          shared group_id for all K rollouts
                              (default: <checkpoint_run_id>_reroll)
+  --policy-id <name>         tag for the policy vLLM is serving during the
+                             rollout. "base" = no LoRA (default; iter 1).
+                             For iter 2+ pass the saved adapter name/path
+                             (e.g. "lora_v1") so the trainer can load it
+                             as pi_old when computing the importance ratio.
   --agent <name>             agent config name (default gemma_26b)
   --game <name>              game name (default pokemon_red)
   --max-steps <int>          per-rollout step budget (default 600)
 
 Produces K iter dirs under \$GAME_DATA_DIR/<game>/<run_id>/, each with
 the standard game_states.jsonl + evaluation_summary.json, plus a
-gspo_group.json sidecar marking them as one GSPO group.
+gspo_group.json sidecar marking them as one GSPO group and recording
+which policy generated them.
 USAGE
 }
 
@@ -74,6 +81,7 @@ while [[ $# -gt 0 ]]; do
         --checkpoint-run-id) CHECKPOINT_RUN_ID="$2"; shift 2;;
         --k) K="$2"; shift 2;;
         --group-id) GROUP_ID="$2"; shift 2;;
+        --policy-id) POLICY_ID="$2"; shift 2;;
         --agent) AGENT_CFG_NAME="$2"; shift 2;;
         --game) GAME="$2"; shift 2;;
         --max-steps) MAX_STEPS="$2"; shift 2;;
@@ -147,11 +155,11 @@ for k in $(seq 1 "$K"); do
     fi
 
     # Write the sidecar so collate_iter tags this rollout with the
-    # shared group_id at collation time.
+    # shared group_id + policy_id at collation time.
     actual_dir="$GAME_DATA_DIR/$GAME/$run_id"
     [[ -d "$actual_dir" ]] || { echo "WARN: rollout dir not found: $actual_dir"; continue; }
-    printf '{"group_id": "%s", "k": %d, "checkpoint": "%s"}\n' \
-        "$GROUP_ID" "$k" "$CHECKPOINT_RUN_ID" > "$actual_dir/gspo_group.json"
+    printf '{"group_id": "%s", "k": %d, "checkpoint": "%s", "policy_id": "%s"}\n' \
+        "$GROUP_ID" "$k" "$CHECKPOINT_RUN_ID" "$POLICY_ID" > "$actual_dir/gspo_group.json"
 
     elapsed=$(( ($(date +%s) - started) / 60 ))
     summary="$actual_dir/evaluation_summary.json"

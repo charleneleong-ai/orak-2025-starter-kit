@@ -169,8 +169,24 @@ def train(
         )
         raise typer.Exit(code=2)
 
+    # One training cycle reconstructs ONE pi_old. A dataset mixing
+    # rollouts from different policies (e.g. some under "base", some
+    # under "lora_v1") would need separate pi_old loads per sample —
+    # not supported. Refuse early, before any model load.
+    policy_ids = {s.policy_id for s in samples}
+    if len(policy_ids) > 1:
+        typer.secho(
+            f"Mixed policy_id values in dataset: {sorted(policy_ids)}. "
+            "Train cycles must use rollouts from a single policy (the same "
+            "pi_old). Split the jsonl by policy_id and train each shard "
+            "separately, or re-roll under one policy.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=3)
+    policy_id = next(iter(policy_ids)) if policy_ids else "base"
+
     records = list(iter_advantage_records(samples))
-    typer.echo(f"loaded {len(records)} samples / {n_groups} groups")
+    typer.echo(f"loaded {len(records)} samples / {n_groups} groups (policy_id={policy_id})")
     typer.echo(f"first record: {records[0] if records else '(empty)'}")
 
     if dry_run:
