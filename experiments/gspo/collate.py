@@ -39,6 +39,31 @@ class GSPOSample:
     group_id: str
 
 
+def collate_sweep(game_root: Path, *, score_max: float = 7.0) -> list[GSPOSample]:
+    """Walk a game-data root (e.g. ``/workspace/orak-stage-s-v1/pokemon_red/``)
+    and aggregate all *completed* iter dirs into a single ``GSPOSample`` list.
+
+    Defensive: iters missing ``evaluation_summary.json`` (still running) or
+    ``game_states.jsonl`` (cleanup / ENOSPC) are silently skipped. Stray
+    non-directory entries (eval.log, results.jsonl) are ignored.
+
+    Iter dirs are visited in sorted order so the output is deterministic for
+    downstream batching.
+    """
+    if not game_root.is_dir():
+        raise NotADirectoryError(game_root)
+    samples: list[GSPOSample] = []
+    for iter_dir in sorted(game_root.iterdir()):
+        if not iter_dir.is_dir():
+            continue
+        if not (iter_dir / "evaluation_summary.json").exists():
+            continue
+        if not (iter_dir / "game_states.jsonl").exists():
+            continue
+        samples.extend(collate_iter(iter_dir, score_max=score_max))
+    return samples
+
+
 def collate_iter(run_dir: Path, *, score_max: float = 7.0) -> list[GSPOSample]:
     states_path = run_dir / "game_states.jsonl"
     summary_path = run_dir / "evaluation_summary.json"
@@ -83,6 +108,31 @@ def collate(
         for s in samples:
             f.write(json.dumps(asdict(s)) + "\n")
     typer.echo(f"wrote {len(samples)} samples (reward={samples[0].reward:.3f}) -> {out}")
+
+
+@app.command()
+def sweep(
+    game_root: Path = typer.Argument(
+        ...,
+        exists=True,
+        file_okay=False,
+        help="game-data root holding one dir per iter (e.g. /workspace/<sweep>/pokemon_red/)",
+    ),
+    out: Path = typer.Option(Path("gspo_sweep.jsonl"), "--out", "-o", help="output jsonl"),
+    score_max: float = typer.Option(
+        7.0, "--score-max", help="env score ceiling for reward normalisation"
+    ),
+) -> None:
+    """Aggregate all completed iters under ``game_root`` into one training jsonl."""
+    samples = collate_sweep(game_root, score_max=score_max)
+    if not samples:
+        typer.echo("no completed iters found — nothing written")
+        raise typer.Exit(code=1)
+    with out.open("w") as f:
+        for s in samples:
+            f.write(json.dumps(asdict(s)) + "\n")
+    n_iters = len({s.run_id for s in samples})
+    typer.echo(f"wrote {len(samples)} samples from {n_iters} iters -> {out}")
 
 
 if __name__ == "__main__":

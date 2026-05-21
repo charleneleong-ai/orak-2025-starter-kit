@@ -16,9 +16,29 @@ from pathlib import Path
 
 import pytest
 
-from experiments.gspo.collate import GSPOSample, collate_iter
+from experiments.gspo.collate import GSPOSample, collate_iter, collate_sweep
 
 _ = GSPOSample  # keep import live — currently asserted via dataclass attrs below
+
+
+def _write_iter_dir(parent: Path, name: str, n_steps: int, final_score: float) -> Path:
+    """Create a synthetic iter dir with `n_steps` rows + an eval summary.
+    Hoisted so multi-iter sweep tests can build their fixtures inline."""
+    d = parent / name
+    d.mkdir()
+    rows = [
+        {
+            "iteration": i + 1,
+            "obs": {"obs_str": f"obs at step {i + 1}", "game_info": {"map_name": "X"}},
+            "action": f"use_tool(move_to, (x_dest={i}, y_dest=0))",
+        }
+        for i in range(n_steps)
+    ]
+    (d / "game_states.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    (d / "evaluation_summary.json").write_text(
+        json.dumps({"episodes": [{"final_score": final_score}]})
+    )
+    return d
 
 
 @pytest.fixture
@@ -131,3 +151,98 @@ class TestNormalisation:
         )
         samples = collate_iter(d, score_max=score_max)
         assert samples[0].reward == pytest.approx(expected)
+
+
+class TestCollateSweep:
+    """``collate_sweep`` walks an entire game-data root (one dir per iter)
+    and aggregates into a single sample list. Defensive on incomplete
+    iters (in-flight, crashed)."""
+
+    def test_aggregates_all_complete_iters_in_order(self, tmp_path: Path):
+        root = tmp_path / "pokemon_red"
+        root.mkdir()
+        _write_iter_dir(root, "sweep_iter1_T1", n_steps=2, final_score=5.0)
+        _write_iter_dir(root, "sweep_iter2_T2", n_steps=3, final_score=4.0)
+        _write_iter_dir(root, "sweep_iter3_T3", n_steps=1, final_score=7.0)
+        samples = collate_sweep(root)
+        # 2 + 3 + 1 = 6 samples across 3 iters
+        assert len(samples) == 6
+        # group_ids preserve per-iter identity (one group per iter,
+        # default placeholder until a re-roll launcher fixes K rollouts)
+        assert len({s.group_id for s in samples}) == 3
+        # rewards reflect each iter's final_score / score_max
+        per_iter = {s.run_id: s.reward for s in samples}
+        assert per_iter["sweep_iter1_T1"] == pytest.approx(5.0 / 7.0)
+        assert per_iter["sweep_iter2_T2"] == pytest.approx(4.0 / 7.0)
+        assert per_iter["sweep_iter3_T3"] == pytest.approx(7.0 / 7.0)
+
+    def test_iters_emitted_in_sorted_order(self, tmp_path: Path):
+        """Stable ordering — downstream batching code assumes
+        deterministic sample sequence per (game_root, score_max)."""
+        root = tmp_path / "pokemon_red"
+        root.mkdir()
+        # Names ordered to expose sort: T3 written first but should
+        # appear last after sorting.
+        _write_iter_dir(root, "sweep_iter1_T3", n_steps=1, final_score=1.0)
+        _write_iter_dir(root, "sweep_iter1_T1", n_steps=1, final_score=2.0)
+        _write_iter_dir(root, "sweep_iter1_T2", n_steps=1, final_score=3.0)
+        samples = collate_sweep(root)
+        run_ids = [s.run_id for s in samples]
+        assert run_ids == sorted(run_ids)
+
+    def test_skips_iter_missing_evaluation_summary(self, tmp_path: Path):
+        """In-flight sweep with an iter still running has only
+        game_states.jsonl, no evaluation_summary.json. Skip silently;
+        don't crash."""
+        root = tmp_path / "pokemon_red"
+        root.mkdir()
+        _write_iter_dir(root, "sweep_iter1_T1", n_steps=2, final_score=5.0)
+        in_flight = root / "sweep_iter2_T2"
+        in_flight.mkdir()
+        (in_flight / "game_states.jsonl").write_text(
+            json.dumps({"iteration": 1, "obs": {"obs_str": "x"}, "action": "y"}) + "\n"
+        )
+        samples = collate_sweep(root)
+        assert len(samples) == 2
+        assert all(s.run_id == "sweep_iter1_T1" for s in samples)
+
+    def test_skips_iter_missing_game_states(self, tmp_path: Path):
+        """Defensive against a launcher that wrote eval_summary but
+        the game_states.jsonl was lost (cleanup script, ENOSPC, etc)."""
+        root = tmp_path / "pokemon_red"
+        root.mkdir()
+        _write_iter_dir(root, "sweep_iter1_T1", n_steps=2, final_score=5.0)
+        no_states = root / "sweep_iter2_T2"
+        no_states.mkdir()
+        (no_states / "evaluation_summary.json").write_text(
+            json.dumps({"episodes": [{"final_score": 0.0}]})
+        )
+        samples = collate_sweep(root)
+        assert len(samples) == 2
+
+    def test_skips_non_directory_entries(self, tmp_path: Path):
+        """game-data roots sometimes have stray files (eval.log,
+        results.jsonl). Don't treat them as iter dirs."""
+        root = tmp_path / "pokemon_red"
+        root.mkdir()
+        (root / "stray.txt").write_text("not an iter dir")
+        _write_iter_dir(root, "sweep_iter1_T1", n_steps=1, final_score=5.0)
+        samples = collate_sweep(root)
+        assert len(samples) == 1
+
+    def test_empty_root_returns_empty_list(self, tmp_path: Path):
+        root = tmp_path / "pokemon_red"
+        root.mkdir()
+        assert collate_sweep(root) == []
+
+    def test_nonexistent_root_raises(self, tmp_path: Path):
+        with pytest.raises(NotADirectoryError):
+            collate_sweep(tmp_path / "does_not_exist")
+
+    def test_score_max_passed_through(self, tmp_path: Path):
+        """score_max overrides reach each per-iter collate_iter call."""
+        root = tmp_path / "mario"
+        root.mkdir()
+        _write_iter_dir(root, "iter1", n_steps=1, final_score=50.0)
+        samples = collate_sweep(root, score_max=100.0)
+        assert samples[0].reward == pytest.approx(0.5)
