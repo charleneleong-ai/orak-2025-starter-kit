@@ -329,60 +329,44 @@ class TestGspoClippedLoss:
 
 
 class TestGatherCompletionLogprobs:
-    """Extract per-token log-probabilities for the actually-generated
-    tokens, masked to the completion region. Standard LM "shift": logits
-    at position t predict the token at position t+1."""
+    """Pure gather: per-target-position log-probs using standard LM shift
+    (position t's logits predict token at position t+1). Masking +
+    length-normalization are the responsibility of
+    ``length_normalized_log_ratio_batch`` downstream, so this helper
+    doesn't take a mask argument — keeps responsibilities cleanly split
+    and avoids the double-multiply that earlier versions did."""
 
     def test_returns_logprob_of_target_token(self):
-        """For a 2-token sequence, position 0's logits should yield the
-        log-prob of position 1's token."""
-        # vocab_size=3; logits[0,0,:] is the prediction for input_ids[0,1]
-        logits = torch.tensor([[[0.0, math.log(2.0), 0.0], [0.0, 0.0, 0.0]]])  # [B=1, T=2, V=3]
+        """For a 2-token sequence, position 0's logits yield the log-prob
+        of position 1's token under log_softmax."""
+        # vocab_size=3; logits[0,0,:] = [0, log(2), 0]
+        # → log_softmax = [log(1/4), log(2/4), log(1/4)]
+        logits = torch.tensor([[[0.0, math.log(2.0), 0.0], [0.0, 0.0, 0.0]]])
         input_ids = torch.tensor([[0, 1]])
-        mask = torch.tensor([[1.0, 1.0]])  # mark both tokens as completion
-        out = gather_completion_logprobs(logits, input_ids, mask)
-        # log_softmax([0, log(2), 0]) = log(1/(1+2+1)) , log(2/(1+2+1)), log(1/(1+2+1))
-        # = log(0.25), log(0.5), log(0.25)
-        # We want the logp of token id 1 from position 0 → log(0.5) = -0.693
-        # Output shape: [B, T-1] = [1, 1] (the prediction for shifted position)
+        out = gather_completion_logprobs(logits, input_ids)
         assert out.shape == (1, 1)
         assert out[0, 0].item() == pytest.approx(math.log(0.5), abs=1e-4)
 
-    def test_mask_zeros_out_prompt_logprobs(self):
-        """Positions where the (shifted) mask is 0 must produce 0.0 in
-        output, regardless of the underlying logprob."""
-        # T=3 sequence: prompt at position 0, completion at 1,2
-        logits = torch.tensor(
-            [[[0.0, 100.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]]
-        )  # [B=1, T=3, V=3]
-        input_ids = torch.tensor([[0, 1, 2]])
-        # completion_mask aligned with input_ids: position 0 is prompt
-        mask = torch.tensor([[0.0, 1.0, 1.0]])
-        out = gather_completion_logprobs(logits, input_ids, mask)
-        # After shift: output is for positions 1, 2 (targets). Position 1's mask
-        # in the shifted frame is mask[1]=1, position 2 mask[2]=1. But wait —
-        # actually the shift convention: position 0's logits predict position 1.
-        # The output at position 0 of the shifted array is the prediction for
-        # input_ids[1]. The mask for "is target 1 a completion?" is mask[1]=1.
-        # So shifted_mask = mask[:, 1:] = [[1,1]]. Both should be active.
-        # If we want to mask out the FIRST completion-region prediction (because
-        # we're transitioning from prompt to completion at position 1), we'd
-        # need a different mask shape. Reading the convention back...
-        # Actually: simpler — out shape is [B, T-1]. shifted_mask = mask[:, 1:].
-        # Targets at output position i correspond to input_ids[i+1]. Mask of
-        # whether that target is a completion token: mask[i+1].
-        # So if input[1] is a completion token, mask[1]=1 → output position 0 active.
-        assert out.shape == (1, 2)
-        # Position 0 of output is logp of input_ids[1]=1, mask[1]=1 → active
-        # Position 1 of output is logp of input_ids[2]=2, mask[2]=1 → active
+    def test_shape_is_T_minus_1(self):
+        """Output drops one position vs input: positions 0..T-2 predict
+        targets 1..T-1. The caller's mask slice must be ``mask[:, 1:]``
+        to line up with the shifted output."""
+        logits = torch.randn(2, 5, 7)
+        input_ids = torch.randint(0, 7, (2, 5))
+        out = gather_completion_logprobs(logits, input_ids)
+        assert out.shape == (2, 4)
 
-    def test_all_zero_mask_yields_all_zero_output(self):
-        logits = torch.randn(1, 4, 5)
-        input_ids = torch.randint(0, 5, (1, 4))
-        mask = torch.zeros(1, 4)
-        out = gather_completion_logprobs(logits, input_ids, mask)
-        assert out.shape == (1, 3)
-        assert (out == 0).all()
+    def test_no_masking_applied(self):
+        """Regression guard: this helper used to apply a completion mask
+        internally, which double-masked when the caller also passed mask
+        to length_normalized_log_ratio_batch. The mask is now the
+        downstream helper's responsibility — every output position
+        carries a real log-prob value."""
+        logits = torch.tensor([[[0.0, 5.0, 0.0], [3.0, 0.0, 0.0]]])
+        input_ids = torch.tensor([[0, 1]])
+        out = gather_completion_logprobs(logits, input_ids)
+        # log_softmax([0, 5, 0]) for target=1 is log(e^5 / (1 + e^5 + 1)) ≈ -0.0182
+        assert out[0, 0].item() != 0.0
 
 
 # Confirm math.sqrt is imported in advantages.py (smoke — not a regression test).

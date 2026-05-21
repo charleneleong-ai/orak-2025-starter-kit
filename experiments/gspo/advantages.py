@@ -181,25 +181,22 @@ def gspo_clipped_loss(
 def gather_completion_logprobs(
     logits: torch.Tensor,
     input_ids: torch.Tensor,
-    completion_mask: torch.Tensor,
 ) -> torch.Tensor:
-    """Per-token log-probs of the actually-generated tokens, masked to
-    the completion region. Standard LM "shift": position ``t``'s logits
-    predict the token at position ``t+1``.
+    """Per-target-position log-probs of the actually-generated tokens.
+
+    Standard LM "shift": position ``t``'s logits predict the token at
+    position ``t+1``. Returns the raw gathered log-probs (no masking) —
+    masking + length normalization happen in
+    ``length_normalized_log_ratio_batch`` which owns the mask anyway.
 
     Shapes:
       * ``logits``: ``[B, T, V]``
       * ``input_ids``: ``[B, T]``
-      * ``completion_mask``: ``[B, T]`` — 1.0 on completion tokens.
 
     Returns ``[B, T-1]`` per-target-position log-probs. The output at
-    position ``i`` is ``log π(input_ids[i+1] | input_ids[≤i])``, zeroed
-    if ``completion_mask[i+1]`` is 0 (i.e. the target is a prompt token).
+    position ``i`` is ``log π(input_ids[i+1] | input_ids[≤i])``.
     """
     shifted_logits = logits[:, :-1, :]
     targets = input_ids[:, 1:]
-    shifted_mask = completion_mask[:, 1:]
-
     log_probs = F.log_softmax(shifted_logits, dim=-1)
-    token_log_probs = log_probs.gather(dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
-    return token_log_probs * shifted_mask
+    return log_probs.gather(dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)

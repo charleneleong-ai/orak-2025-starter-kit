@@ -287,12 +287,18 @@ def _run_gspo_training(
     with torch.no_grad(), model.disable_adapter():
         for tok in tokenized:
             input_ids = tok["input_ids"].to(device)
-            mask = tok["completion_mask"].to(device)
             logits = model(input_ids=input_ids).logits
-            logp = gather_completion_logprobs(logits, input_ids, mask)
+            logp = gather_completion_logprobs(logits, input_ids)
             old_logp_cache.append(logp.detach().cpu())
 
     # ── train ────────────────────────────────────────────────────────
+    pad_token_id = tokenizer.pad_token_id or tokenizer.eos_token_id
+    if pad_token_id is None:
+        raise ValueError(
+            f"Tokenizer for {base_model} has neither pad_token_id nor eos_token_id; "
+            "cannot pad batches. Set tokenizer.pad_token before calling."
+        )
+
     model.train()
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
     optimizer.zero_grad()
@@ -309,17 +315,16 @@ def _run_gspo_training(
                 [tokenized[i] for i in indices],
                 [old_logp_cache[i] for i in indices],
                 [float(records[i]["advantage"]) for i in indices],
-                pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+                pad_token_id=pad_token_id,
                 device=device,
             )
 
             # pi_new forward (adapter active)
             new_logits = model(input_ids=batch["input_ids"]).logits
-            new_logp = gather_completion_logprobs(
-                new_logits, batch["input_ids"], batch["completion_mask"]
-            )
+            new_logp = gather_completion_logprobs(new_logits, batch["input_ids"])
 
-            # Shifted mask matches the [T-1] output of gather_completion_logprobs.
+            # Shifted mask aligns with the [T-1] output of gather_completion_logprobs.
+            # length_normalized_log_ratio_batch owns the masking + length normalization.
             shifted_mask = batch["completion_mask"][:, 1:]
             log_ratio = length_normalized_log_ratio_batch(new_logp, batch["old_logp"], shifted_mask)
             loss = gspo_clipped_loss(log_ratio, batch["advantages"], epsilon=clip_eps)
