@@ -1,8 +1,10 @@
-"""GSPO train entrypoint — offline-runnable parts.
+"""GSPO train entrypoint — CLI surface + offline-runnable plumbing.
 
-Skeleton only; the gradient loop is TODO(gpu). What's testable now: the
-data-pipeline glue (jsonl I/O, advantage attachment, dry-run path,
-zero-variance refusal)."""
+The GSPO gradient loop itself needs GPU + Unsloth (gspo-training extra)
+and is not exercised here; we cover the data-pipeline glue (jsonl I/O,
+advantage attachment, dry-run path, zero-variance refusal) plus the
+import-isolation contract that keeps info/prepare/--dry-run usable
+without the heavy stack installed."""
 
 from __future__ import annotations
 
@@ -149,9 +151,16 @@ class TestTrainCommand:
         assert result.exit_code == 2
         assert "zero variance" in result.stdout or "no gradient signal" in result.stdout
 
-    def test_full_path_not_run_says_todo_gpu(self, runner: CliRunner, multi_group_jsonl: Path):
-        """Without --dry-run, the function emits the TODO(gpu) marker
-        rather than actually starting a training loop."""
+    def test_full_path_requires_gspo_training_extra(
+        self, runner: CliRunner, multi_group_jsonl: Path
+    ):
+        """Without --dry-run, the CLI tries to load Unsloth + transformers
+        from the ``gspo-training`` extra. Without it installed, the import
+        raises ModuleNotFoundError — which typer wraps into a non-zero
+        exit. This test pins that contract so future-us doesn't
+        accidentally hoist the heavy imports to module top (which would
+        break ``info`` / ``prepare`` / ``--dry-run`` on a base-only install)."""
         result = runner.invoke(app, ["train", str(multi_group_jsonl)])
-        assert result.exit_code == 0
-        assert "TODO(gpu)" in result.stdout
+        assert result.exit_code != 0
+        assert isinstance(result.exception, ModuleNotFoundError)
+        assert "unsloth" in str(result.exception).lower()

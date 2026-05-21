@@ -5,11 +5,15 @@ from __future__ import annotations
 import math
 
 import pytest
+import torch
 
 from experiments.gspo.advantages import (
     attach_advantage,
     compute_group_advantages,
+    gather_completion_logprobs,
+    gspo_clipped_loss,
     length_normalized_log_ratio,
+    length_normalized_log_ratio_batch,
     zero_variance_group_ids,
 )
 from experiments.gspo.collate import GSPOSample
@@ -189,6 +193,196 @@ class TestAttachAdvantage:
         # Per the z-score: -1.0 and +1.0
         assert with_advantages[0].reward == pytest.approx(-1.0)
         assert with_advantages[1].reward == pytest.approx(+1.0)
+
+
+class TestLengthNormalizedLogRatioBatch:
+    """Batched (tensor) version of length_normalized_log_ratio — what the
+    training loop actually calls. Matches the per-sample scalar version
+    when called on a single-row tensor."""
+
+    def test_identical_logp_yields_zero(self):
+        new = torch.tensor([[-1.0, -2.0, -0.5]])
+        old = torch.tensor([[-1.0, -2.0, -0.5]])
+        mask = torch.ones_like(new)
+        out = length_normalized_log_ratio_batch(new, old, mask)
+        assert out.shape == (1,)
+        assert out[0].item() == pytest.approx(0.0)
+
+    def test_uniform_token_shift(self):
+        """Every token shifted by +0.5 → length-normalized ratio = +0.5."""
+        new = torch.tensor([[-0.5, -0.5, -0.5, -0.5]])
+        old = torch.tensor([[-1.0, -1.0, -1.0, -1.0]])
+        mask = torch.ones_like(new)
+        out = length_normalized_log_ratio_batch(new, old, mask)
+        assert out[0].item() == pytest.approx(0.5)
+
+    def test_mask_excludes_prompt_tokens(self):
+        """Only completion tokens (mask=1) contribute. Prompt-region
+        tokens (mask=0) must not affect the ratio even if their logp
+        differs wildly — this is the key correctness property."""
+        # [B=1, T=4]: prompt tokens at 0,1 (mask=0); completion at 2,3 (mask=1)
+        new = torch.tensor([[99.0, -99.0, -0.5, -0.5]])
+        old = torch.tensor([[-1.0, -1.0, -1.0, -1.0]])
+        mask = torch.tensor([[0.0, 0.0, 1.0, 1.0]])
+        out = length_normalized_log_ratio_batch(new, old, mask)
+        # Only positions 2,3: (-0.5 - -1.0) avg over 2 tokens = +0.5
+        assert out[0].item() == pytest.approx(0.5)
+
+    def test_batched_independent_per_row(self):
+        """Each row in the batch is normalized by its own completion
+        length — variable-length completions in a batch are common."""
+        new = torch.tensor([[-0.5, -0.5, -0.5, 0.0], [-2.0, 0.0, 0.0, 0.0]])
+        old = torch.tensor([[-1.0, -1.0, -1.0, 0.0], [-1.0, 0.0, 0.0, 0.0]])
+        # Row 0: 3 completion tokens, each +0.5 ratio → mean = +0.5
+        # Row 1: 1 completion token, -1.0 ratio → mean = -1.0
+        mask = torch.tensor([[1.0, 1.0, 1.0, 0.0], [1.0, 0.0, 0.0, 0.0]])
+        out = length_normalized_log_ratio_batch(new, old, mask)
+        assert out[0].item() == pytest.approx(0.5)
+        assert out[1].item() == pytest.approx(-1.0)
+
+    def test_zero_completion_length_no_div_by_zero(self):
+        """A row with no completion tokens (all-zero mask) should not
+        produce NaN — the trainer would propagate it. Returns 0.0."""
+        new = torch.tensor([[-1.0, -1.0]])
+        old = torch.tensor([[-1.0, -1.0]])
+        mask = torch.tensor([[0.0, 0.0]])
+        out = length_normalized_log_ratio_batch(new, old, mask)
+        assert not torch.isnan(out).any()
+        assert out[0].item() == 0.0
+
+    def test_matches_scalar_version(self):
+        """Batched call on a single-row tensor matches the scalar helper
+        — same math, different shape."""
+        new_list = [-0.5, -2.3, -0.2]
+        old_list = [-1.0, -2.0, -1.0]
+        scalar = length_normalized_log_ratio(new_list, old_list)
+        new_t = torch.tensor([new_list])
+        old_t = torch.tensor([old_list])
+        mask = torch.ones_like(new_t)
+        batched = length_normalized_log_ratio_batch(new_t, old_t, mask)
+        assert batched[0].item() == pytest.approx(scalar)
+
+
+class TestGspoClippedLoss:
+    """PPO-style clipped surrogate loss using sequence-level log-ratio
+    and group-relative advantages. ``epsilon`` is a required arg, not a
+    default — the GSPO paper's 3e-4 is domain-specific (LLM math
+    reasoning) and not portable. Callers must pass an explicit value."""
+
+    def test_zero_log_ratio_loss_equals_negative_mean_advantage(self):
+        """log_ratio=0 → ratio=1 → loss = -advantage.mean() (iter-1 case
+        where pi_new = pi_old). This is the boundary that lets GSPO
+        degenerate to REINFORCE at iter 1 without a special case."""
+        log_ratio = torch.zeros(4)
+        advantages = torch.tensor([1.0, -0.5, 0.5, -1.0])
+        loss = gspo_clipped_loss(log_ratio, advantages, epsilon=3e-4)
+        assert loss.item() == pytest.approx(0.0)  # mean is 0.0 → -0.0
+
+    def test_positive_advantage_positive_ratio_drives_loss_negative(self):
+        log_ratio = torch.tensor([0.0001])  # exp ≈ 1.0001, inside clip
+        advantages = torch.tensor([1.0])
+        loss = gspo_clipped_loss(log_ratio, advantages, epsilon=3e-4)
+        assert loss.item() < 0  # negative loss = good direction
+
+    def test_clip_caps_unclipped_when_advantage_positive(self):
+        """If ratio drifts above 1+eps with advantage>0, the clipped
+        surrogate kicks in (min(unclipped, clipped) = clipped)."""
+        log_ratio = torch.tensor([0.1])  # exp ≈ 1.105, well above 1+3e-4
+        advantages = torch.tensor([1.0])
+        loss = gspo_clipped_loss(log_ratio, advantages, epsilon=3e-4)
+        # clipped ratio = 1.0003, unclipped = 1.105; min = clipped → loss = -clipped
+        assert loss.item() == pytest.approx(-1.0003, abs=1e-3)
+
+    def test_clip_doesnt_cap_when_advantage_negative_and_ratio_high(self):
+        """When advantage<0, going "outside" the clip in the negative
+        direction is what we want — clipped > unclipped (more negative),
+        min picks the unclipped (more bad) → loss = -unclipped (positive)."""
+        log_ratio = torch.tensor([0.1])  # exp ≈ 1.105
+        advantages = torch.tensor([-1.0])
+        loss = gspo_clipped_loss(log_ratio, advantages, epsilon=3e-4)
+        # unclipped = 1.105 * -1 = -1.105
+        # clipped = 1.0003 * -1 = -1.0003
+        # min = -1.105 → loss = +1.105 (penalty for moving further from policy)
+        assert loss.item() == pytest.approx(1.105, abs=1e-2)
+
+    def test_loss_is_scalar(self):
+        """Trainer needs a scalar to call .backward() on."""
+        log_ratio = torch.randn(8)
+        advantages = torch.randn(8)
+        loss = gspo_clipped_loss(log_ratio, advantages, epsilon=3e-4)
+        assert loss.ndim == 0
+
+    def test_backward_propagates_through_log_ratio(self):
+        log_ratio = torch.tensor([0.0, 0.0], requires_grad=True)
+        advantages = torch.tensor([1.0, -1.0])
+        loss = gspo_clipped_loss(log_ratio, advantages, epsilon=3e-4)
+        loss.backward()
+        assert log_ratio.grad is not None
+        assert log_ratio.grad.shape == log_ratio.shape
+
+    def test_epsilon_is_required_not_defaulted(self):
+        """Regression guard: the helper should not silently apply a
+        default epsilon. The GSPO paper's 3e-4 is task-specific and
+        baking it in hides the hyperparameter from training configs."""
+        with pytest.raises(TypeError, match="epsilon"):
+            gspo_clipped_loss(torch.zeros(1), torch.zeros(1))  # type: ignore[call-arg]
+
+
+class TestGatherCompletionLogprobs:
+    """Extract per-token log-probabilities for the actually-generated
+    tokens, masked to the completion region. Standard LM "shift": logits
+    at position t predict the token at position t+1."""
+
+    def test_returns_logprob_of_target_token(self):
+        """For a 2-token sequence, position 0's logits should yield the
+        log-prob of position 1's token."""
+        # vocab_size=3; logits[0,0,:] is the prediction for input_ids[0,1]
+        logits = torch.tensor([[[0.0, math.log(2.0), 0.0], [0.0, 0.0, 0.0]]])  # [B=1, T=2, V=3]
+        input_ids = torch.tensor([[0, 1]])
+        mask = torch.tensor([[1.0, 1.0]])  # mark both tokens as completion
+        out = gather_completion_logprobs(logits, input_ids, mask)
+        # log_softmax([0, log(2), 0]) = log(1/(1+2+1)) , log(2/(1+2+1)), log(1/(1+2+1))
+        # = log(0.25), log(0.5), log(0.25)
+        # We want the logp of token id 1 from position 0 → log(0.5) = -0.693
+        # Output shape: [B, T-1] = [1, 1] (the prediction for shifted position)
+        assert out.shape == (1, 1)
+        assert out[0, 0].item() == pytest.approx(math.log(0.5), abs=1e-4)
+
+    def test_mask_zeros_out_prompt_logprobs(self):
+        """Positions where the (shifted) mask is 0 must produce 0.0 in
+        output, regardless of the underlying logprob."""
+        # T=3 sequence: prompt at position 0, completion at 1,2
+        logits = torch.tensor(
+            [[[0.0, 100.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]]
+        )  # [B=1, T=3, V=3]
+        input_ids = torch.tensor([[0, 1, 2]])
+        # completion_mask aligned with input_ids: position 0 is prompt
+        mask = torch.tensor([[0.0, 1.0, 1.0]])
+        out = gather_completion_logprobs(logits, input_ids, mask)
+        # After shift: output is for positions 1, 2 (targets). Position 1's mask
+        # in the shifted frame is mask[1]=1, position 2 mask[2]=1. But wait —
+        # actually the shift convention: position 0's logits predict position 1.
+        # The output at position 0 of the shifted array is the prediction for
+        # input_ids[1]. The mask for "is target 1 a completion?" is mask[1]=1.
+        # So shifted_mask = mask[:, 1:] = [[1,1]]. Both should be active.
+        # If we want to mask out the FIRST completion-region prediction (because
+        # we're transitioning from prompt to completion at position 1), we'd
+        # need a different mask shape. Reading the convention back...
+        # Actually: simpler — out shape is [B, T-1]. shifted_mask = mask[:, 1:].
+        # Targets at output position i correspond to input_ids[i+1]. Mask of
+        # whether that target is a completion token: mask[i+1].
+        # So if input[1] is a completion token, mask[1]=1 → output position 0 active.
+        assert out.shape == (1, 2)
+        # Position 0 of output is logp of input_ids[1]=1, mask[1]=1 → active
+        # Position 1 of output is logp of input_ids[2]=2, mask[2]=1 → active
+
+    def test_all_zero_mask_yields_all_zero_output(self):
+        logits = torch.randn(1, 4, 5)
+        input_ids = torch.randint(0, 5, (1, 4))
+        mask = torch.zeros(1, 4)
+        out = gather_completion_logprobs(logits, input_ids, mask)
+        assert out.shape == (1, 3)
+        assert (out == 0).all()
 
 
 # Confirm math.sqrt is imported in advantages.py (smoke — not a regression test).

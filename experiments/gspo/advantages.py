@@ -30,6 +30,9 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import replace
 
+import torch
+import torch.nn.functional as F
+
 from experiments.gspo.collate import GSPOSample
 
 
@@ -120,3 +123,83 @@ def attach_advantage(sample: GSPOSample, advantage: float) -> GSPOSample:
     to swap reward → advantage post-z-score.
     """
     return replace(sample, reward=advantage)
+
+
+# ── tensor helpers for the training loop ──────────────────────────────
+#
+# These are the batched/tensor counterparts to the scalar math above,
+# called inside the GSPO gradient step. Kept here (next to the scalar
+# math + the dataclass) so the algorithmic surface lives in one file.
+
+
+def length_normalized_log_ratio_batch(
+    new_logp: torch.Tensor,
+    old_logp: torch.Tensor,
+    completion_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Batched GSPO sequence-level log-ratio (length-normalized in log-space).
+
+    Shapes:
+      * ``new_logp``, ``old_logp``: ``[B, T]`` — per-token log-probs.
+      * ``completion_mask``: ``[B, T]`` — 1.0 on completion tokens, 0.0 on
+        prompt/padding. Only the masked tokens contribute to the ratio.
+
+    Returns ``[B]`` of log(ρ̄) values, one per sample. Empty completions
+    (mask all-zero) return 0.0 — clamp(length, min=1) guards the divisor;
+    the numerator is already 0 since (∆logp)*0 = 0.
+    """
+    lengths = completion_mask.sum(dim=-1).clamp(min=1.0)
+    log_diff = (new_logp - old_logp) * completion_mask
+    return log_diff.sum(dim=-1) / lengths
+
+
+def gspo_clipped_loss(
+    log_ratio: torch.Tensor,
+    advantages: torch.Tensor,
+    *,
+    epsilon: float,
+) -> torch.Tensor:
+    """PPO-style clipped surrogate using the GSPO sequence-level ratio.
+
+    Shapes:
+      * ``log_ratio``: ``[B]`` from ``length_normalized_log_ratio_batch``.
+      * ``advantages``: ``[B]`` group-relative advantage z-scores.
+
+    ``epsilon`` is keyword-only and required — the GSPO paper's 3e-4 is
+    task-specific (LLM math reasoning, big-vocab Qwen models) and not
+    portable to other domains. Each trainer config must pick a value
+    explicitly so the choice shows up in run metadata.
+
+    Returns a scalar loss; ``.backward()`` flows through ``log_ratio``.
+    """
+    ratio = log_ratio.exp()
+    unclipped = ratio * advantages
+    clipped = torch.clamp(ratio, 1.0 - epsilon, 1.0 + epsilon) * advantages
+    return -torch.min(unclipped, clipped).mean()
+
+
+def gather_completion_logprobs(
+    logits: torch.Tensor,
+    input_ids: torch.Tensor,
+    completion_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Per-token log-probs of the actually-generated tokens, masked to
+    the completion region. Standard LM "shift": position ``t``'s logits
+    predict the token at position ``t+1``.
+
+    Shapes:
+      * ``logits``: ``[B, T, V]``
+      * ``input_ids``: ``[B, T]``
+      * ``completion_mask``: ``[B, T]`` — 1.0 on completion tokens.
+
+    Returns ``[B, T-1]`` per-target-position log-probs. The output at
+    position ``i`` is ``log π(input_ids[i+1] | input_ids[≤i])``, zeroed
+    if ``completion_mask[i+1]`` is 0 (i.e. the target is a prompt token).
+    """
+    shifted_logits = logits[:, :-1, :]
+    targets = input_ids[:, 1:]
+    shifted_mask = completion_mask[:, 1:]
+
+    log_probs = F.log_softmax(shifted_logits, dim=-1)
+    token_log_probs = log_probs.gather(dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
+    return token_log_probs * shifted_mask
