@@ -15,7 +15,7 @@
 #     delivery at the Route 1 / Viridian boundary + wild-encounter
 #     gauntlet).
 
-title: "Pokemon Red — Stages D → R progression"
+title: "Pokemon Red — Stages D → S progression"
 primary_metric: evaluation_score
 thresholds:
   - { value: 57.14, label: "M4 ceiling", color: "tab:green" }
@@ -154,3 +154,19 @@ milestones:
         mean: 53.57
         std: 17.85
         scores: [71.43, 28.57, 57.14, 57.14]
+  - label: "Stage S Step 1"
+    description: "no-inherit baseline + cache veto under escape-valve fire (falsifies cache-inheritance hypothesis)"
+    verdict: FLAT
+    n: 5
+    metrics:
+      # Source: experiments/stage_s_cache_veto_step1_no_inherit/results.jsonl
+      # Step 1 removed inheritance AND added cache veto, landing at
+      # exactly v3's M4 ceiling (57.14% × 5, std 0). v4/v5 iter1 spikes
+      # at 71.43% were variance, not signal — cache inheritance was
+      # never the wall. Cache veto code reverted; PR ships move_to
+      # boundary detection + checkpoint hygiene + falsification doc.
+      # Full diagnosis: docs/experiments/stage_s_cache_veto/step1_n5_introspection.md
+      evaluation_score:
+        mean: 57.14
+        std: 0.0
+        scores: [57.14, 57.14, 57.14, 57.14, 57.14]
