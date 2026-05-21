@@ -21,8 +21,24 @@ from pathlib import Path
 _SCRIPT_DIR = str(Path(__file__).resolve().parent)
 sys.path[:] = [p for p in sys.path if p != _SCRIPT_DIR and p != ""]
 
+import matplotlib.pyplot as plt  # noqa: E402
 import typer  # noqa: E402
-from autoresearch.compare import load_milestones_yaml, plot_milestone_bars  # noqa: E402
+from autoresearch.compare import (  # noqa: E402
+    VERDICT_PALETTE,
+    load_milestones_yaml,
+    plot_milestone_bars,
+)
+
+# Extend the upstream palette: MIXED and KEEP aren't in autoresearch's
+# default and both fall through to the same #34495e navy fallback, which
+# makes the chart unreadable when both verdicts appear. Give KEEP a strong
+# "ship-it" orange and MIXED its own muted shade so they're visually
+# distinct from each other and from FLAT/NEUTRAL+.
+_LOCAL_PALETTE = {
+    **VERDICT_PALETTE,
+    "KEEP": "#e67e22",  # ship-verdict orange
+    "MIXED": "#34495e",  # partial-success navy
+}
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_YAML = REPO / "experiments" / "milestones" / "pokemon_progression.yaml"
@@ -37,14 +53,25 @@ def main(
     out: Path = typer.Option(DEFAULT_OUT, "--out"),
 ) -> None:
     milestones, meta = load_milestones_yaml(milestones_yaml)
-    plot_milestone_bars(
+    fig = plot_milestone_bars(
         milestones,
         primary_metric=meta["primary_metric"],
         out_path=out,
         title=meta.get("title"),
         ylabel=f"{meta['primary_metric']} (%)",
         thresholds=meta.get("thresholds"),
+        palette=_LOCAL_PALETTE,
+        return_fig=True,
     )
+    # Stage labels collide when rendered horizontally — rotate diagonally
+    # so every stage's text is readable at the chart's default width.
+    ax = fig.axes[0]
+    for label in ax.get_xticklabels():
+        label.set_rotation(30)
+        label.set_ha("right")
+        label.set_rotation_mode("anchor")
+    fig.savefig(out, dpi=140, facecolor="white", bbox_inches="tight")
+    plt.close(fig)
     print(f"wrote {out}")
 
 
