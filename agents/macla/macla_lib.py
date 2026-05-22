@@ -245,26 +245,59 @@ def make_score_milestone_subgoal(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class MilestoneSpec:
+    """Declarative entry for the score-milestone library.
+
+    ``requires_location`` lifts Stage S v1's manual ViridianCity nav insert
+    into the framework. If set, ``build_score_milestone_stack`` will
+    auto-insert a ``NavigateToMap(requires_location)`` subgoal directly above
+    this milestone — turning an unplannable score-based predicate
+    (``obs["score"] >= N``, fires only on env tick) into a sequence the
+    planner can target (spatial goal → score gate). Without the bridge
+    the planner has no spatial directive once any preceding nav pops.
+    """
+
+    name: str
+    description: str
+    suggested_tools: list[str]
+    requires_location: str | None = None
+
+
 def build_score_milestone_stack(
-    milestone_library: dict[int, tuple[str, str, list[str]]],
+    milestone_library: dict[int, MilestoneSpec],
     preamble: list[Subgoal] | None = None,
+    *,
+    nav_factory: Callable[[str], Subgoal] | None = None,
 ) -> list[Subgoal]:
-    """Assemble a bottom..top subgoal stack from a score->(name, description,
-    tools) registry plus an optional ``preamble`` to push on top.
+    """Assemble a bottom..top subgoal stack from a score->MilestoneSpec
+    registry plus an optional ``preamble`` to push on top.
 
     Sorted by score descending so the highest-score (long-horizon)
-    milestone lands at the bottom. ``preamble`` entries are appended
-    on top in the order given — the last preamble entry becomes the
-    top of the stack and the immediate next subgoal to pursue.
+    milestone lands at the bottom. Each milestone with ``requires_location``
+    set gets a ``nav_factory(requires_location)`` subgoal inserted directly
+    above it (popped first → spatial target → score tick → pop). The
+    ``preamble`` is appended last so its final entry is the stack top.
 
-    Adapters just declare the library + preamble; no framework edits
-    needed to add games or extend the milestone ladder.
+    Adapters just declare the library + preamble + a per-game nav
+    factory; no framework edits needed to add games or extend the
+    milestone ladder.
     """
-    milestones = [
-        make_score_milestone_subgoal(threshold, name, description, tools)
-        for threshold, (name, description, tools) in sorted(milestone_library.items(), reverse=True)
-    ]
-    return [*milestones, *(preamble or [])]
+    stack: list[Subgoal] = []
+    for threshold, spec in sorted(milestone_library.items(), reverse=True):
+        stack.append(
+            make_score_milestone_subgoal(
+                threshold, spec.name, spec.description, spec.suggested_tools
+            )
+        )
+        if spec.requires_location is not None:
+            if nav_factory is None:
+                raise ValueError(
+                    f"milestone {spec.name!r} declares requires_location="
+                    f"{spec.requires_location!r} but no nav_factory was supplied"
+                )
+            stack.append(nav_factory(spec.requires_location))
+    return [*stack, *(preamble or [])]
 
 
 @dataclass
