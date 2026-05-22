@@ -188,3 +188,19 @@ milestones:
         mean: 74.29
         std: 6.39
         scores: [71.43, 71.43, 71.43, 85.71, 71.43]
+  - label: "Stage S v2"
+    description: "+M6/M7 requires_location bridges (ViridianMart, OaksLab); bridges dormant — M5 rate-limits"
+    verdict: KEEP
+    n: 5
+    metrics:
+      # Source: experiments/stage_s_v2_post_viridian_chain/results.jsonl
+      # 3/5 iters hit M5 (71.43%), 2/5 stalled at M4. No iter reached
+      # M5's pop event → M6/M7 bridges never became active. Mean drop
+      # vs v1 (-8.58pp) is within noise (Fisher exact p≈0.17).
+      # Real bottleneck = Route1→Viridian transition (~60% success rate);
+      # adding deeper bridges doesn't help until M5 firing is reliable.
+      # Full diagnosis: docs/experiments/stage_s_cache_veto/v2_post_viridian_chain.md
+      evaluation_score:
+        mean: 65.71
+        std: 7.83
+        scores: [57.14, 71.43, 57.14, 71.43, 71.43]

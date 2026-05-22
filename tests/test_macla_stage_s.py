@@ -221,6 +221,61 @@ class TestViridianCityNavBridge:
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Stage S v2 — chain past Viridian: M6 needs ViridianMart, M7 needs OaksLab
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class TestPostViridianChain:
+    """v1 broke the M4 wall (mean 74.29%, iter4 punched M6 at 85.71%) but
+    4/5 iters still stuck at M5 — they entered Viridian then wandered
+    without a spatial directive for M6 (Mart) or M7 (back to OaksLab).
+
+    v2: declare ``requires_location`` on M6 ("ViridianMart") and M7
+    ("OaksLab"). Framework auto-inserts the matching nav bridges above
+    each score gate — same recipe as v1, lifted into the milestone
+    library now that ``MilestoneSpec.requires_location`` exists.
+    """
+
+    def test_stack_includes_mart_and_lab_bridges(self):
+        from agents.pokemon_red.game_adapter import initial_subgoal_stack
+
+        names = [sg.name for sg in initial_subgoal_stack()]
+        assert "NavigateToMap(ViridianMart)" in names
+        assert "NavigateToMap(OaksLab)" in names
+
+    def test_bridge_ordering_above_score_gates(self):
+        """Pop order top→bottom hits each bridge directly before its
+        score gate: OaksLab → M7, ViridianMart → M6, ViridianCity → M5."""
+        from agents.pokemon_red.game_adapter import initial_subgoal_stack
+
+        names = [sg.name for sg in initial_subgoal_stack()]  # bottom→top
+        i_m7 = names.index("DeliverOaksParcel")
+        i_oakslab = names.index("NavigateToMap(OaksLab)")
+        i_m6 = names.index("GetOaksParcel")
+        i_mart = names.index("NavigateToMap(ViridianMart)")
+        i_m5 = names.index("EnterViridian")
+        i_viridian = names.index("NavigateToMap(ViridianCity)")
+        # bottom→top: each milestone immediately below its bridge
+        assert i_m7 < i_oakslab < i_m6 < i_mart < i_m5 < i_viridian, (
+            f"v2 chain bridges misordered: {names}"
+        )
+
+    @pytest.mark.parametrize(
+        "bridge_name, expected_map",
+        [
+            ("NavigateToMap(OaksLab)", "OaksLab"),
+            ("NavigateToMap(ViridianMart)", "ViridianMart"),
+        ],
+    )
+    def test_each_v2_bridge_fires_on_target_map(self, bridge_name, expected_map):
+        from agents.pokemon_red.game_adapter import initial_subgoal_stack
+
+        bridge = next(sg for sg in initial_subgoal_stack() if sg.name == bridge_name)
+        assert bridge.completion({"map_name": expected_map}) is True
+        assert bridge.completion({"map_name": "PalletTown"}) is False
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # move_to boundary detection
 # ─────────────────────────────────────────────────────────────────────────
 
