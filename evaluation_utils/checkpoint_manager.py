@@ -18,15 +18,20 @@ from evaluation_utils.checkpointable import Checkpointable
 class CheckpointManager:
     """Manages checkpoints for agents and game states."""
 
-    def __init__(self, checkpoint_dir: str = "checkpoints"):
+    def __init__(self, checkpoint_dir: str = "checkpoints", keep_last_n: int = 0):
         """
         Initialize checkpoint manager.
 
         Args:
             checkpoint_dir: Directory to store checkpoints
+            keep_last_n: If >0, automatically prune to the N most recent
+                pickles per (game, agent) pair after each save. Stage R v5
+                iter5 was killed at launch when unbounded per-step pickles
+                filled /tmp; this rolling-window cap prevents the recurrence.
         """
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.keep_last_n = keep_last_n
 
     def get_checkpoint_path(
         self, agent_name: str, game_name: str | None = None, checkpoint_id: str | None = None
@@ -169,7 +174,7 @@ class CheckpointManager:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             checkpoint_id = f"step_{total_steps}_{timestamp}"
 
-        return self.save_checkpoint(
+        path = self.save_checkpoint(
             game_name=game_name,
             agent_name=agent_name,
             agent_state=agent_state,
@@ -177,6 +182,9 @@ class CheckpointManager:
             metadata=metadata,
             checkpoint_id=checkpoint_id,
         )
+        if self.keep_last_n > 0:
+            self.cleanup_old_checkpoints(agent_name, game_name, keep_last_n=self.keep_last_n)
+        return path
 
     def load_checkpoint(self, checkpoint_path: Path) -> dict[str, Any]:
         """

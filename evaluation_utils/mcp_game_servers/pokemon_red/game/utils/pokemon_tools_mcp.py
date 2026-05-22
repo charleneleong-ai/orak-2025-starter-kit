@@ -6,6 +6,9 @@ import logging
 import codecs
 from mcp_game_servers.pokemon_red.game.utils.map_utils import *
 from mcp_agent_servers.memory_utils import *
+from mcp_game_servers.pokemon_red.game.utils.pokemon_tools import (
+    classify_post_move_outcome,
+)
 
 class PokemonToolset:
     def __init__(self, client, logger, game_server_id, agent_server_id):
@@ -543,18 +546,21 @@ class PokemonToolset:
                 state_dict = self.state_dict
                 if state_dict['state'] != 'Field':
                     return (False, f"Cannot move the position. Currently in {state_dict['state']} state.")
-                    
+
                 x_player = state_dict['map_info']["player_pos_x"]
                 y_player = state_dict['map_info']["player_pos_y"]
-                current_pos = (x_player, y_player)
+                verdict = classify_post_move_outcome(
+                    prev_map=prev_map,
+                    current_map=state_dict['map_info']['map_name'],
+                    current_pos=(x_player, y_player),
+                    target=target_coord,
+                    state=state_dict['state'],
+                    x_dest=x_dest,
+                    y_dest=y_dest,
+                )
+                if verdict is not None:
+                    return verdict
 
-                if current_pos == target_coord:
-                    return (True, f"Successfully Move to ({x_dest}, {y_dest}).")
-                elif state_dict["state"] == 'Dialog':
-                    return (False, f"Interrupt by Someone's Dialog before you move to ({x_dest}, {y_dest}).")
-                elif 'Battle' in state_dict["state"]:
-                    return (False, "Interrupt by Battle.")
-                    
             return (False, f"Unable to move to ({x_dest}, {y_dest}) after {max_attempts} attempts.")
             
         except Exception as e:

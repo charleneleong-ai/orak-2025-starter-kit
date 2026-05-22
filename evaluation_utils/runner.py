@@ -91,6 +91,7 @@ class Runner:
         save_checkpoints: bool = False,
         load_checkpoint: bool = False,
         checkpoint_frequency: int = 10,
+        checkpoint_keep_last_n: int = 5,
         prev_run_id: str | None = None,
     ):
         self.local = local
@@ -105,6 +106,10 @@ class Runner:
         self.save_checkpoints = save_checkpoints
         self.load_checkpoint = load_checkpoint
         self.checkpoint_frequency = checkpoint_frequency
+        # Stage S: rolling-window cleanup so per-step pickles don't fill the
+        # partition (Stage R v5 iter5 was killed at launch by /tmp ENOSPC).
+        # 0 disables auto-cleanup; positive keeps the N most recent.
+        self.checkpoint_keep_last_n = checkpoint_keep_last_n
         # When set, --load-checkpoint reads from this run's dir instead of
         # the current run's (empty) dir. Used by autoresearch.py to carry
         # MACLA's learned procedures across iterations.
@@ -652,7 +657,8 @@ class Runner:
             warn_if_tmp_data_dir(checkpoint_dir)
 
             self.game_checkpoint_managers[game_name] = CheckpointManager(
-                checkpoint_dir=str(checkpoint_dir)
+                checkpoint_dir=str(checkpoint_dir),
+                keep_last_n=self.checkpoint_keep_last_n,
             )
             logger.info(f"Checkpoint directory for {game_name}: {checkpoint_dir}")
 
