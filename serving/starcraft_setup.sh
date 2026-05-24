@@ -94,6 +94,15 @@ if [[ -z "${bin}" ]]; then
 fi
 chmod +x "${bin}"
 echo "[setup] SC2 binary: ${bin}"
+
+# SC2 4.10's protocol lowercases the Maps/ path before sending it to the
+# game process. Linux is case-sensitive, so without this symlink the
+# game fails with InvalidMapPath even when the .SC2Map file exists.
+if [[ ! -e "${SC2_INSTALL_DIR}/maps" ]]; then
+    (cd "${SC2_INSTALL_DIR}" && ln -s Maps maps)
+    echo "[setup] linked lowercase maps -> Maps (workaround for SC2 4.10 path normalisation)"
+fi
+
 echo "[setup] maps available:"
 ls "${SC2_INSTALL_DIR}"/Maps/ 2>/dev/null || echo "  (none — Maps directory missing)"
 
