@@ -150,28 +150,47 @@ If we list everything that doesn't exist today and ship it as a connected MVA:
 
 Building all five layers at once is suicide; stage by ROI:
 
-| stage | scope | size | regression test |
-|---|---|---|---|
-| **PR 1** ✅ | Futile-action detector (universal pathology) | ~60 lines + 11 tests | mario @ 1000 — expect death-loops to drop, mean to lift from 9.04% |
-| **PR 2** | Per-skill success-rate floor in selection | ~80 lines | mario re-run — kill-on-spawn proc gated by ~ep 8 |
-| **PR 3** | Stagnation → skill demotion | ~60 lines | pokemon @ 1200 — expect stagnation=1081 to clear earlier |
-| **PR 4** | `agent_events.jsonl` telemetry | ~80 lines | any run — verify event log contents |
-| **PR 5** | Episode-end skill pruning | ~60 lines | 2048 @ 1000 — expect lift above 64% peak |
-| **PR 6** | Episodic store + retrieval | ~200 lines (needs embeddings) | pokemon — does retrieval-augmented planning help? |
-| **PR 7** | Reflector post-episode critique | ~250 lines | mario — does reflection rewrite bad procs? |
-| **PR 8** | Self-model | ~100 lines | depends on PR 7 |
+| stage | scope | size | status (2026-05-24) | regression test |
+|---|---|---|---|---|
+| **PR 1** | Futile-action detector (universal pathology) | ~60 lines + 11 tests | ✅ **committed** @ `176f68c`, **3 rollouts queued** | mario @ 1000 — expect death-loops to drop, mean to lift from 9.04% |
+| **PR 2** | Per-skill success-rate floor in selection | ~80 lines | pending | mario re-run — kill-on-spawn proc gated by ~ep 8 |
+| **PR 3** | Stagnation → skill demotion | ~60 lines | pending | pokemon @ 1200 — expect stagnation=1081 to clear earlier |
+| **PR 4** | `agent_events.jsonl` telemetry | ~80 lines | pending | any run — verify event log contents |
+| **PR 5** | Episode-end skill pruning | ~60 lines | pending | 2048 @ 1000 — expect lift above 64% peak |
+| **PR 6** | Episodic store + retrieval | ~200 lines (needs embeddings) | pending | pokemon — does retrieval-augmented planning help? |
+| **PR 7** | Reflector post-episode critique | ~250 lines | pending | mario — does reflection rewrite bad procs? |
+| **PR 8** | Self-model | ~100 lines | pending | depends on PR 7 |
 
 PRs 1-5 don't need embedding infra or extra LLM calls — cheap, ship in a week. PRs 6-8 need more setup.
 
-### PR 1 in flight (futile-action detector)
+### PR 1 — futile-action detector (in flight, results pending)
 
-Branch: `feat/futile-action-detector` (worktree `/workspace/orak-futile-detector`).
-Implementation: agent-side hook in [`unified.py:_base_fallback`](../agents/macla/unified.py#L549). Hashes obs each step, fires when last K=3 consecutive obs are byte-identical, injects a one-line "your last K actions did nothing" hint into the planner prompt. Tests: 11/11 pass.
+**Branch:** `feat/futile-action-detector` (worktree `/workspace/orak-futile-detector`)
+**Commit:** `176f68c` — `feat(macla): universal futile-action detector (PR 1 of MVA harness)`
 
-Test queue (after pokemon v4 finishes ~02:00 UTC 2026-05-24):
-- pokemon @ 1200 → vs v3 baseline 6/7
-- mario @ 1000 → vs baseline 9.04% mean / 21.85% best
-- 2048 @ 1000 → vs baseline 45% mean / 64% best
+Implementation: agent-side hook in [`unified.py:_base_fallback`](../agents/macla/unified.py#L549).
+- New constant `FUTILE_ACTION_WINDOW = 3` (top of `unified.py`)
+- New method `_detect_futile_action(observation: str) → str | None` — hashes the planner-visible obs, tracks the last K hashes in a `deque(maxlen=K)`, fires when all K entries match → returns a one-line "your last actions did nothing" hint
+- Wired into `_base_fallback` before per-game hint injection so hint-suffix changes don't artificially break the streak
+- Reset in `record_episode_end` so short-episodic games (mario, 2048) don't carry the previous terminal frame into a new episode
+- Streak-logging gate: one `[MACLA] futile_action_hint fired (...)` log line per consecutive futile streak, not once per step
+
+Tests: 11/11 in `tests/test_futile_action_detector.py` — game-agnostic parametrization (pokemon obs, 2048 board, mario state string) plus state-machine sanity (window init, streak break, streak persist, post-clear reset, lazy init, log flag toggle).
+
+**Live regression rollouts (launched 2026-05-24 01:37 UTC):**
+
+| game | PID | run_id | budget | ETA | baseline to beat |
+|---|---|---|---|---|---|
+| pokemon | 1990348 | `futile_detector_pokemon_1200_20260524T013749Z` | 1200 steps | ~04:38 UTC | v3 = 6/7 |
+| mario | 1991018 | `futile_detector_mario_1000_20260524T013809Z` | 1000 steps | ~01:51 UTC | 21.85% best / 9.04% mean |
+| 2048 | 1992409 | `futile_detector_2048_1000_20260524T013826Z` | 1000 steps | ~04:08 UTC | 64% best / 45% mean |
+
+All three share the vLLM server at port 8000 via continuous batching. Pokemon v4 (no detector, 2000 steps) still in flight under a separate PID — its outcome provides additional baseline context for the futile-detector pokemon run.
+
+**Expected signal per game:**
+- **mario** (largest expected delta): 60% of baseline episodes died from futile-loop game-overs. Detector should turn those into productive re-prompts → mean lifts toward the 21.85% peak.
+- **2048**: episode 8 baseline died after 4 consecutive `down` actions on a `down`-blocked board. Detector should re-prompt at step 3, agent picks `left`/`right`/`up`, ceiling tile rises above 128.
+- **pokemon**: subtler — stagnation=1081 in the ViridianCity loop. Detector fires when the agent literally hashes-equal observations (walking into a wall), not when it merely fails to make progress (legal-but-circular movement). Expect smaller delta unless the M6 wall is mostly wall-bumping.
 
 ---
 
