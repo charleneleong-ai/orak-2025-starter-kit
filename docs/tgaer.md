@@ -10,6 +10,10 @@ This doc captures the **have vs need** audit and the staged build plan. Sister d
 
 > **Naming caveat:** while this work lives in the orak repo we keep current names (`GameAdapter`, `MilestoneSpec`, `_POKEMON_MILESTONE_LIBRARY`, `procedure`). Renaming happens at port time to the new repo at https://github.com/charleneleong-ai/tgaer. See [Naming convention](#naming-convention-orak-vs-tgaer) below.
 
+> **Scope + scale (read this before any claim):** this work targets **Small Language Models (SLMs) that fit on a single A100 40GB** — currently Gemma-4 26B-A4B-it (4B active, 26B total MoE) served via vLLM, with Qwen 7-14B / 30-35B-quantized as alternatives. All findings here may differ from frontier-API-model results (Claude Opus, GPT-5.2, Gemini 3) — relevant prior work tested at frontier scale is flagged explicitly in [Prior work — credibility-weighted](#prior-work--credibility-weighted-code--stars--scale). The primary benchmark surface is **[Orak (KRAFTON, 2025)](https://github.com/krafton-ai/Orak)** (144★) — `orak-2025-starter-kit` is the official starter kit. This repo is a leaderboard submission, not a benchmark invention.
+
+> **Relationship to upstream Orak:** the cross-game agent framing (pokemon + super_mario + 2048 + starcraft) is the [Orak benchmark](https://huggingface.co/papers/2506.03610)'s design, not ours — published June 2025 by KRAFTON + Seoul National U + NVIDIA + UW-Madison. Our contribution is the agent stack ON Orak, not the benchmark itself.
+
 ---
 
 ## The vision in one paragraph
@@ -285,33 +289,42 @@ The four-store split (episodic / procedural / semantic / self-model) follows the
 - **Telemetry / event streams**: [LangSmith](https://docs.smith.langchain.com/) (LangChain, 2023), [Weave](https://weave-docs.wandb.ai/) (W&B, 2024) — orak already uses both
 - **Sweep orchestration / regression corpus**: [`experiments/autoresearch.py`](../experiments/autoresearch.py) (orak's own, 2026) — kept as the harness around the new arch
 
-### What we are NOT claiming as novel
+### What we are NOT claiming as novel (expanded after 2026-05-24 literature audit)
 
-- Memory4 itself — Generative Agents had three stores; we add Self-model
-- Skill library auto-extension — Voyager
-- Episodic retrieval — RAG + Generative Agents
-- Verbal self-critique — Reflexion + Self-Refine
-- Prompt evolution — GEPA + OPRO
+After a credibility-weighted literature scan (code + GitHub stars + scale alignment) on 2026-05-24:
 
-### What IS (potentially) novel
+- **Memory4 itself** — Generative Agents had three stores; we add Self-model. [G-Memory](https://github.com/bingreeky/GMemory) (234★) ships hierarchical multi-agent memory; [GAM](https://github.com/VectorSpaceLab/general-agentic-memory) (849★) ships JIT-compiled agent memory; [HiAgent](https://huggingface.co/papers/2408.09559) ships hierarchical working memory
+- **Skill library auto-extension** — [Voyager](https://voyager.minedojo.org/), and at SLM scale [AgentEvolver](https://github.com/modelscope/AgentEvolver) (1,440★), [Agent0](https://github.com/aiming-lab/Agent0) (1,196★), [SAGE](https://github.com/amazon-science/SAGE) (13★) all do this with RL
+- **Episodic retrieval** — RAG + Generative Agents + [Letta](https://www.letta.com/) + [mem0](https://mem0.ai/)
+- **Verbal self-critique** — Reflexion + Self-Refine
+- **Prompt evolution** — GEPA + OPRO
+- **Cross-game LLM agent benchmark** — [Orak](https://github.com/krafton-ai/Orak) (144★) is published, has the 4 games, has a leaderboard — this is exactly the surface we're submitting to, not inventing
+- **Skill efficacy measurement at frontier scale** — [SkillsBench](https://github.com/benchflow-ai/skillsbench) (1,209★) measured curated vs self-generated skills across 84 tasks × 11 domains at frontier-model scale (Claude Opus 4.6 / GPT-5.2 / Gemini 3 Flash); their headline finding "self-generated skills give −1.3pp" is the prior art for our claim #1
+- **Memory operations via RL** — [Memory-R1](https://huggingface.co/papers/2508.19828) (paper-only, no code released) trains ADD/UPDATE/DELETE/NOOP via PPO/GRPO
+- **Hierarchical memory for multi-agent** — [G-Memory](https://github.com/bingreeky/GMemory) (234★), [JoyAgent](https://huggingface.co/papers/2510.00510), [GAM](https://github.com/VectorSpaceLab/general-agentic-memory) (849★)
+- **Self-evolution with RL** — [AgentEvolver](https://github.com/modelscope/AgentEvolver) (1,440★) + [Agent0](https://github.com/aiming-lab/Agent0) (1,196★) + [SAGE](https://github.com/amazon-science/SAGE) — combined >2,600 stars at SLM scale
 
-Each item below is a research-level claim we are uniquely positioned to make given the cross-game test bed + the layered TGAER + the bootstrap-vs-cold-start framing. None of these have published treatments to our knowledge — flagging them so we know which experiments to design and report.
+### What IS (potentially) novel — credibility-weighted
 
-1. **The bootstrap-vs-auto-emergence efficient frontier.** *How much hand-curated scaffold does an auto-extending agent actually need to bootstrap?* We have three games on a clean spectrum: pokemon (heavy hand-curated milestone library), mario (cold start, no scaffold), 2048 (cold start). If Reflector + Memory4 alone takes mario from baseline 9.04% → 18%+ without per-game scaffolding, that quantifies the auto-emergence rate. The frontier (scaffold-effort × performance) is, to our knowledge, unmeasured anywhere.
+After the audit, the original 8-claim list reduces to **1 dead, 2 narrower-defensible, 5 defensible** with the prior-work caveats below. Each claim is hedged against the highest-credibility collision found.
 
-2. **Universal pathology event protocol.** Prior work fixes pathologies one at a time — ReAct addresses no-op feedback (futile), LATS handles loops, Reflexion treats stagnation, Self-Refine catches regression. **Unifying them as a single typed event stream feeding one Reflector** — and showing that the Reflector can route on event-type to the right Memory4 store (futile → skill demotion, loop → semantic rule, stagnation → prompt edit, regression → episodic re-retrieval) — is a structural claim we can test cleanly.
+> **Methodology:** "novel" here means "no A-tier collision found" where A-tier = paper with released code + ≥100 GitHub stars + comparable scale (SLM-class for our work). Paper-only collisions (no code) are flagged as concurrent paper-only work, not as settled prior art.
 
-3. **Game-shape-invariant Memory4.** Voyager validated skill-library on Minecraft (long, exploratory, voxel). Generative Agents on social sim. Reflexion on AlfWorld + HotpotQA. **No prior work has tested the same Memory4 design simultaneously on**: long-horizon RPG (pokemon, 1200+ steps, sparse rewards) + short-episodic platformer (mario, ~16 calls/episode) + deterministic puzzle (2048) + RTS (starcraft). If the same four stores work across all four with no game-specific code, that's a strong invariance claim.
+1. **Bootstrap-vs-auto-emergence at SLM scale.** [SkillsBench](https://github.com/benchflow-ai/skillsbench) (1,209★) measured this for **frontier API models** on terminal/CS tasks and found self-generated skills don't help (−1.3pp). **Our narrower differentiator:** does that finding hold for SLMs (Gemma 26B-A4B-it / Qwen 7-14B class) on multi-step game environments where the skill compounds across episodes? Untested.
 
-4. **Procedure-cache hygiene as a phase transition.** Our 2026-05-23 traces document an exact failure shape: mario goes 4 successful episodes → 58 instant-death episodes after one bad procedure dominates selection. Measuring **how the success-rate floor (PR 2) shifts this phase transition** — at what gate threshold does the agent recover, how many episodes of damage before recovery, does the threshold depend on episode length — would be a clean empirical paper on its own.
+2. **Universal pathology event protocol.** [Diagnosing Failure Root Causes](https://huggingface.co/papers/2509.23735) covers a failure-root-cause taxonomy, but has no released code / minimal community signal. The unified L3 framing (futile + loop + stagnation + regression as a typed event stream routed to Reflector → Memory4) appears genuinely undone in the public-code agent literature. **Defensible.**
 
-5. **The dominance-lock-in metric.** 2048 baseline showed 84% of decisions came from 1 of 4 procedures (`proc_697567 = 841/999`). We can define a Gini-style coefficient on procedure-selection distribution and **track it across architectures (with vs without PR 2, PR 3, PR 5).** If it correlates with ceiling score across all 3 games, that's a portable diagnostic anyone in the space can use.
+3. ~~**Game-shape-invariant Memory4.**~~ **DROPPED.** [Orak benchmark](https://github.com/krafton-ai/Orak) (144★, KRAFTON+SNU+NVIDIA+UW-Madison) is published exactly for cross-game LLM agent evaluation with 12 games incl. our 4. We're a submission, not the benchmark author.
 
-6. **Cross-game semantic transfer.** If the Reflector writes "futile actions waste budget" into the Semantic store while playing mario, does retrieval surface it during pokemon? **Through L2.Semantic, yes — and we can ablate this directly.** Episodic-only vs Semantic-only vs full-Memory4 on the held-out third game. Cross-game LLM-mediated transfer without weight updates is, again, unmeasured.
+4. **Procedure-cache hygiene as a phase transition.** [AgentPoison](https://huggingface.co/papers/2407.12784) (51 upvotes) and [SkillTrojan](https://huggingface.co/papers/2604.06811) cover **adversarial poisoning** (red-team threat model). Our observation is **benign degradation** during normal operation — different phenomenon, different threat model. **Defensible.**
 
-7. **Self-evolution without weight updates, with budget accounting.** Many papers claim self-improvement but conflate it with fine-tuning. **A rigorous study with the budget made explicit** — (a) LLM call cost per Reflector run, (b) skill-library growth rate, (c) score lift per dollar — would establish whether memory-only self-evolution is parameter-efficient relative to RLHF/DPO. Especially powerful given our model is frozen at vLLM (no fine-tuning possible by construction).
+5. **The dominance-lock-in metric.** No collision found at any credibility tier. The Gini-style portable diagnostic on procedure-selection distribution remains unmeasured. **Defensible.**
 
-8. **The Reflector → Memory4 write schema.** The Reflector emits four distinct write types (Skill code, Rule string, Prompt patch, Self-model delta). **Quantifying which write-type contributes most to downstream lift** — by ablating each output channel — gives the field a concrete recipe for which Reflector outputs are worth implementing first.
+6. **Cross-game semantic transfer.** [MCMA](https://huggingface.co/papers/2601.07470) (Jan 2026, paper-only, no code) tests learnable memory abstraction with DPO on ALFWorld + ScienceWorld + BabyAI (not games). Differentiator survives: cross-game-class transfer via L2.Semantic on Orak game classes. **Defensible.**
+
+7. **Self-evolution without weight updates, with budget accounting — at SLM scale.** [AgentEvolver](https://github.com/modelscope/AgentEvolver) (1,440★, Qwen 7-14B), [Agent0](https://github.com/aiming-lab/Agent0) (1,196★, Qwen3-8B), [SAGE](https://github.com/amazon-science/SAGE) (13★, Qwen 32B) all do self-evolution at SLM scale but all use RL/GRPO. **The frozen-model + pure-memory + budget-accounted control arm against those baselines is exactly the question they can't easily answer** (they bake RL in). Narrowed but defensible.
+
+8. **Reflector → Memory4 write-schema ablation.** [Memory-R1](https://huggingface.co/papers/2508.19828) (paper-only, no released code, 152 training pairs) trains ADD/UPDATE/DELETE/NOOP via PPO/GRPO. Different study design (RL-training of memory operations vs ablation of which write-type matters most). **Defensible.**
 
 ### Engineering contributions
 
@@ -321,22 +334,104 @@ Separate from the research claims above, these are useful artifacts even if ever
 - **Cross-game regression corpus on wandb** — pokemon (1200 / 2000) + mario (1000) + 2048 (1000) baselines as fixed reference points; any future agent change can be diff'd against these in one click
 - **The pathology-event JSONL stream** (PR 4) — a stable telemetry format that survives architecture rewrites; lets others post-hoc analyze trajectories without re-running the LLM
 
+## Benchmark landscape (audited 2026-05-24)
+
+Star-weighted view of the public agent-evaluation surfaces. Used to pick comparison surfaces and Tier 4 targets above. Stars current as of 2026-05-24.
+
+### Tier S — universal reference (1k+ stars or top HF adoption)
+
+| benchmark | repo | stars | what |
+|---|---|---|---|
+| SWE-bench | [`SWE-bench/SWE-bench`](https://github.com/SWE-bench/SWE-bench) | **5,000★** | THE canonical coding-agent benchmark |
+| AgentBench | [`THUDM/AgentBench`](https://github.com/THUDM/AgentBench) | **3,446★** | 8 env cross-task generalisation |
+| OSWorld | [`xlang-ai/OSWorld`](https://github.com/xlang-ai/OSWorld) | **2,867★** | desktop / OS-level multimodal |
+| WebArena | [`web-arena-x/webarena`](https://github.com/web-arena-x/webarena) | **1,480★** | browser tasks |
+| τ-bench v1 | [`sierra-research/tau-bench`](https://github.com/sierra-research/tau-bench) | **1,239★** | tool-agent-user customer service |
+| τ²-bench v2 | [`sierra-research/tau2-bench`](https://github.com/sierra-research/tau2-bench) | **1,219★** | telecom-domain extension of τ-bench |
+| **GAIA** | [`huggingface.co/datasets/gaia-benchmark/GAIA`](https://huggingface.co/datasets/gaia-benchmark/GAIA) | **670 HF likes, 50K downloads/month** | general AI assistant — multimodality + tool use; Meta FAIR + HF + AutoGPT + GenAI |
+
+### Tier A — strong adoption (250-1k stars)
+
+| benchmark | repo | stars | what |
+|---|---|---|---|
+| Meta ARE / Gaia2 | [`facebookresearch/meta-agents-research-environments`](https://github.com/facebookresearch/meta-agents-research-environments) | **498★** | follow-up to GAIA, Meta FAIR backed |
+| VisualWebArena | [`web-arena-x/visualwebarena`](https://github.com/web-arena-x/visualwebarena) | **476★** | multimodal browser tasks |
+| ScienceWorld | [`allenai/ScienceWorld`](https://github.com/allenai/ScienceWorld) | **359★** | text-based science curriculum exploration |
+| MemoryAgentBench | [`HUST-AI-HYZ/MemoryAgentBench`](https://github.com/HUST-AI-HYZ/MemoryAgentBench) | **341★** | ICLR 2026; 4-competency memory eval |
+| BALROG | [`balrog-ai/BALROG`](https://github.com/balrog-ai/BALROG) | **254★** | cross-game LLM/VLM reasoning (NetHack/Crafter/etc.) |
+| ARC-AGI-3 agent SDK | [`arcprize/ARC-AGI-3-Agents`](https://github.com/arcprize/ARC-AGI-3-Agents) | **247★** | Tier 4a target — $850K prize, SLM-forced |
+
+### Tier B — niche / recent (50-250 stars)
+
+| benchmark | repo | stars | what |
+|---|---|---|---|
+| **Orak** | [`krafton-ai/Orak`](https://github.com/krafton-ai/Orak) | **144★** | **PRIMARY — `orak-2025-starter-kit` is the official starter kit; we're on this** |
+
+### Tier C — early-stage or paper-only
+
+| benchmark | repo | stars | what |
+|---|---|---|---|
+| ARC-AGI toolkit | [`arcprize/arc-agi`](https://github.com/arcprize/arc-agi) | **48★** | ARC-AGI-1/2/3 unified Python interface |
+| ARC-AGI-3 benchmarking | [`arcprize/arc-agi-3-benchmarking`](https://github.com/arcprize/arc-agi-3-benchmarking) | **18★** | benchmark agents helper |
+| MemoryArena | [memoryarena.github.io](https://memoryarena.github.io/) | — | paper-only Feb 2026, no released code |
+
+### ARC-AGI-3 — Tier S+ for our specific narrative
+
+Not a star-based ranking — strategic alignment. The competition is the highest-leverage public artifact this work can produce:
+
+| dimension | why it's the right target |
+|---|---|
+| Dated milestones | June 30 / Sept 30 / Nov 2 / Dec 4 (2026) — forces shipping cadence |
+| SLM-forced by sandbox rules | No internet/API → most frontier-lab teams have to use their non-frontier models |
+| Open-source mandatory | Public Kaggle leaderboard + your code visible |
+| $700K grand prize + $150K milestones | Real competitive participation, not just academic |
+| Returns to original TGAER framing | The April 2026 realignment had ARC-AGI-3 as the original target |
+
+### Eval-rigor references (for honest variance reporting)
+
+Cited for the methodology around our pokemon v3 (6/7 @ 1200 steps) vs v4 (5/7 @ 2000 steps) variance band:
+
+- **[Establishing Best Practices for Building Rigorous Agentic Benchmarks](https://huggingface.co/papers/2507.02825)** (Jul 2025) — Agentic Benchmark Checklist (ABC)
+- **[On Randomness in Agentic Evals](https://huggingface.co/papers/2602.07150)** (Feb 2026) — pass^k metric for evaluation variance; pokemon v3/v4 variance is exactly the issue this paper warns about
+- **[Claw-Eval](https://huggingface.co/papers/2604.06132)** (Apr 2026) — trajectory-aware grading + Pass@k / Pass^k
+- **[Survey on Evaluation of LLM-based Agents](https://huggingface.co/papers/2503.16416)** (Mar 2025) — 97 upvotes; foundational survey
+
+### Frontier-lab references (no public code but field-defining)
+
+Frontier labs rarely release code for core research, but their public work defines the field. Cited as context regardless of code availability:
+
+- **[Anthropic Claude plays Pokemon](https://www.anthropic.com/news/claude-plays-pokemon)** — publicly-streamed pokemon agent with memory tool + heavy scaffolding (Tier 4b informal target)
+- **[Anthropic Computer Use](https://www.anthropic.com/news/3-5-models-and-computer-use)** (Oct 2024) — OS-level agent action protocol
+- **[Anthropic Skills](https://www.anthropic.com/news/agent-skills)** — the public "skills" concept (curated procedural folders, exactly what SkillsBench tests)
+- **[DeepMind SIMA](https://deepmind.google/discover/blog/sima-generalist-ai-agent-for-3d-virtual-environments/)** (2024) — generalist agent for 3D environments
+- **[DeepMind Genie 2](https://deepmind.google/discover/blog/genie-2-a-large-scale-foundation-world-model/)** (2024) — generative world model
+- **[DeepMind AlphaProof](https://deepmind.google/discover/blog/ai-solves-imo-problems-at-silver-medal-level/)** (2024) — theorem proving via gradient + search hybrid
+- **[OpenAI Operator](https://openai.com/index/introducing-operator/)** (2025) — computer-use agent
+- **[Meta FAIR CICERO](https://ai.meta.com/research/cicero/)** (2022) — Diplomacy agent
+
 ## Research roadmap — extensions beyond the TGAER
 
 The 8-PR TGAER is *necessary* groundwork. By itself it's a proof of architecture; it doesn't yet test the hardest open questions in the field. This section maps tiered extensions — what each tier adds technically, what published precedent it tests against, and what scope each tier represents.
 
 ### Field-level open problems the TGAER framework can address
 
-After reviewing active agendas across Anthropic's Computer Use / Pokemon team, DeepMind's SIMA + Genie teams, OpenAI's Operator + Evals teams, Meta FAIR's CICERO line, and the broader academic agent literature (BALROG, GAIA, SWE-bench, OSWorld, WebArena, AgentBench), the genuine open problems where the TGAER design is well-positioned to contribute:
+After the 2026-05-24 literature audit (see [Prior work — credibility-weighted](#what-we-are-not-claiming-as-novel-expanded-after-2026-05-24-literature-audit)), the open problems where TGAER is well-positioned to contribute — **at SLM scale specifically**:
 
-| open problem | why unsolved |
+| open problem | why still open after the audit |
 |---|---|
-| **Self-Evolution Curve as a benchmark protocol** — no accepted way to measure agent improvement over N trials with no human reset | All current agent benchmarks are one-shot. BALROG measures plateau height, not learning rate. There's no `score-vs-trial` curve. |
-| **Scaffold-vs-emergence efficient frontier** — how much hand-curation does an auto-emerging agent really need? | Anthropic Pokemon uses heavy scaffolding (custom memory tool + tuned prompts). Voyager uses Minecraft API. Nobody has run the ablation that answers "what could the LLM have figured out on its own?" |
-| **Unified pathology taxonomy + handler** | Reflexion handles one type, LATS another, Self-Refine another. No survey + unification exists. |
-| **Cross-task transfer via memory (without fine-tune)** | Letta claims it but on narrow tasks. Cross-game-class transfer (RPG → puzzle → web) is unmeasured. |
-| **Memory-vs-RL phase boundary** — at what task difficulty does pure-memory stop being enough and you have to do post-training (GRPO/DPO/PPO)? | DeepSeek-R1 showed RL works from scratch. But for agents specifically, the lift from RL vs memory is unmeasured. |
-| **Stable agentic RL on small models** — most agentic RL papers use 7-70B models; can a 4B-active-MoE (Gemma 26B-A4B-it) match 70B with the right architecture? | All compute-constrained labs (Anthropic Sonnet, Mistral, DeepSeek) want efficient agents. |
+| **Skill efficacy at SLM scale on multi-step games** | [SkillsBench](https://github.com/benchflow-ai/skillsbench) (1,209★) answered "curated skills help, self-generated skills don't" — but **for frontier-API models on terminal/CS tasks**. The SLM (7-30B) answer on multi-step games where the skill compounds across episodes is open. |
+| **Unified pathology taxonomy + handler** | Reflexion handles one type, LATS another, Self-Refine another. [Diagnosing Failure Root Causes](https://huggingface.co/papers/2509.23735) covers a taxonomy but minimal community signal; no released unification + handler. |
+| **Pure-memory baseline against RL-trained self-evolution** | [AgentEvolver](https://github.com/modelscope/AgentEvolver) (1,440★) + [Agent0](https://github.com/aiming-lab/Agent0) (1,196★) + [SAGE](https://github.com/amazon-science/SAGE) all do self-evolution with GRPO at SLM scale. **The frozen-model + pure-memory control arm at the same scale isn't reported** — they bake RL in, so they can't easily isolate it. |
+| **Cross-game-class transfer via memory at SLM scale** | [MCMA](https://huggingface.co/papers/2601.07470) tests cross-task on ALFWorld/ScienceWorld/BabyAI (not games, paper-only no code). Cross-game-class memory transfer at SLM scale on Orak's 12-game span is unmeasured. |
+| **Dominance-lock-in as portable diagnostic** | No collision found at any credibility tier. The Gini-style coefficient on procedure-selection distribution as a portable diagnostic remains open. |
+| **Self-Evolution Curve protocol** | All current agent benchmarks are one-shot. BALROG measures plateau, not learning rate. [On Randomness in Agentic Evals](https://huggingface.co/papers/2602.07150) (Feb 2026) proposes pass^k — moves in the right direction but not learning-rate-specific. |
+| **Reflector write-schema ablation** | [Memory-R1](https://huggingface.co/papers/2508.19828) trains memory ops via RL but doesn't ablate which write-type contributes most lift. Paper-only, no released code. |
+
+What the audit closed off (no longer open problems):
+
+- ~~Cross-game LLM agent benchmark~~ — [Orak](https://github.com/krafton-ai/Orak) (144★, KRAFTON+SNU+NVIDIA+UW) ships this
+- ~~Skill efficacy at frontier scale~~ — SkillsBench answered (curated +16pp, self-generated −1pp)
+- ~~Memory operations as structured RL targets~~ — Memory-R1 covered the design even if no code released
 
 ### Tier 1 — TGAER + cross-game ablation (6-8 weeks)
 
@@ -376,13 +471,49 @@ The **four-way comparison** at a fixed compute budget:
 
 The "memory vs RL" debate is folklore-level today — Letta claims memory is enough, DeepSeek-R1 says RL is enough. A clean comparison with budget accounting (LLM calls, GPU hours, $ cost) settles whether they substitute, compound, or interfere.
 
-### Tier 4 — public benchmark reproduction
+### Tier 4 — ARC-AGI-3 competition submission (highest-leverage public artifact)
 
-A separate axis from architecture extension: **reproduce / beat published agent results** on standard benchmarks to make the architecture claim concrete. Candidates:
+The **[ARC Prize 2026 — ARC-AGI-3 competition](https://arcprize.org/competitions/2026/arc-agi-3)** (launched March 25, 2026) is the right Tier 4 target — dated, public, prize-backed, and **SLM-forced by sandbox rules** (no internet, no API calls). The original TGAER framing per the April 2026 realignment was for ARC-AGI-3 anyway (see [`hermes/life/REALIGNMENT-2026-04-19.md`](file:///root/dotfiles/hermes/life/REALIGNMENT-2026-04-19.md)); the Orak cross-game work generalises that architecture, and Tier 4 takes it back to ARC.
 
-- **Pokemon Red** — Anthropic's Claude-plays-Pokemon stream has reached Cerulean City (M11+) with Claude 3.7 Sonnet + custom memory tool + heavy scaffolding. Matching or beating with our 26B + auto-emerging skills (no hand-curated milestone library beyond M5) is a direct comparison.
-- **WebArena** — current SOTA hovers ~35-45% success. TGAER cross-task transfer should be measured here.
-- **SWE-bench Verified** — current SOTA ~60-65% (Claude 3.7 Sonnet + custom agents). TGAER + Reflector on code-edit traces is a clean test.
+| dimension | value |
+|---|---|
+| Total prizes | **$850K** ($700K grand prize + $150K milestone prizes) |
+| Sandbox constraint | **No internet, no API calls** — forces local-model-only (perfect SLM fit) |
+| Open-source requirement | Mandatory (CC0 or MIT-0) before prize evaluation |
+| Milestone #1 deadline | **June 30, 2026** ($25K / $10K / $2.5K for top-3) |
+| Milestone #2 deadline | September 30, 2026 (same prize tier) |
+| Final deadline | November 2, 2026 |
+| Results announced | December 4, 2026 |
+| Public artifacts | [arcprize/ARC-AGI-3-Agents](https://github.com/arcprize/ARC-AGI-3-Agents) (247★) — agent SDK, [arcprize/arc-agi-3-benchmarking](https://github.com/arcprize/arc-agi-3-benchmarking) (18★) — benchmark helper |
+| Why uniquely good for SLMs | Most frontier-lab teams have to use their non-frontier models (no Claude/GPT/Gemini API available in sandbox) — removes their normal advantage |
+
+**Strategic upside:** ARC-AGI-3 milestone #1 (June 30) is the earliest credible RE-portfolio public artifact this work can produce. Even a competitive partial submission gets a public Kaggle rank and forces the SLM architecture decisions into the open.
+
+### Tier 4b — Anthropic Pokemon as informal-but-strategic surface
+
+Separate from ARC-AGI-3, **Anthropic's [Claude-plays-Pokemon](https://www.anthropic.com/news/claude-plays-pokemon) stream remains the single most public agentic-LLM project** and is openly used by Anthropic as a recruiting funnel. Not a formal benchmark (no leaderboard, no prize, no SLM constraint), but strategically valuable for Anthropic-specific RE-track signalling.
+
+| dimension | value |
+|---|---|
+| Format | publicly-streamed Claude rollouts with custom memory tool + heavy scaffolding |
+| Best score (as of ~2026) | Cerulean City (M11+) via Claude 3.7 Sonnet + custom memory tool |
+| Our angle | Match or beat with **26B SLM + auto-emerging skills** (no hand-curated milestone library beyond M5) → direct comparison: "How much of the gap was the model vs the scaffold?" |
+| Recruiting upside | Anthropic openly uses the thread as a hiring signal; pings on the thread are visible to the agentic team |
+| Risk | Anthropic keeps moving the goalposts (new scaffolding, new memory tools); chasing their public results is a moving target |
+
+**Strategic call:** pursue ARC-AGI-3 (Tier 4a) as the *competitive* artifact (dated, prize-backed, SLM-forced, your rank is public) and Anthropic Pokemon (Tier 4b) as the *narrative* artifact (frame the 26B vs Claude comparison as a blog post + Twitter thread; tag the Anthropic team). They're complementary, not substitutes.
+
+### Tier 4c — secondary public benchmark targets
+
+Beyond ARC-AGI-3 and Anthropic Pokemon, these are cleaner cross-task surfaces but with less competitive urgency:
+
+- **[SWE-bench Verified](https://github.com/SWE-bench/SWE-bench)** (5,000★) — the canonical coding-agent benchmark; current SOTA ~60-65% via Claude + custom agents. TGAER + Reflector on code-edit traces is a clean test.
+- **[WebArena](https://github.com/web-arena-x/webarena)** (1,480★) — current SOTA ~35-45% success. Cross-task transfer surface.
+- **[OSWorld](https://github.com/xlang-ai/OSWorld)** (2,867★) — desktop / OS-level tasks.
+- **[τ²-bench](https://github.com/sierra-research/tau2-bench)** (1,219★) — customer-service / tool-use; applied-AI angle for Sierra/Decagon-style roles.
+- **[GAIA](https://huggingface.co/datasets/gaia-benchmark/GAIA)** (670 HF likes, 50K downloads/month) — general AI assistant benchmark with multimodality + tool use.
+- **[MemoryAgentBench](https://github.com/HUST-AI-HYZ/MemoryAgentBench)** (341★, ICLR 2026) — direct surface for claim #6 (cross-game/cross-session memory).
+- **[BALROG](https://github.com/balrog-ai/BALROG)** (254★) — agentic LLM/VLM reasoning on diverse games (NetHack, Crafter, BabaIsAI, etc.); cross-game pathology comparison.
 
 ### Tier 5 — tgaer as research infrastructure
 
