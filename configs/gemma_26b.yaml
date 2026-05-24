@@ -23,6 +23,9 @@ defaults:
   - override super_mario/agent: gemma_26b
   - override pokemon_red/agent: gemma_26b
   - override star_craft/agent: gemma_26b
+  # Flat64 is the only LADDER_MAP_2023 entry shipped in Blizzard's
+  # public SC2 Linux 4.10 distro — see configs/star_craft/env/linux_default.yaml.
+  - override star_craft/env: linux_default
   - _self_
 
 # Sweep-level wandb tag overrides — replace the legacy "gemini" tag (stale

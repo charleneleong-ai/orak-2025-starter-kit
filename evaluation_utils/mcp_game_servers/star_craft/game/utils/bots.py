@@ -179,6 +179,19 @@ def map_ai_build(build_string):
     return build_map.get(build_string, AIBuild.RandomBuild)  # 如果没有找到对应的战术风格，返回默认值 Difficulty.RandomBuild
 
 class Protoss_Bot(BotAI):
+    def already_pending_upgrade(self, upgrade_type):
+        # Older SC2 game data (e.g. the publicly downloadable Linux 4.10
+        # build, Base75689) lacks research_ability metadata for some
+        # post-2019 upgrades (VOIDRAYSPEEDUPGRADE, PHOENIXRANGEUPGRADE, …),
+        # which makes BotAI.already_pending_upgrade raise
+        # AttributeError("'NoneType' object has no attribute 'exact_id'").
+        # Treat the unknown upgrade as "not pending" (0) so the per-step
+        # information dict still populates and the agent loop can advance.
+        try:
+            return super().already_pending_upgrade(upgrade_type)
+        except AttributeError:
+            return 0
+
     def __init__(self, transaction, lock, isReadyForNextStep):
         self.iteration = 0
         self.lock = lock

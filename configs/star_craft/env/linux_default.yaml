@@ -1,0 +1,21 @@
+env_name: StarCraft
+log_path: ./logs
+task: 1 vs 1 battle againt built-in ai
+input_modality: "text_image"
+# map_idx=2 -> Flat64. Flat64 is the only map in LADDER_MAP_2023
+# (see star_craft_env.py) that ships in Blizzard's public SC2 Linux 4.10
+# distro out of the box. The other two ("Ancient Cistern LIE",
+# "LastFantasyAIE") are community maps and need a separate download under
+# ~/StarCraftII/Maps/. The MACLA root configs (configs/gemma_26b.yaml,
+# configs/qwen35_a3b_int4.yaml) override star_craft/env to this so the
+# adapter is runnable end-to-end without the custom map pack.
+map_idx: 2
+player_race: Protoss
+bot_race: Zerg
+bot_difficulty: 4
+bot_build: 2
+query_interval: 10
+num_summaries: 1
+num_actions: 5
+max_episodes: 3
+max_steps: 1000
