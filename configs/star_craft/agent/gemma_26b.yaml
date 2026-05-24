@@ -1,0 +1,26 @@
+# Gemma 4 26B-A4B-it AWQ 4-bit for StarCraft II — A100-40GB
+# MoE: 26B total / 3.8B active params. AWQ ~14GB → ~26GB KV cache room.
+# Mirrors configs/pokemon_red/agent/gemma_26b.yaml — the variable
+# changing is the game surface (Protoss 1v1 vs Pokemon Red 4/7 milestones).
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: true
+max_tokens: 8192
+max_model_len: 16384
+game_config_path: "star_craft"
+track: "TRACK1"
+# Stage C: vector memory
+use_vector_memory: true
+vector_memory_max: 100
+vector_memory_top_k: 3
+vector_memory_threshold: 0.5
+vector_memory_use_mmr: true
+vector_memory_mmr_lambda: 0.5
+vector_memory_decay_alpha: 0.5
+vector_memory_decay_window: 20
+# Stage D: subtask planner
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600

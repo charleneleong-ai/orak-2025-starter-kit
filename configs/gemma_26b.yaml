@@ -8,7 +8,7 @@
 #
 # Usage:
 #   ./serving/gemma_serve.sh unsloth/gemma-4-26b-a4b-it   # in another shell
-#   python run.py -c gemma_26b --local --games pokemon_red super_mario twenty_fourty_eight
+#   python run.py -c gemma_26b --local --games pokemon_red super_mario twenty_fourty_eight star_craft
 
 ENV: ${oc.env:ENV, "dev"}
 CWD: ${hydra:runtime.cwd}
@@ -18,9 +18,14 @@ defaults:
   - twenty_fourty_eight: base
   - super_mario: base
   - pokemon_red: base
+  - star_craft: base
   - override twenty_fourty_eight/agent: gemma_26b
   - override super_mario/agent: gemma_26b
   - override pokemon_red/agent: gemma_26b
+  - override star_craft/agent: gemma_26b
+  # Flat64 is the only LADDER_MAP_2023 entry shipped in Blizzard's
+  # public SC2 Linux 4.10 distro — see configs/star_craft/env/linux_default.yaml.
+  - override star_craft/env: linux_default
   - _self_
 
 # Sweep-level wandb tag overrides — replace the legacy "gemini" tag (stale
@@ -34,3 +39,6 @@ super_mario:
 pokemon_red:
   wandb:
     tags: ["gemma", "gemma-26b", "pokemon_red", "stage_d_planner", "outcome_tagged_history"]
+star_craft:
+  wandb:
+    tags: ["gemma", "gemma-26b", "star_craft", "stage_d_planner", "outcome_tagged_history"]

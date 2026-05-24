@@ -1,0 +1,26 @@
+# Qwen 3.5 35B-A3B-GPTQ-Int4 for StarCraft II — A100-40GB
+# MoE: 35B total / 3B active params. INT4 native on A100.
+# Same MACLA Stage D stack as gemma_26b.yaml; only the served model varies,
+# which lets us run a Stage H-style cross-model ceiling check on RTS.
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "Qwen/Qwen3.5-35B-A3B-GPTQ-Int4"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: false
+max_tokens: 4096
+max_model_len: 16384
+game_config_path: "star_craft"
+track: "TRACK1"
+# Stage C: vector memory
+use_vector_memory: true
+vector_memory_max: 100
+vector_memory_top_k: 3
+vector_memory_threshold: 0.5
+vector_memory_use_mmr: true
+vector_memory_mmr_lambda: 0.5
+vector_memory_decay_alpha: 0.5
+vector_memory_decay_window: 20
+# Stage D: subtask planner
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600

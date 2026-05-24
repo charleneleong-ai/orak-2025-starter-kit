@@ -78,7 +78,14 @@ GAME_ADAPTERS: dict[str, str] = {
     "super_mario": "agents.super_mario.game_adapter",
     "pokemon_red": "agents.pokemon_red.game_adapter",
     "twenty_fourty_eight": "agents.twenty_fourty_eight.game_adapter",
+    "star_craft": "agents.starcraft.game_adapter",
 }
+
+
+# StarCraft emits 5 actions per step as a "1: A\n2: B\n..." string;
+# the env's text2action regex parses on `\d+: ` prefixes. Match the same
+# shape here so the multi-action payload survives _validate_action unchanged.
+_STARCRAFT_MULTI_ACTION_RE = re.compile(r"^\s*\d+:\s+\S")
 
 
 def _load_adapter(game_name: str) -> ModuleType:
@@ -112,10 +119,11 @@ class ConfigSuccessDetector:
                 is_fatal = True
 
         strong_success = False
-        prev_score = self._extract_int(self.score_pattern, prev_state) or 0
-        cur_score = self._extract_int(self.score_pattern, cur_state) or 0
-        if cur_score > prev_score:
-            strong_success = True
+        if self.score_pattern:
+            prev_score = self._extract_int(self.score_pattern, prev_state) or 0
+            cur_score = self._extract_int(self.score_pattern, cur_state) or 0
+            if cur_score > prev_score:
+                strong_success = True
 
         if self.progress_pattern:
             prev_pos = self._extract_float(self.progress_pattern, prev_state) or 0
@@ -387,7 +395,7 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                 self._last_critique = getattr(self, "_last_critique", "")
 
         # 1. Provide feedback on previous execution
-        update_info = self._provide_feedback(self._prev_state_str, cur_state_str)
+        update_info = self._provide_feedback(self._prev_state_str, cur_state_str, obs_image)
 
         # 2. Execute task using MACLA
         action, execution_result, memory_stats = self._execute_task(
@@ -534,6 +542,8 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                 return va
         # Allow game-specific action formats to pass through
         if action.startswith("use_tool(") or action.startswith("Jump Level:"):
+            return action
+        if _STARCRAFT_MULTI_ACTION_RE.match(action):
             return action
         return self._adapter.DEFAULT_ACTION
 
