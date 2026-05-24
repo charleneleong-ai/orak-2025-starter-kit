@@ -1,0 +1,59 @@
+# OpenEvolve config — pokemon_red milestone library spike.
+#
+# Spike-appropriate knobs vs upstream defaults (default 100 iters):
+#   - max_iterations: 12. Real wall time measured at ~50min/iter (3x
+#     slower than Stage S v2 due to cold caches). 12 × 75min ÷ 2 parallel
+#     ≈ 7-8h — one overnight run, enough to answer "does it produce
+#     ANY improvement over baseline (4/7)?"
+#   - population_size: 12 (default 1000). MAP-Elites quality-diversity
+#     keeps the working frontier small.
+#   - num_islands: 2 (default 5). With 12 candidates total, 5 islands is
+#     too sparse to migrate usefully.
+#   - parallel_evaluations: 2. Two concurrent rollouts → vLLM
+#     continuous-batching keeps GPU ~30% utilised instead of 0%. Each
+#     rollout slows ~50% from contention (~75min vs 50min serial) but
+#     net 2x throughput. Past 2 the per-rollout slowdown outpaces the
+#     throughput gain on a single A100.
+#   - cascade_evaluation: false. Our evaluator already returns a single
+#     score; cascade adds a stage-1 prefilter, which we don't have.
+
+max_iterations: 12
+checkpoint_interval: 5
+random_seed: 42
+target_score: 0.95  # 6.65/7 — gives the loop an early-stop if a 7/7 lands
+
+# ── LLM (Gemini-via-OpenAI-compat) ────────────────────────────────────
+llm:
+  models:
+    # 2.5 Pro: high quality but slow + rate-limited. Use as primary.
+    - name: "gemini-2.5-pro"
+      weight: 0.7
+    # Flash: faster cheaper, sometimes useful as a counterweight.
+    - name: "gemini-2.5-flash"
+      weight: 0.3
+  evaluator_models:
+    # Used by OpenEvolve to summarise/critique candidate artefacts.
+    - name: "gemini-2.5-flash"
+      weight: 1.0
+  api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
+  api_key: "${GEMINI_API_KEY}"
+  temperature: 0.8
+  top_p: 0.95
+  max_tokens: 4096
+  timeout: 60
+  retries: 3
+  retry_delay: 5
+
+# ── Evolution loop ────────────────────────────────────────────────────
+population_size: 12
+archive_size: 20
+num_islands: 2
+migration_interval: 10
+migration_rate: 0.2
+
+# ── Evaluation ────────────────────────────────────────────────────────
+evaluator:
+  timeout: 7200   # 2h, matches evaluator.py ROLLOUT_TIMEOUT_S (v2: 600 steps)
+  max_retries: 1  # one rollout per candidate (variance is the cost we eat)
+  cascade_evaluation: false
+  parallel_evaluations: 2

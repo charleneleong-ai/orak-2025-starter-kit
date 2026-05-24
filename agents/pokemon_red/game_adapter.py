@@ -351,48 +351,65 @@ def _defeat_trainer(trainer: str, score_after: int) -> Subgoal:
 # the score gate to fire — the framework auto-inserts the matching
 # ``NavigateToMap`` bridge subgoal above the milestone, lifting Stage S v1's
 # manual ViridianCity insert into the library. Adding M8+ = one dict entry.
-_POKEMON_MILESTONE_LIBRARY: dict[int, MilestoneSpec] = {
-    5: MilestoneSpec(
-        name="EnterViridian",
-        description=(
-            "Walk into Viridian City (any Viridian-named map). Route 1 "
-            "leads directly north from Pallet Town."
+#
+# OpenEvolve hot-swap: if POKEMON_MILESTONE_LIBRARY_PATH points to a Python
+# module that defines `_POKEMON_MILESTONE_LIBRARY: dict[int, MilestoneSpec]`,
+# that overrides the baseline below. See experiments/openevolve_milestones/.
+import os as _os  # noqa: E402
+
+_LIBRARY_OVERRIDE_PATH = _os.environ.get("POKEMON_MILESTONE_LIBRARY_PATH")
+if _LIBRARY_OVERRIDE_PATH:
+    import importlib.util as _iu  # noqa: E402
+
+    _spec = _iu.spec_from_file_location("_pokemon_milestone_candidate", _LIBRARY_OVERRIDE_PATH)
+    if _spec is None or _spec.loader is None:
+        raise RuntimeError(f"Cannot load milestone-library override at {_LIBRARY_OVERRIDE_PATH}")
+    _mod = _iu.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    _POKEMON_MILESTONE_LIBRARY: dict[int, MilestoneSpec] = _mod._POKEMON_MILESTONE_LIBRARY
+else:
+    _POKEMON_MILESTONE_LIBRARY: dict[int, MilestoneSpec] = {
+        5: MilestoneSpec(
+            name="EnterViridian",
+            description=(
+                "Walk into Viridian City (any Viridian-named map). Route 1 "
+                "leads directly north from Pallet Town."
+            ),
+            suggested_tools=["move_to"],
+            # Score ticks only on the env detecting Viridian entry — needs a
+            # spatial nav subgoal above to give the planner a target.
+            requires_location="ViridianCity",
         ),
-        suggested_tools=["move_to"],
-        # Score ticks only on the env detecting Viridian entry — needs a
-        # spatial nav subgoal above to give the planner a target.
-        requires_location="ViridianCity",
-    ),
-    6: MilestoneSpec(
-        name="GetOaksParcel",
-        description=(
-            "Pick up Oak's Parcel from the Viridian Mart — enter the Mart "
-            "(blue-roofed building in Viridian City) and talk to the clerk "
-            "at the counter."
+        6: MilestoneSpec(
+            name="GetOaksParcel",
+            description=(
+                "Pick up Oak's Parcel from the Viridian Mart — enter the Mart "
+                "(blue-roofed building in Viridian City) and talk to the clerk "
+                "at the counter."
+            ),
+            suggested_tools=["move_to", "interact_with_object", "continue_dialog", "a"],
+            # Stage S v2: M6 fires on the parcel-pickup dialog inside ViridianMart.
+            # Without a spatial nav above, the planner sees only a score-based gate
+            # once M5 pops — same chicken-and-egg as v1's wall. The env's map_name
+            # canonically becomes "ViridianMart" on entering the interior tile.
+            requires_location="ViridianMart",
         ),
-        suggested_tools=["move_to", "interact_with_object", "continue_dialog", "a"],
-        # Stage S v2: M6 fires on the parcel-pickup dialog inside ViridianMart.
-        # Without a spatial nav above, the planner sees only a score-based gate
-        # once M5 pops — same chicken-and-egg as v1's wall. The env's map_name
-        # canonically becomes "ViridianMart" on entering the interior tile.
-        requires_location="ViridianMart",
-    ),
-    7: MilestoneSpec(
-        name="DeliverOaksParcel",
-        description=(
-            "Return to Pallet Town and deliver Oak's Parcel to Professor "
-            "Oak in his lab (south side of Pallet Town)."
+        7: MilestoneSpec(
+            name="DeliverOaksParcel",
+            description=(
+                "Return to Pallet Town and deliver Oak's Parcel to Professor "
+                "Oak in his lab (south side of Pallet Town)."
+            ),
+            suggested_tools=["move_to", "interact_with_object", "continue_dialog", "a"],
+            # Stage S v2: M7 fires inside OaksLab after delivering the parcel
+            # via dialog with Oak. Walking back to PalletTown then entering the
+            # lab is two map transitions; the framework's auto-bridge anchors the
+            # final one. The Route1-south traversal stays implicit — once the
+            # M6 ViridianMart nav pops, the planner's next spatial directive is
+            # NavigateToMap(OaksLab) and the env handles the warp chain.
+            requires_location="OaksLab",
         ),
-        suggested_tools=["move_to", "interact_with_object", "continue_dialog", "a"],
-        # Stage S v2: M7 fires inside OaksLab after delivering the parcel
-        # via dialog with Oak. Walking back to PalletTown then entering the
-        # lab is two map transitions; the framework's auto-bridge anchors the
-        # final one. The Route1-south traversal stays implicit — once the
-        # M6 ViridianMart nav pops, the planner's next spatial directive is
-        # NavigateToMap(OaksLab) and the env handles the warp chain.
-        requires_location="OaksLab",
-    ),
-}
+    }
 
 
 def _reach_pokemon_milestone(idx: int) -> Subgoal:
