@@ -103,6 +103,29 @@ if [[ ! -e "${SC2_INSTALL_DIR}/maps" ]]; then
     echo "[setup] linked lowercase maps -> Maps (workaround for SC2 4.10 path normalisation)"
 fi
 
+# burnysc2 hardcodes `-eglpath libEGL.so` but distros only ship the
+# versioned libEGL.so.1 / libGL.so.1 (the libegl-dev / libgl-dev
+# packages provide the unversioned symlinks). Without them SC2 silently
+# falls back to no-render and rgb_render_config -> map_image never
+# populates -> the agent never sees the game image. Install
+# project-local unversioned symlinks and bots.py will prepend
+# $SC2_INSTALL_DIR/libs to LD_LIBRARY_PATH so SC2 finds them.
+mkdir -p "${SC2_INSTALL_DIR}/libs"
+for libname in libEGL libGL; do
+    src=""
+    for cand in "/usr/lib/x86_64-linux-gnu/${libname}.so.1" \
+                "/usr/lib/${libname}.so.1" \
+                "/lib/x86_64-linux-gnu/${libname}.so.1"; do
+        if [[ -f "${cand}" ]]; then src="${cand}"; break; fi
+    done
+    if [[ -n "${src}" ]]; then
+        ln -sf "${src}" "${SC2_INSTALL_DIR}/libs/${libname}.so"
+        echo "[setup] symlinked ${SC2_INSTALL_DIR}/libs/${libname}.so -> ${src}"
+    else
+        echo "[setup] WARN: ${libname}.so.1 not found — image rendering won't work."
+    fi
+done
+
 echo "[setup] maps available:"
 ls "${SC2_INSTALL_DIR}"/Maps/ 2>/dev/null || echo "  (none — Maps directory missing)"
 

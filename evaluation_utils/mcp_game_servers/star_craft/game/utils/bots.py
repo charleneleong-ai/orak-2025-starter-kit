@@ -23,8 +23,37 @@ if platform.system() == "Darwin":
         return result
     _sc2proc.SC2Process._launch = _patched_launch
 
+# burnysc2 hardcodes `-eglpath libEGL.so` (unversioned) for the SC2 launch
+# args, but distro libraries only ship as libEGL.so.1 (the unversioned
+# symlink lives in libegl-dev / libgl-dev). Without the symlink, SC2
+# silently runs without RGB rendering, so map_image / minimap_image
+# never populate and the agent gets `obs_image=None`.
+# Prepend $SC2PATH/libs (set up by serving/starcraft_setup.sh) to
+# LD_LIBRARY_PATH so SC2's dlopen("libEGL.so") resolves to our symlink.
+if platform.system() == "Linux":
+    _sc2_libs = os.path.join(
+        os.environ.get("SC2PATH", os.path.expanduser("~/StarCraftII")),
+        "libs",
+    )
+    if os.path.isdir(_sc2_libs):
+        _cur = os.environ.get("LD_LIBRARY_PATH", "")
+        if _sc2_libs not in _cur.split(os.pathsep):
+            os.environ["LD_LIBRARY_PATH"] = (
+                _sc2_libs + (os.pathsep + _cur if _cur else "")
+            )
+
 from sc2 import maps
 from sc2.bot_ai import BotAI
+
+# burnysc2's Renderer.render() opens a pyglet Window to display the live
+# SC2 view, which needs libGLU/libGL via pyglet — not what we want on
+# a headless server. The Protoss_Bot reads state.observation.render_data
+# bytes directly (see on_step below), so the renderer is dead weight.
+# Replace it with a no-op so pyglet is never invoked.
+import sc2.renderer as _sc2_renderer
+async def _noop_render(self, observation):  # noqa: ARG001 - signature matches burnysc2
+    return None
+_sc2_renderer.Renderer.render = _noop_render
 
 from sc2.data import Race
 from sc2.ids.ability_id import AbilityId
