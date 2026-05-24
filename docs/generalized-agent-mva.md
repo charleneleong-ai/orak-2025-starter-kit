@@ -165,7 +165,9 @@ Building all five layers at once is suicide; stage by ROI:
 
 PRs 1-5 don't need embedding infra or extra LLM calls — cheap, ship in a week. PRs 6-8 need more setup.
 
-### PR 1 — futile-action detector (in flight, results pending)
+> **PRs are how components land into the arch, not optional add-ons.** Each PR in the table below adds (or upgrades) a specific layer component listed in the "Have vs need" tables above. Once PR 1 merges, the futile-action detector is a permanent L3 component — the "PR" framing reflects shipping cadence, not provisional status. The regression rollouts are the merge gate, not a "maybe we'll add this if it works" filter.
+
+### PR 1 — futile-action detector (component of L3, in flight)
 
 **Branch:** `feat/futile-action-detector` (worktree `/workspace/orak-futile-detector`)
 **Commit:** [`176f68c`](https://github.com/charleneleong-ai/orak-2025-starter-kit/commit/176f68c) — `feat(macla): universal futile-action detector (PR 1 of MVA harness)`
@@ -232,6 +234,71 @@ New code in orak should use **neutral names** that translate cleanly:
 - `agents/macla/pathology.py` — futile/loop/stagnation detectors
 
 ---
+
+## References & influences
+
+The MVA is not novel architecture — it's a specific stack of patterns that have proven out in the academic and industry agent literature, applied to orak's cross-game test bed. Each layer maps to prior work we're building on. Where an orak experiment validated (or refuted) a pattern, that's cross-referenced too.
+
+### Layer 1 — Env + Task split
+
+- **[Gymnasium](https://gymnasium.farama.org/)** (Farama, formerly OpenAI Gym) — the canonical `reset / step / observation_space / action_space` interface. Our `GameAdapter` is gymnasium-shaped.
+- **[DeepMind dm_env](https://github.com/google-deepmind/dm_env)** — TimeStep abstraction that decouples env transitions from agent control loop. Influences our `StepResult` shape.
+- **[MetaWorld](https://meta-world.github.io/)** (Yu et al. 2019, *CoRL*) — pioneered the env-vs-task separation: one robot arm env hosts 50 manipulation tasks. Our `EnvAdapter` + `Task` split is the same.
+- **[BabyAI](https://github.com/mila-iqia/babyai)** (Chevalier-Boisvert et al. 2019, *ICLR*) — language-conditioned task hierarchy with `Mission` strings. Inspired `goal_string()` as a first-class adapter method.
+
+### Layer 2 — Memory4
+
+The four-store split (episodic / procedural / semantic / self-model) follows the cognitive architecture tradition explicitly:
+
+- **[Generative Agents](https://arxiv.org/abs/2304.03442)** (Park et al. 2023, *UIST*) — three-store memory (observation stream, reflection tree, plan tree) with embedding-indexed retrieval and importance scoring. The Episodic + Semantic split mirrors this.
+- **[Voyager](https://voyager.minedojo.org/)** (Wang et al. 2023, *NeurIPS*) — auto-extending **skill library** for Minecraft; LLM writes new skills, tests them via the env, adds to the library. The L2.Procedural store + skill-authoring sandbox (PR 8) are the Voyager pattern.
+- **[ExpeL](https://arxiv.org/abs/2308.10144)** (Zhao et al. 2023, *AAAI*) — Experiential Learning: agent extracts cross-trial **insights** (semantic rules) from trajectory comparisons. Directly inspires L2.Semantic.
+- **[CLIN](https://allenai.github.io/clin/)** (Majumder et al. 2023) — continually learning language agent with a structured **causal memory** ("X may be necessary for Y"). Another L2.Semantic precedent.
+- **[STELLA](https://arxiv.org/abs/2404.01270)** (Liu et al. 2024) — self-evolving LLM agent with a dynamic tool/skill repository; influences the SkillLibrary success-rate gate (PR 2).
+
+### Layer 3 — Universal pathology guards
+
+- **[ReAct](https://arxiv.org/abs/2210.03629)** (Yao et al. 2022, *ICLR*) — interleaved thought-action-observation loop where the agent observes its own action effects. The futile-action detector is a deterministic version of ReAct's "if observation didn't change, reconsider" pattern.
+- **[Reflexion](https://arxiv.org/abs/2303.11366)** (Shinn et al. 2023, *NeurIPS*) — verbal critique injected into next attempt. Our stagnation→reflector pipeline (PRs 3 + 7) is the Reflexion shape.
+- **[LATS](https://arxiv.org/abs/2310.04406)** (Zhou et al. 2023) — Language Agent Tree Search; pathology guards as MCTS pruning signals.
+- **[BALROG](https://arxiv.org/abs/2411.13543)** (Paglieri et al. 2024) — benchmark for long-horizon LM agents; their pathology taxonomy (loops, stagnation, regression) is the basis for our four guards (futile / loop / stagnation / regression).
+- **Orak experiments** that motivated this layer's universality: 2026-05-23 cross-game baselines showed (a) mario 58 instant-death episodes after ep4 (procedure poisoning), (b) 2048 episode 8 dying after 4 consecutive `down` actions on a `down`-blocked board, (c) pokemon ViridianCity loop with stagnation=1290 — three games, three different shapes of the same universal pathology.
+
+### Layer 4 — Planner
+
+- **[ReAct](https://arxiv.org/abs/2210.03629)** again — base loop shape
+- **[Plan-and-Solve](https://arxiv.org/abs/2305.04091)** (Wang et al. 2023, *ACL*) — decompose first, then act. Influences the subgoal decomposition currently in `MilestoneSpec`.
+- **[Tree of Thoughts](https://arxiv.org/abs/2305.10601)** (Yao et al. 2023, *NeurIPS*) — lookahead via LLM-imagined branches. Maps to optional L4 enhancement once Memory4 is stable.
+- **MACLA** — orak's existing `UnifiedMaclaAgent` in [`agents/macla/unified.py`](../agents/macla/unified.py) IS the L4 planner, kept and refactored rather than replaced.
+
+### Layer 5 — Reflector
+
+- **[Reflexion](https://arxiv.org/abs/2303.11366)** — post-episode verbal critique, again. The canonical pattern for L5.
+- **[GEPA](https://arxiv.org/abs/2507.19457)** (Agrawal et al. 2025) — Genetic-Pareto reflective prompt optimization; the right tool when the prompt itself is the surface to evolve. Slots into L5 as the prompt-evolution component.
+- **[Self-Refine](https://arxiv.org/abs/2303.17651)** (Madaan et al. 2023, *NeurIPS*) — iterative critique-refine loop; precursor to Reflexion.
+- **[STaR](https://arxiv.org/abs/2203.14465)** (Zelikman et al. 2022, *NeurIPS*) — self-taught reasoner; on-policy improvement via rationale generation. Conceptual basis for "reflector writes new skills/rules from successful trajectories."
+- **[ExpeL](https://arxiv.org/abs/2308.10144)** again — its insight-extraction step IS Reflector → L2.Semantic.
+
+### Cross-cutting
+
+- **Auto-skill writing**: [Voyager](https://voyager.minedojo.org/), [Eureka](https://eureka-research.github.io/) (Ma et al. 2023, *ICLR* — LLM as reward designer/skill author), [SWE-agent](https://swe-agent.com/) (Yang et al. 2024, *NeurIPS*)
+- **Telemetry / event streams**: [LangSmith](https://docs.smith.langchain.com/), [Weave](https://weave-docs.wandb.ai/) — orak already uses both
+- **Sweep orchestration / regression corpus**: [`experiments/autoresearch.py`](../experiments/autoresearch.py) (orak's own) — kept as the harness around the new arch
+
+### What we are NOT claiming as novel
+
+- Memory4 itself — Generative Agents had three stores; we add Self-model
+- Skill library auto-extension — Voyager
+- Episodic retrieval — RAG + Generative Agents
+- Verbal self-critique — Reflexion + Self-Refine
+- Prompt evolution — GEPA + OPRO
+
+### What IS the contribution
+
+- **Cross-game generalization stress test** — pokemon (long-horizon nav), mario (short episodic platformer), 2048 (deterministic puzzle), planned: starcraft (RTS) — same agent, no per-game scaffolds
+- **The four pathology guards as a unified L3** — most prior work fixes one symptom at a time; we're treating them as a single layer with a shared event protocol that feeds Reflector
+- **Empirical study of what bootstraps vs what auto-emerges** — pokemon's hand-curated milestone library is the *bootstrap*, mario/2048 are the *cold start* — the contrast lets us measure how much scaffold is actually needed
+- **Naming + repo split** — orak (validated patterns) → tgaer (clean abstractions): the architecture becomes portable infrastructure, not a research artifact
 
 ## Cross-refs
 
