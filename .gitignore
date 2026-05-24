@@ -62,6 +62,10 @@ logs/
 # Wandb
 wandb/
 
+# Per-experiment .gitignore files live alongside their experiments
+# (e.g. experiments/openevolve_milestones/.gitignore for spike-specific
+# runtime outputs). Keeps the root .gitignore project-wide-only.
+
 # autoresearch sweep dashboards — regenerable from results.jsonl via
 # experiments.experiment_progress.plot_progress() and from cross-sweep
 # results via experiments.plot_comparisons. Each progress.html is ~4.7 MB
@@ -70,6 +74,9 @@ wandb/
 experiments/**/progress.html
 experiments/**/progress.png
 experiments/**/progress_static.png
+# Exception: the canonical committed-PNG location per CLAUDE.md
+# (`experiments/progress/<config>/progress.png` is the PR-body screenshot).
+!experiments/progress/**/progress.png
 
 # PR-specific rolling-comment pointer files (autoresearch convention):
 # stores the GitHub issue/PR comment ID that ``post_retro.py``-style scripts

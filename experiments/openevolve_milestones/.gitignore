@@ -1,0 +1,11 @@
+# OpenEvolve spike-specific runtime outputs — regenerable from
+# initial_program.py + evaluator.py + config.yaml. Contains per-iter
+# generated candidates, MAP-Elites checkpoints, openevolve's internal
+# plotly visualisations.
+#
+# Sweep aggregates land directly in
+# experiments/milestones/pokemon_progression.yaml — the canonical
+# bar chart (experiments/progress/pokemon_stage_progression.png)
+# shows means + std error bars per sweep via
+# autoresearch.compare.plot_milestone_bars.
+*_output/
