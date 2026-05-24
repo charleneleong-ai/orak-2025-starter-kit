@@ -12,6 +12,7 @@ import base64
 import importlib
 import io
 import re
+from collections import deque
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -36,6 +37,13 @@ from agents.macla.structured_output import safe_structured_invoke
 # v2 PalletTown lock — move_to(12,0) reliably stalled at (12,5)). The
 # block re-engages automatically the next time the stack mutates.
 SUBGOAL_STAGNATION_THRESHOLD = 30
+
+# Universal pathology guard #1 (PR 1 of the generalized agent harness):
+# Window of consecutive identical observations after which the planner is
+# nudged with a "your last actions did nothing" hint. Game-agnostic —
+# fires for any env where the agent walks into a wall (pokemon), spams a
+# no-op move (2048), or stands still on a deadly tile (mario).
+FUTILE_ACTION_WINDOW = 3
 
 
 # Regex helpers for subgoal completion predicates. The adapter's
@@ -556,9 +564,50 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
     def _get_default_action(self) -> str:
         return self._adapter.DEFAULT_ACTION
 
+    def _detect_futile_action(self, observation: str) -> str | None:
+        """Universal no-op detector: returns a planner hint when the last
+        FUTILE_ACTION_WINDOW observations are byte-identical, meaning the
+        agent's recent actions produced no observable change."""
+        if not hasattr(self, "_obs_hash_window"):
+            self._obs_hash_window = deque(maxlen=FUTILE_ACTION_WINDOW)
+            self._futile_streak_logged = False
+
+        obs_hash = hash(observation)
+        self._obs_hash_window.append(obs_hash)
+
+        if len(self._obs_hash_window) < FUTILE_ACTION_WINDOW or not all(
+            h == obs_hash for h in self._obs_hash_window
+        ):
+            self._futile_streak_logged = False
+            return None
+
+        if not self._futile_streak_logged:
+            logger.info(
+                f"[MACLA] futile_action_hint fired (last {FUTILE_ACTION_WINDOW} "
+                f"obs identical — actions producing no observable change)"
+            )
+            self._futile_streak_logged = True
+
+        return (
+            f"[Futile-action notice] Your last {FUTILE_ACTION_WINDOW - 1} actions "
+            f"produced no observable change in the game state — the action you "
+            f"keep choosing is being rejected by the environment (walking into a "
+            f"wall, picking an invalid move, etc.). Pick a clearly different "
+            f"action this step."
+        )
+
     def _base_fallback(self, goal: str, observation: str, **kwargs) -> tuple[list[str], str]:
         """LLM fallback using game adapter prompts + structured output."""
         obs_image = kwargs.get("obs_image")
+
+        # Universal pathology guard: if last K obs are identical, the
+        # agent's actions are no-ops — nudge the planner before the LLM
+        # call. Hash uses the raw observation BEFORE per-game hints
+        # (map_graph, looped_positions, etc.) are prepended below, so
+        # adding hints later doesn't artificially break the streak.
+        futile_hint = self._detect_futile_action(observation)
+        if futile_hint:
+            observation = f"{futile_hint}\n\n{observation}"
 
         # Use defaultdict-style formatting to handle any template vars
         class SafeDict(dict):
@@ -804,6 +853,12 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         # Reset episode-init flag so next episode rebuilds
         # Reflexion summary + re-seeds the subgoal stack.
         self._subgoal_init_done = False
+        # Reset the futile-action detector window — short-episodic games
+        # (mario, 2048) restart at a fresh state each episode, and the
+        # previous episode's terminal frame shouldn't anchor the streak.
+        if hasattr(self, "_obs_hash_window"):
+            self._obs_hash_window.clear()
+            self._futile_streak_logged = False
         if self._macla_agent and hasattr(self._macla_agent, "memory_system"):
             mem = self._macla_agent.memory_system
             if hasattr(mem, "subgoal_depth"):
