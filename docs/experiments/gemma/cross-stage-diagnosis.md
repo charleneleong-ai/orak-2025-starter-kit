@@ -82,7 +82,7 @@ The pre-asm-fix diagnosis ("LLM reasoning at the milestone boundary") was off by
 
 The code that survives this session and ships to master:
 - **PR #69**: `LocalConfig.use_procedure_layer` toggle — a useful ablation knob, defaults preserve Stage D. Cross-game Stage B' results banked under `experiments/no_procedures/gemma_26b/results.jsonl`.
-- **PR #64 (in-flight)**: per-game self-reflection adapter recommendations (`RECOMMENDED_USE_SELF_REFLECTION` + `RECOMMENDED_REFLECTION_EVERY` constants on `agents/{pokemon_red,super_mario,twenty_fourty_eight}/game_adapter.py`) + `UnifiedMaclaAgent` precedence (YAML > adapter > False). Even though self-reflection doesn't lift the pokemon ceiling, it improves cross-game critique quality and is a no-harm opt-in.
+- **PR #64 (merged 2026-05-13)**: per-game self-reflection adapter recommendations (`RECOMMENDED_USE_SELF_REFLECTION` + `RECOMMENDED_REFLECTION_EVERY` constants on `agents/{pokemon_red,super_mario,twenty_fourty_eight}/game_adapter.py`) + `UnifiedMaclaAgent` precedence (YAML > adapter > False). Even though self-reflection doesn't lift the pokemon ceiling, it improves cross-game critique quality and is a no-harm opt-in.
 
 Closed PRs (with verdicts preserved in PR comments):
 - **#66** Stage E LangGraph + verify_action — same ceiling, dead code
@@ -105,7 +105,7 @@ The diagnosis now points at the **navigation layer**, not reasoning. The most in
 4. **Subtask injection at stuck-state** — when self-reflection emits *"stuck in movement loop"*, inject an explicit subtask: `"goal: leave the current map. Try moving to each edge."` (current self-reflection produces the diagnosis but no behavioural change.)
 5. **Stage K — Cumulative memory** ([PR #75](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/75)): chain agent checkpoints iter→iter via existing `--load-checkpoint --prev-run-id`. *Only helps if iter 1 stumbles into Viridian once and captures a navigation procedure; otherwise inherited Route1-loop procedures will pollute downstream iters (pre-fix Stage K showed `-14.28pp` learning_delta, confirming this risk).*
 
-Options 1-2 are an afternoon's work, isolate the navigation question cleanly, and don't need a new model swap. Option 5 is in flight (post-asm-fix Stage K rerun launched 2026-05-15 06:10Z).
+**Update 2026-05-24:** Options 1-2 were partially implemented as Stage Q exit-tile coords + Stage R subgoal hints ([PRs #92, #97](https://github.com/charleneleong-ai/orak-2025-starter-kit/pulls)); Option 5 (Stage K cumulative memory) merged as [PR #75](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/75) on 2026-05-15 with a FLAT-but-no-compounding verdict — see Stage L ([PR #85](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/85)) for the map-aware procedure key follow-up, and Stage S ([PRs #103, #104](https://github.com/charleneleong-ai/orak-2025-starter-kit/pulls)) for `MilestoneSpec.requires_location` auto-bridging that lifted pokemon 4/7 → 6/7 baseline. The per-game scaffold work is now superseded by the cross-game MVA roadmap — see [`docs/generalized-agent-mva.md`](../../generalized-agent-mva.md).
 
 ## References
 

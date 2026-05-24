@@ -1,6 +1,6 @@
 # Orak 2025 — Architecture & Roadmap
 
-**Last updated:** 2026-05-19 (added "Generalization beyond games" section; experimental snapshot frozen at post-asm-fix Stage K — see [`cross-stage-diagnosis.md`](experiments/gemma/cross-stage-diagnosis.md) for Stage L → Q progression)
+**Last updated:** 2026-05-24 (added "Current work (MVA)" section reflecting cross-game baselines + futile-action detector PR; per-game Stage S work through PR #104 merged; Stage K/L statuses fast-forwarded — see [`generalized-agent-mva.md`](generalized-agent-mva.md) for the successor architecture and [`cross-stage-diagnosis.md`](experiments/gemma/cross-stage-diagnosis.md) for the per-game stage progression)
 
 One-page snapshot of the cognitive architecture, what we've proven useful, what we've ruled out, and what's still open. For depth see [`docs/experiments/gemma/cross-stage-diagnosis.md`](experiments/gemma/cross-stage-diagnosis.md) and [`docs/experiments/gemma/macla_findings.md`](experiments/gemma/macla_findings.md).
 
@@ -214,15 +214,15 @@ The PR #28 verdict (mario → Stage D) is the production config; the iter-5 100%
 
 | Lever | Status | Notes |
 |---|---|---|
-| **Stage K — cumulative cross-episode memory** (n=5, Gemma 26B, `--load-checkpoint --prev-run-id` chaining) | ✅ Done @ 10:09Z 2026-05-15 | Will land on [PR #75](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/75). Pre-fix was REGRESS −14.28pp learning_delta. **Post-fix final: `[57.14] × 5`, σ=0.00pp, `learning_delta=+0.00pp`** — floor-stable but no compounding. Introspection across iters 1-3 showed negative transfer: iter 2 took **+91 steps** to bank M4 (220 vs iter 1's 129), never reached Route1, spent 160 steps stuck in OaksLab. Iter 3 partially recovered Route1 (70 steps) but worst perseveration at 22.0%. Asm fix prevents catastrophic *floor* regression but doesn't fix underlying context-blind procedure keying. **See `Cumulative-memory mechanics` section below** for the redesign — implemented as **Stage L ([PR #85](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/85), in flight)**. |
-| **Stage L — map-aware procedure cache** (n=5, Gemma 26B, modified MACLA) | Running (iter 1 launched 12:34Z 2026-05-15, ETA ~16:45Z) | [PR #85](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/85). `feat/macla-map-aware-procedures` branch. Procedures keyed on `(map_name, hash(steps))`; retrieval filters wrong-map matches; `prune_stale_procedures(max_age=2)` on checkpoint load. Minimum bar: `late_mean ≥ early_mean` (no negative transfer). Lift bar: iter-over-iter steps-to-M4 decreasing OR any iter reaches M5+ (Viridian). |
-| **Map-exit callouts in observation** | Untested, recommended next | Surface unvisited adjacent maps + their exit tile coordinates in every observation. Afternoon's work. |
-| **Visited-maps sticky note** | Untested | Append `(map_name, first_step, last_step)` tuples to the observation. Cheap. |
-| **Mini-map / map-graph view** | Untested | Compact rendering of connected maps reachable from current location, unvisited highlighted. |
-| **Subtask injection at stuck-state** | Untested | When self-reflection emits *"stuck in movement loop"*, inject `"goal: leave the current map. try moving to each edge."` |
-| **Stage J — Qwen3-Thinking** (always-on reasoning budget) | Scaffold in commit `e431e30`, **rerun deferred** | Pre-fix scored 28.57% × 3 — failed M3 (no starter). Post-fix re-run not queued; would only test reasoning budget, not the navigation gate. |
-| **2048 state-abstraction sweep retune** | Open since PR #23 | Cold-start showed +44% but param-search bounds still calibrated for prior keying. Two sweeps with widened bounds would close the loop. |
-| **Paired rollouts + adapter / logprobs passthrough** | [PR #79](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/79) | Harness scaffold for future learning experiments. |
+| **Stage K — cumulative cross-episode memory** | ✅ Merged 2026-05-15 ([PR #75](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/75), commit `90dfccc`) | Final: `[57.14] × 5`, σ=0.00pp, `learning_delta=+0.00pp` — floor-stable but no compounding. Introspection showed negative transfer (iter 2 took +91 steps to bank M4). Asm fix prevents catastrophic floor regression but doesn't fix context-blind procedure keying. Motivated the Stage L redesign. |
+| **Stage L — map-aware procedure cache** | ✅ Merged 2026-05-15 ([PR #85](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/85), commit `058c53a`) | Procedures keyed on `(map_name, hash(steps))`, retrieval filters wrong-map matches, `prune_stale_procedures(max_age=2)` on checkpoint load. |
+| **Stage M / N / O** | ✅ Merged 2026-05-16+ ([PR #86](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/86), [#87](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/87), [#88](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/88)) | Stage M selector signals plateau at 51.43% (FLAT verdict). Stage N+O bootstrap-neutral signals + planner-side novelty + broadened acquisition. |
+| **Stage Q / R / S** | ✅ Merged 2026-05-19+ ([PRs #92, #97, #101, #103, #104](https://github.com/charleneleong-ai/orak-2025-starter-kit/pulls)) | Stage Q exit-tile coords + procedural perf-gated cache prune. Stage R subgoals + Reflexion + v3 soft+escape-valve planner. Stage S MilestoneSpec.requires_location auto-bridge — lifted v3 pokemon baseline 4/7 → 5/7 → 6/7 across 300/600/1200-step budgets. |
+| **Pokemon v4 step-budget probe** (2000 steps) | Running (PID 1953418, ~96% complete as of 01:43 UTC 2026-05-24) | `step_budget_2000_baseline_20260523T210201Z`. Tests whether M7 (DeliverOaksParcel) also falls to step budget alone or hits a planner wall on the return leg. Decision tree in [`experiments/openevolve_milestones/v1.md`](experiments/openevolve_milestones/v1.md) (on `feat/openevolve-milestones-spike`). |
+| **MVA PR 1 — universal futile-action detector** | ✅ Committed 2026-05-24 (`feat/futile-action-detector` @ `176f68c`); 3 rollouts in flight | Pokemon @ 1200 (PID 1990348), mario @ 1000 (PID 1991018), 2048 @ 1000 (PID 1992409). See [`generalized-agent-mva.md`](generalized-agent-mva.md) for the full PR 1-8 plan. |
+| **MVA PRs 2-8** | Queued behind PR 1 validation | Per-skill success-rate floor → stagnation→skill demotion → `agent_events.jsonl` telemetry → episode-end pruning → episodic store + retrieval → Reflector → self-model. |
+| **2048 state-abstraction sweep retune** | Open since PR #23 (deprioritized) | Subsumed by MVA work — the right fix is Memory4 cleanup, not 2048-specific param-search. |
+| **Stage J — Qwen3-Thinking** (always-on reasoning budget) | Rerun still deferred | Pre-fix scored 28.57% × 3 — failed M3 (no starter). Post-fix re-run not queued; would only test reasoning budget, not the navigation gate. |
 
 ---
 
@@ -257,8 +257,17 @@ The PR #28 verdict (mario → Stage D) is the production config; the iter-5 100%
 | #70 | CLOSED | Stage G — procedure-escape | Bimodal pre-fix; doesn't lift ceiling |
 | #71 | CLOSED → #81 | Stage H — Qwen 3.5 35B-A3B ceiling-check | Superseded by post-fix rerun |
 | #72, #77 | merged | WandB Artifact auto-archive | Per-game game_logs upload |
-| #75 | OPEN | Stage K — cumulative cross-episode memory | In flight |
-| #76 | OPEN | Stage J — Qwen3-Thinking | Pre-fix only; rerun deferred |
+| #75 | 2026-05-15 | Stage K — cumulative cross-episode memory | Floor-stable, no compounding; motivated Stage L redesign |
+| #76 | 2026-05-?? | Stage J — Qwen3-Thinking | Pre-fix only; rerun still deferred |
+| #85 | 2026-05-15 | Stage L — map-aware procedure keys + iter-TTL/decay | Closes Stage K negative-transfer gap |
+| #86 | 2026-05-16 | Stage M — selector multi-signal (FLAT verdict at 51.43%) | Ceiling unchanged; selector confidence plateaus |
+| #87 | 2026-05-16 | Stage N + O — bootstrap-neutral signals + broaden acquisition | — |
+| #88 | 2026-05-16 | Progress chart with verdict colours + M4/M5 bars | Cross-stage scoreboard refresh |
+| #92 | 2026-05-19 | Stage Q + Stage R + macla_lib cleanup (exit-tile, perf-gated prune) | — |
+| #97 | 2026-05-22 | Stage R subgoals + Reflexion + v3 soft+escape-valve planner | Active-subgoal soft constraint replaces hard PalletTown lock |
+| #101 | 2026-05-?? | Stage S — cache veto + move_to boundary + checkpoint hygiene | — |
+| #103 | 2026-05-?? | MilestoneSpec.requires_location auto-bridge | Stage S v1 fix lifted into framework |
+| #104 | 2026-05-?? | Stage S v2 — chain past Viridian via M6/M7 requires_location | Pokemon 4/7 → 5/7 baseline lift |
 | #80 | 2026-05-14 | **Hard-fail when `pokered/*.asm` missing** | Root-cause fix for placeholder-anchored reasoning |
 | #81 | 2026-05-15 | **Stage D + Stage H n=3 reruns under asm fix** | 57.14% × 6 zero-variance ceiling; M5 navigation gate identified |
 | #82 | 2026-05-15 | Cross-stage diagnosis post-asm-fix update | Supersedes Stage H bimodal interpretation |
@@ -278,7 +287,7 @@ The current procedure cache has two design gaps that need to close before cumula
 
 Both fixes are local to `agents/macla/procedures/` and don't require a new sweep harness — they're a Stage L-style intervention. Either one alone is testable (n=3 cumulative-memory variant); both together is the more conservative bet. The current Stage K REGRESS-but-floor-stable result establishes the baseline to beat: any redesign needs to deliver `late_mean ≥ early_mean` (no negative transfer) at minimum, ideally improving steps-to-M4 iter-over-iter.
 
-This is the next move for the procedure layer regardless of the navigation gate. The M5 navigation interventions (map-exit callouts, visited-maps sticky note, mini-map) attack the ceiling; the procedure-cache redesign attacks the *floor stability* of any future cumulative-memory sweep.
+**Update 2026-05-24:** both gaps were addressed in Stage L ([PR #85](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/85)) — procedures keyed on `(map_name, hash(steps))` with `prune_stale_procedures(max_age=2)` on checkpoint load. The "no forget" gap then resurfaced under different conditions in the cross-game baseline analysis (mario procedure poisoning, 2048 dominance lock-in) and is now superseded by the MVA's per-skill success-rate floor (PR 2) and stagnation→skill demotion (PR 3). See [`generalized-agent-mva.md`](generalized-agent-mva.md) for the cross-game framing.
 
 ---
 
@@ -350,7 +359,7 @@ The per-game scaffold work (Stage S openevolve, milestone library) plateaued at 
 | game | run | budget | best | mean | notes |
 |---|---|---|---|---|---|
 | pokemon (v3) | `step_budget_1200_baseline_20260523T171829Z` | 1200 | 6/7 (0.86) | — | reached ViridianMart, got Oak's Parcel |
-| pokemon (v4) | `step_budget_2000_baseline_20260523T210201Z` | 2000 | in-flight | — | stuck in ViridianCity loop (stagnation=1290 at step 1821) |
+| pokemon (v4) | `step_budget_2000_baseline_20260523T210201Z` | 2000 | in flight (97% complete at 01:45 UTC 2026-05-24) | — | spent most of run looping in ViridianCity escape-valve mode |
 | mario | `stage_s_super_mario_1000_20260523T210441Z` | 1000 | 21.85% | 9.04% | 58 consecutive 8.20% deaths after ep4 — procedure poisoning |
 | 2048 | `stage_s_2048_1000_20260523T210447Z` | 1000 | 63.64% | 44.92% | 17 episodes, only 4 unique procs across 999 selections |
 
