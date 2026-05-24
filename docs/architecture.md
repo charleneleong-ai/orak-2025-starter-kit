@@ -4,7 +4,7 @@
 
 One-page snapshot of the cognitive architecture, what we've proven useful, what we've ruled out, and what's still open. For depth see [`docs/experiments/gemma/cross-stage-diagnosis.md`](experiments/gemma/cross-stage-diagnosis.md) and [`docs/experiments/gemma/macla_findings.md`](experiments/gemma/macla_findings.md).
 
-> **Successor architecture in progress:** [`generalized-agent-mva.md`](generalized-agent-mva.md) — Memory4 + Reflector MVA aimed at a single agent that handles any embodied task without per-game scaffolds. PR 1 (futile-action detector) in flight on `feat/futile-action-detector`.
+> **Successor architecture in progress:** [`generalized-agent-mva.md`](generalized-agent-mva.md) — Memory4 + Reflector **MVA** (*Minimum Viable Agent*, by analogy to MVP) aimed at a single agent that handles any embodied task without per-game scaffolds. PR 1 (futile-action detector) in flight on `feat/futile-action-detector`.
 
 > ⚠️ **Read this before scanning pokemon results:** every pokemon experiment row dated **2026-03-28 → 2026-05-13** ran with `pokered/data/maps/objects/*.asm` empty. The harness emitted placeholder `OBJ_n_n` tokens instead of real `SPRITE_*` names, so 74–78% of reasoning chains were anchored on placeholders. PR #80 hard-fails on the missing dir; PR #81 reran Stage D + Stage H (n=3 each) under the fix and collapsed the bimodal `[57.14, 57.14, 28.57]` distribution to `[57.14, 57.14, 57.14]` zero-variance. Pokemon rows in this doc are tagged **`PRE-ASM-FIX`** where the placeholder caveat applies. See [`docs/experiments/pokemon-asm-gap.md`](experiments/pokemon-asm-gap.md) for the full list of affected experiments.
 

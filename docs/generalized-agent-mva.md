@@ -1,5 +1,7 @@
 # Generalized Agent Harness — MVA (Memory4 + Reflector)
 
+> **MVA** = **Minimum Viable Agent** — by analogy to MVP (Minimum Viable Product). The smallest agent architecture that can grow into the full long-horizon, self-evolving, embodied-reasoning agent envisioned at the top of this doc. Bootstraps from pokemon's existing scaffolds as data + extends to mario, 2048, and any future env/task via the layered contracts below.
+
 **Last updated:** 2026-05-24
 
 A successor architecture to the per-game MACLA scaffold. North star: a single agent that **excels at embodied reasoning for any task, plans long-horizon, executes, and self-evolves through interaction with its environment** — without hand-curated per-game milestone libraries, map graphs, or hint injectors.
