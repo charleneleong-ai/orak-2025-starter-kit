@@ -341,9 +341,25 @@ The sweet spot is **long-horizon agentic tasks with sub-structure**: multiple st
 
 ---
 
-## Next move
+## Current work (2026-05-24) — generalized agent harness (MVA)
 
-Options 2 (visited-maps sticky note) or 1 (map-exit callouts) are the cheapest and most direct attack on the M5 navigation gate. Stage K (cumulative memory) is the in-flight check on whether learned procedures can break it. None of these need a new model or new training — they're observation-layer additions.
+The per-game scaffold work (Stage S openevolve, milestone library) plateaued at pokemon 6/7 @ 1200 steps, and surfaced shared failure modes across mario + 2048 that are NOT pokemon-specific: procedure-cache poisoning (mario locking into kill-on-spawn after ep4), MACLA dominance lock-in (2048 selecting one of 4 procs 84% of decisions), and futile-action loops in all three games. Diagnosing these as universal architectural gaps shifted the priority from "more pokemon scaffolding" to a **task-agnostic Memory4 + Reflector MVA**: see [`generalized-agent-mva.md`](generalized-agent-mva.md) for the full 5-layer design, have-vs-need audit by layer, and 8-PR staged plan.
+
+**Cross-game baselines captured 2026-05-23** (wandb under `chaleong`):
+
+| game | run | budget | best | mean | notes |
+|---|---|---|---|---|---|
+| pokemon (v3) | `step_budget_1200_baseline_20260523T171829Z` | 1200 | 6/7 (0.86) | — | reached ViridianMart, got Oak's Parcel |
+| pokemon (v4) | `step_budget_2000_baseline_20260523T210201Z` | 2000 | in-flight | — | stuck in ViridianCity loop (stagnation=1290 at step 1821) |
+| mario | `stage_s_super_mario_1000_20260523T210441Z` | 1000 | 21.85% | 9.04% | 58 consecutive 8.20% deaths after ep4 — procedure poisoning |
+| 2048 | `stage_s_2048_1000_20260523T210447Z` | 1000 | 63.64% | 44.92% | 17 episodes, only 4 unique procs across 999 selections |
+
+**PR 1 in flight — universal futile-action detector** (branch `feat/futile-action-detector` @ `176f68c`):
+- Agent-side hook in [`unified.py:_base_fallback`](../agents/macla/unified.py#L549) that hashes the planner-visible obs, fires when K=3 consecutive obs are byte-identical, injects a "your last actions did nothing" hint
+- 11/11 tests in [`tests/test_futile_action_detector.py`](../tests/test_futile_action_detector.py) — game-agnostic parametrization + state-machine sanity
+- Three regression rollouts launched 2026-05-24 01:37 UTC against the baselines above; cross-game results pending
+
+PRs 2-8 from the MVA plan are queued behind PR 1 validation: per-skill success-rate floor, stagnation→skill demotion, `agent_events.jsonl` telemetry, episode-end pruning, episodic store + retrieval, Reflector post-episode critique, self-model.
 
 ## Cross-refs
 
