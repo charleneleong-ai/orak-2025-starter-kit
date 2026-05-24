@@ -184,9 +184,7 @@ VALID_ACTIONS: list[str] = [
     "EMPTY ACTION",
 ]
 DEFAULT_ACTION = "EMPTY ACTION"
-DEFAULT_GOAL = (
-    "Defeat the Zerg opponent by sequencing economy → tech → army → engagement."
-)
+DEFAULT_GOAL = "Defeat the Zerg opponent by sequencing economy → tech → army → engagement."
 
 # StarCraft has no continuous score signal — victory is a binary at the
 # end of the match (env step rewards 0 each step, +50 only at Victory).

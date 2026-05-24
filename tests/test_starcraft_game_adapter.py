@@ -42,11 +42,7 @@ def test_extract_action_formats_five_actions_as_numbered_lines():
     )
     rendered = extract_action(result)
     assert rendered == (
-        "1: TRAIN PROBE\n"
-        "2: BUILD PYLON\n"
-        "3: TRAIN PROBE\n"
-        "4: EMPTY ACTION\n"
-        "5: EMPTY ACTION"
+        "1: TRAIN PROBE\n2: BUILD PYLON\n3: TRAIN PROBE\n4: EMPTY ACTION\n5: EMPTY ACTION"
     )
 
 
@@ -61,7 +57,13 @@ def test_extract_action_round_trips_through_env_regex():
         StarCraftAction(
             reasoning="r",
             current_goal="g",
-            actions=["BUILD GATEWAY", "TRAIN ZEALOT", "TRAIN ZEALOT", "MULTI-ATTACK", "EMPTY ACTION"],
+            actions=[
+                "BUILD GATEWAY",
+                "TRAIN ZEALOT",
+                "TRAIN ZEALOT",
+                "MULTI-ATTACK",
+                "EMPTY ACTION",
+            ],
         )
     )
     parsed = re.findall(r"\d+: <?([^>\n]+)>?", rendered)
@@ -79,7 +81,9 @@ def test_validate_action_passes_starcraft_multi_action_through():
     text2action() gets the full payload instead of just DEFAULT_ACTION."""
     from agents.macla.unified import _STARCRAFT_MULTI_ACTION_RE
 
-    multi_action = "1: TRAIN PROBE\n2: BUILD PYLON\n3: EMPTY ACTION\n4: EMPTY ACTION\n5: EMPTY ACTION"
+    multi_action = (
+        "1: TRAIN PROBE\n2: BUILD PYLON\n3: EMPTY ACTION\n4: EMPTY ACTION\n5: EMPTY ACTION"
+    )
     assert _STARCRAFT_MULTI_ACTION_RE.match(multi_action) is not None
 
     # A leading-whitespace variant — Pydantic structured-output models
