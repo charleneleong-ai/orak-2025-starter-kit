@@ -321,26 +321,26 @@ Separate from the research claims above, these are useful artifacts even if ever
 - **Cross-game regression corpus on wandb** — pokemon (1200 / 2000) + mario (1000) + 2048 (1000) baselines as fixed reference points; any future agent change can be diff'd against these in one click
 - **The pathology-event JSONL stream** (PR 4) — a stable telemetry format that survives architecture rewrites; lets others post-hoc analyze trajectories without re-running the LLM
 
-## Toward groundbreaking contribution — strategic roadmap
+## Research roadmap — extensions beyond the MVA
 
-The 8-PR MVA above is *necessary* groundwork. It's not, by itself, the contribution that lands at a frontier lab or moves the field. This section frames how the MVA extends into work that **could** be groundbreaking — explicitly separating credible bets from ambition theater, and naming the specific open problems at each frontier lab we'd be addressing.
+The 8-PR MVA is *necessary* groundwork. By itself it's a proof of architecture; it doesn't yet test the hardest open questions in the field. This section maps tiered extensions — what each tier adds technically, what published precedent it tests against, and what scope each tier represents.
 
-### What the field is missing right now (early 2026)
+### Field-level open problems the MVA framework can address
 
-After reviewing the active agendas of Anthropic's Computer Use / Pokemon team, DeepMind's SIMA + Genie teams, OpenAI's Operator + Evals teams, Meta FAIR's CICERO line, and the broader academic agent literature (BALROG, GAIA, SWE-bench, OSWorld, WebArena, AgentBench), the genuine open problems are:
+After reviewing active agendas across Anthropic's Computer Use / Pokemon team, DeepMind's SIMA + Genie teams, OpenAI's Operator + Evals teams, Meta FAIR's CICERO line, and the broader academic agent literature (BALROG, GAIA, SWE-bench, OSWorld, WebArena, AgentBench), the genuine open problems where the MVA design is well-positioned to contribute:
 
-| open problem | who cares | why unsolved |
-|---|---|---|
-| **Self-Evolution Curve as a benchmark protocol** — no accepted way to measure agent improvement over N trials with no human reset | OpenAI Evals, Anthropic Research, ARC-AGI | All current agent benchmarks are one-shot. BALROG measures plateau height, not learning rate. There's no `score-vs-trial` curve. |
-| **Scaffold-vs-emergence efficient frontier** — how much hand-curation does an auto-emerging agent really need? | DeepMind (SIMA), Anthropic (Pokemon), Cognition (Devin) | Anthropic Pokemon uses heavy scaffolding (custom memory tool + tuned prompts). Voyager uses Minecraft API. Nobody has run the ablation that answers "what could the LLM have figured out on its own?" |
-| **Unified pathology taxonomy + handler** | DeepMind, Anthropic | Reflexion handles one type, LATS another, Self-Refine another. No survey + unification exists. |
-| **Cross-task transfer via memory (without fine-tune)** | Letta.io / MemGPT crowd, plus Anthropic memory team | Letta claims it but on narrow tasks. Cross-game-class transfer (RPG → puzzle → web) is unmeasured. |
-| **Memory-vs-RL phase boundary** — at what task difficulty does pure-memory stop being enough and you have to do post-training (GRPO/DPO/PPO)? | OpenAI (post-training team), DeepSeek, Meta FAIR | DeepSeek-R1 showed RL works from scratch. But for agents specifically, the lift from RL vs memory is unmeasured. |
-| **Stable agentic RL on small models** — most agentic RL papers use 7-70B models; can a 4B-active-MoE (Gemma 26B-A4B-it) match 70B with the right architecture? | All compute-constrained labs | Anthropic Sonnet, Mistral, DeepSeek all want efficient agents. |
+| open problem | why unsolved |
+|---|---|
+| **Self-Evolution Curve as a benchmark protocol** — no accepted way to measure agent improvement over N trials with no human reset | All current agent benchmarks are one-shot. BALROG measures plateau height, not learning rate. There's no `score-vs-trial` curve. |
+| **Scaffold-vs-emergence efficient frontier** — how much hand-curation does an auto-emerging agent really need? | Anthropic Pokemon uses heavy scaffolding (custom memory tool + tuned prompts). Voyager uses Minecraft API. Nobody has run the ablation that answers "what could the LLM have figured out on its own?" |
+| **Unified pathology taxonomy + handler** | Reflexion handles one type, LATS another, Self-Refine another. No survey + unification exists. |
+| **Cross-task transfer via memory (without fine-tune)** | Letta claims it but on narrow tasks. Cross-game-class transfer (RPG → puzzle → web) is unmeasured. |
+| **Memory-vs-RL phase boundary** — at what task difficulty does pure-memory stop being enough and you have to do post-training (GRPO/DPO/PPO)? | DeepSeek-R1 showed RL works from scratch. But for agents specifically, the lift from RL vs memory is unmeasured. |
+| **Stable agentic RL on small models** — most agentic RL papers use 7-70B models; can a 4B-active-MoE (Gemma 26B-A4B-it) match 70B with the right architecture? | All compute-constrained labs (Anthropic Sonnet, Mistral, DeepSeek) want efficient agents. |
 
 ### Tier 1 — MVA + cross-game ablation (6-8 weeks)
 
-Already planned (PRs 1-8 above). Lands in: arxiv preprint + NeurIPS Agents workshop. Conversation-starter, not landmark.
+Already planned in PRs 1-8 above. Tests the architecture on pokemon + mario + 2048.
 
 ### Tier 2 — extend to non-game tasks (4-6 additional weeks)
 
@@ -350,22 +350,22 @@ The MVA framework only matters if it generalizes beyond games. Add `EnvAdapter` 
 - **[SWE-bench Verified](https://www.swebench.com/)** (Jimenez et al. 2024, *NeurIPS*) — code fix tasks
 - **[OSWorld](https://os-world.github.io/)** (Xie et al. 2024, *NeurIPS*) — desktop / OS-level tasks
 
-If the SAME Memory4 + Reflector reaches competitive scores on browser + code + games with NO task-specific scaffolds — **that's the cross-task generalization landmark**. The contrast with task-specific SOTA agents (Devin for SWE-bench, Operator for web) makes the comparison concrete.
+If the SAME Memory4 + Reflector reaches competitive scores on browser + code + games with NO task-specific scaffolds, that's the cross-task generalization claim. The contrast with task-specific SOTA agents (Devin for SWE-bench, Operator for web) makes the comparison concrete.
 
-This is also where the **Self-Evolution Curve methodology** (open problem #1) becomes the publishable artifact. We define: run agent for N trials with no human reset, measure score-vs-trial. Publish leaderboards for every task using this protocol. Establish it as the standard for measuring agent learning rather than agent capability.
+This is also where the **Self-Evolution Curve methodology** (open problem #1) becomes the publishable artifact. We define: run agent for N trials with no human reset, measure score-vs-trial. Publish leaderboards for every task using this protocol. Establish it as the standard for measuring agent *learning rate* rather than peak capability.
 
-### Tier 3 — the agentic-RL comparison (8-12 weeks, GPU-heavy)
+### Tier 3 — the agentic-RL × memory comparison (8-12 weeks, GPU-heavy)
 
-This is the move the user flagged as not-yet-explored, and it's the most differentiating. The current MVA is pure inference (frozen Gemma 26B served via vLLM). The natural alternative is **agentic RL / post-training**:
+The current MVA is pure inference (frozen Gemma 26B served via vLLM). The natural alternative is **agentic RL / post-training**:
 
 - **[GRPO](https://arxiv.org/abs/2402.03300)** (Shao et al. 2024 — DeepSeekMath / DeepSeek-R1) — group-relative policy optimization, no value model needed
 - **[DPO](https://arxiv.org/abs/2305.18290)** (Rafailov et al. 2023, *NeurIPS*) and **[SimPO](https://arxiv.org/abs/2405.14734)** (Meng et al. 2024, *NeurIPS*) — preference pair learning from trajectories
 - **[Process Reward Models](https://arxiv.org/abs/2305.20050)** (Lightman et al. 2024, *ICLR*) — step-level rewards
 - **[Tülu 3](https://arxiv.org/abs/2411.15124)** (Lambert et al. 2024) — open-source RL post-training recipe
 
-We already have most of the GRPO infrastructure in this repo (see closed [Stage L GSPO work](../experiments/) — offline GSPO gradient loop in `train.py` via Unsloth, gspo_group.json sidecars, paired-rollouts harness). The missing piece is wiring it to MVA's collected trajectories.
+The repo already contains most of the GSPO infrastructure (offline GSPO gradient loop in `train.py` via Unsloth, gspo_group.json sidecars, paired-rollouts harness). The missing piece is wiring it to MVA's collected trajectories.
 
-The **four-way comparison** at a fixed compute budget would be a landmark experiment:
+The **four-way comparison** at a fixed compute budget:
 
 | arm | model | memory | description |
 |---|---|---|---|
@@ -374,54 +374,224 @@ The **four-way comparison** at a fixed compute budget would be a landmark experi
 | C. GRPO only | Gemma 26B fine-tuned on trajectories | none | classic post-training |
 | D. MVA + GRPO | Gemma 26B fine-tuned | full Memory4 + Reflector | does memory + RL compound, substitute, or interfere? |
 
-**This is the experiment nobody has run rigorously.** The "memory vs RL" debate is folklore-level — Letta claims memory is enough, DeepSeek-R1 says RL is enough. A clean comparison with budget accounting (LLM calls, GPU hours, $ cost) settles it. Even a negative result ("MVA helps for free, GRPO doesn't compound") is publishable.
+The "memory vs RL" debate is folklore-level today — Letta claims memory is enough, DeepSeek-R1 says RL is enough. A clean comparison with budget accounting (LLM calls, GPU hours, $ cost) settles whether they substitute, compound, or interfere.
 
-### Tier 4 — Anthropic Pokemon as conversation-opener
+### Tier 4 — public benchmark reproduction
 
-This is the most strategically targeted bet. **Anthropic's Claude-plays-Pokemon thread is the single most public agentic-LLM project right now**, and they have a public memory tool API + scaffolding. Three concrete moves:
+A separate axis from architecture extension: **reproduce / beat published agent results** on standard benchmarks to make the architecture claim concrete. Candidates:
 
-1. **Beat their public pokemon results with smaller scaffolding.** If MVA reaches Cerulean City (M11+) with our 26B model + auto-emerging skills (no hand-curated milestone library for the M5+ region), that's a direct conversation starter with Anthropic's agentic team. Their Claude 3.7 Sonnet with heavy scaffolding reached Cerulean — matching or beating with less scaffolding is a signal.
-
-2. **Publish the scaffold-effort frontier curve.** Plot: scaffold-LOC vs final-milestone-reached, for {our MVA, Claude Pokemon, Voyager-style, raw GPT-4}. This is the artifact Anthropic Research would cite.
-
-3. **Open-source the agent benchmark adapter.** Make it trivial for Anthropic / DeepMind / OpenAI to plug their own models into the same eval. Lowers the bar for their teams to use the work.
+- **Pokemon Red** — Anthropic's Claude-plays-Pokemon stream has reached Cerulean City (M11+) with Claude 3.7 Sonnet + custom memory tool + heavy scaffolding. Matching or beating with our 26B + auto-emerging skills (no hand-curated milestone library beyond M5) is a direct comparison.
+- **WebArena** — current SOTA hovers ~35-45% success. MVA cross-task transfer should be measured here.
+- **SWE-bench Verified** — current SOTA ~60-65% (Claude 3.7 Sonnet + custom agents). MVA + Reflector on code-edit traces is a clean test.
 
 ### Tier 5 — tgaer as research infrastructure
 
-Repo split from orak → tgaer is mentioned above as a naming refresh. The strategic framing is bigger: **tgaer is the reference implementation of the MVA**. Other labs adopt it for their own work. We become the maintainer of the standard.
+The orak → tgaer repo split (see [naming convention](#naming-convention-orak-vs-tgaer) above) is operationalised by making tgaer the **reference implementation** of the MVA:
 
-What that requires:
 - Pluggable model backends (vLLM, Anthropic API, OpenAI API, Gemini, local)
 - Pluggable memory backends (in-process, Letta, mem0, custom)
 - Pluggable env adapters (gymnasium-compatible)
 - Documentation + examples to onboarding-in-a-day quality
 - One canonical benchmark suite (Self-Evolution Curve protocol applied to 6+ envs)
 
-If tgaer becomes the "what LangChain became for chains, but for evolving agents," that's the platform contribution.
+## Efficient frontier — what helps with what?
 
-### Where this lands you
+The deeper question behind the MVA work: **for generalizable self-evolving agents across many mediums (games, web, code, science, robotics), what's the most compute- and effort-efficient capability-lift mechanism at each task class?** The dominant lever shifts as you move along the task spectrum. This section maps the landscape honestly.
 
-Honest mapping of (deliverable → likely outcome):
+### Capability-lift mechanisms — ordered by cost and ceiling
 
-| deliverable | realistic outcome |
+Eleven mechanisms in current use, with their cost/ceiling/iteration-speed profile:
+
+| # | mechanism | cost (per unit lift) | ceiling | iteration speed | example |
+|---|---|---|---|---|---|
+| 1 | Prompt engineering | ~$0 | low | seconds | system prompt rewrites |
+| 2 | In-context few-shot | ~$0 (token cost) | low-mid | seconds | demo examples in prompt |
+| 3 | Retrieval-augmented generation (RAG) | low | mid | minutes | embedding-search over docs |
+| 4 | Tool-use scaffolding | low | mid-high | hours | function-calling APIs |
+| 5 | Episodic memory | low | mid-high | hours | [Letta](https://www.letta.com/), [mem0](https://mem0.ai/), [MemGPT](https://memgpt.readthedocs.io/) |
+| 6 | Skill library auto-extension | medium (LLM calls) | high | days | [Voyager](https://voyager.minedojo.org/) |
+| 7 | Verbal self-critique (Reflexion) | medium | mid | days | [Reflexion](https://arxiv.org/abs/2303.11366) |
+| 8 | Prompt evolution (GEPA-class) | medium | high | days-weeks | [GEPA](https://arxiv.org/abs/2507.19457), [OPRO](https://arxiv.org/abs/2309.03409) |
+| 9 | LoRA fine-tuning | high (GPU $$$) | high | weeks | [PEFT](https://github.com/huggingface/peft), [Unsloth](https://github.com/unslothai/unsloth) |
+| 10 | Full SFT / DPO post-training | very high | high | weeks-months | [TRL](https://github.com/huggingface/trl), [Tülu 3](https://arxiv.org/abs/2411.15124) |
+| 11 | RL on agent trajectories (GRPO / PPO / etc) | very high | highest for some tasks | months | [GRPO](https://arxiv.org/abs/2402.03300) (DeepSeek-R1), agentic RL papers |
+
+The MVA stack uses mechanisms **3-8** as a unified architecture; mechanisms **9-11** are the orthogonal post-training axis that Tier 3 of the roadmap tests.
+
+### What dominates per task class (honest take)
+
+Different task classes have different bottlenecks. The dominant lever depends on **whether the base model already has the underlying skill** (then you need scaffolding to compose / remember / orchestrate) vs **lacks the capability fundamentally** (then post-training is necessary).
+
+| task class | dominant lever | secondary | why | published evidence |
+|---|---|---|---|---|
+| **Math reasoning** (AIME, MATH, IMO) | post-training (RL on CoT) | none | base model lacks deliberate-reasoning patterns; need new behaviour via gradient updates | DeepSeek-R1 (GRPO from base), o1/o3 (post-trained reasoning) |
+| **Long-horizon agents / tool use** | harness + Memory4 | post-training adds ~10-20% | model knows the tools; bottleneck is execution discipline + memory | Voyager (Minecraft), Reflexion (AlfWorld), Anthropic Pokemon |
+| **Code (SWE-bench class)** | harness wins | post-training helps marginally | model can write code; bottleneck is context retrieval + multi-file navigation | SWE-agent, Cursor, Devin — all heavily scaffold-based |
+| **Browser / OS automation** | harness wins | post-training too noisy | env is messy; memory of session state is critical; gradients hurt due to noise | Operator, Manus, Anthropic Computer Use |
+| **Robotics (low-level control)** | post-training (RL) | harness for high-level | physical control needs gradient learning of motor policies | RT-2, SIMA, Physical Intelligence π₀ |
+| **Robotics (high-level planning)** | harness | post-training for skill primitives | hybrid: gradients for skills, scaffolding for sequencing | SIMA hierarchical work |
+| **Science research (AI4Sci)** | harness wins decisively | post-training rarely needed | workflow is inherently checkable + long; memory of failed paths dominates | Coscientist, ChemCrow, Asta |
+| **Theorem proving** | both compound | needs both | gradient-trained tactic predictor + harness for proof tree search | AlphaProof (gradient + search hybrid) |
+| **Conversational AI / personalization** | both | base from post-training, lift from memory | post-training for persona; harness for per-user context | ChatGPT memory feature, Letta, Inflection Pi |
+| **Creative writing / generation** | post-training (RLHF) | harness rarely helps | task is fully novel per instance; no procedural compounding | RLHF on preferences |
+| **High-frequency control / real-time** | post-training (small specialised model) | harness too slow | LLM-in-loop too high-latency | RL specialists or distilled small models |
+
+### The decision rule
+
+**Does the base model have the underlying capability in single-shot?**
+
+```
+                    ┌─────────────────────────────────┐
+                    │  Does the base model have       │
+                    │  the underlying capability      │
+                    │  in single-shot?                │
+                    └────────────┬────────────────────┘
+                                 │
+                ┌────────────────┴────────────────┐
+              YES                                NO
+                │                                  │
+                ▼                                  ▼
+    ┌───────────────────────┐         ┌────────────────────────┐
+    │  Bottleneck is        │         │  Bottleneck is the     │
+    │  execution / memory / │         │  base capability       │
+    │  long-horizon         │         │  itself                │
+    └────────────┬──────────┘         └───────────┬────────────┘
+                 │                                 │
+                 ▼                                 ▼
+    HARNESS + Memory4 wins              POST-TRAINING needed
+    (mechanisms 3-8)                    (mechanisms 9-11)
+    Examples: agents, code,             Examples: math reasoning,
+    browser, science, planning          motor control, novel
+                                        domains the model has
+                                        no prior on
+```
+
+### When to compound — the hybrid sweet spot
+
+For task classes where **the base model is borderline-capable** (e.g., long agentic tasks with mixed reasoning + execution), the hybrid wins:
+
+1. **Use harness + Memory4 to discover what works** (cheap iteration, no GPU cost, fast)
+2. **Use collected successful trajectories as SFT/DPO data** (post-train the model on its own best outputs)
+3. **Re-deploy the post-trained model under the same harness** (compounding)
+
+This is what Tier 3 of the roadmap tests rigorously — and what almost no published work has done with budget accounting.
+
+### Mediums × mechanisms — generalisation matrix
+
+Which mechanism transfers across mediums vs is medium-specific:
+
+| mechanism | games | web | code | science | robotics | conversational | transfer story |
+|---|---|---|---|---|---|---|---|
+| Prompt engineering | ✓ | ✓ | ✓ | ✓ | partial | ✓ | universal (low ceiling) |
+| RAG / retrieval | ✓ | ✓ | ✓ | ✓✓ | ✓ | ✓ | universal |
+| Episodic memory | ✓ | ✓ | ✓ | ✓✓ | ✓ | ✓✓ | universal |
+| Skill library | ✓✓ | ✓ | ✓✓ | ✓ | ✓✓ | partial | universal IF env exposes invokable skills |
+| Verbal self-critique | ✓ | ✓ | ✓ | ✓✓ | partial | ✓ | universal where LLM can reason about own trace |
+| Prompt evolution | ✓ | ✓ | ✓ | ✓ | partial | ✓ | universal where prompts are the surface |
+| LoRA fine-tuning | partial | partial | ✓ | partial | ✓ | ✓ | per-medium (gradients don't transfer well across) |
+| RL on traces (GRPO) | ✓ | ✓ | ✓ | rare | ✓✓ | ✓ | per-medium (reward signal medium-specific) |
+
+The **MVA stack (mechanisms 3-8)** is mostly universal-transfer. The **post-training stack (9-11)** is mostly per-medium. **That's the case for harness-first as the generalisation strategy** — gradients don't transfer across mediums, but memory + critique do.
+
+### Open empirical questions (where Tier 3 + Tier 4 of the roadmap deliver evidence)
+
+1. **At what task difficulty does harness alone plateau?** (We'll have data points on pokemon M5/M6/M7, mario, 2048 after PRs 1-8.)
+2. **Does post-training compound with memory, substitute for it, or interfere?** (Tier 3's four-way ablation.)
+3. **Does memory learned on one medium transfer to another via Semantic store?** (Tier 2 cross-task experiments.)
+4. **What's the parameter-efficiency curve?** (4B-active MoE + heavy harness vs 70B + thin harness — pareto frontier on cost.)
+5. **Can the Reflector itself be self-improving?** (Reflector-on-Reflector — does meta-reflection help?)
+
+### My current best guess (subject to revision after Tier 1-3 evidence)
+
+For **generalisable self-evolving agents across many mediums** specifically, the efficient frontier looks like:
+
+- **Default to harness + Memory4** for any task class where the base model is single-shot capable. This is most agentic work today. The 8-PR MVA is the right architecture.
+- **Add LoRA post-training (mechanism 9)** only when harness clearly plateaus and the trajectory data quality justifies the GPU spend — usually after thousands of validated harness episodes.
+- **Reserve full GRPO/PPO (mechanism 11)** for narrow tasks where the base model lacks the fundamental skill (math, motor control, novel domains). It's the highest-ceiling mechanism but the worst transfer story across mediums.
+- **The harness wins for cross-medium transfer**; post-training wins for raw ceiling on a single medium. Most real applications are cross-medium, which biases toward harness as the foundation.
+
+This is the working hypothesis the Tier 1-3 roadmap is designed to test. The honest answer to "what helps with what" today is *we have priors but not measurements* — and producing those measurements rigorously **is the contribution**.
+
+## Applications — where MVA architecture matters
+
+The MVA design is well-suited to **any task where success is checkable, the trajectory is long-horizon, and continual improvement matters more than peak per-instance capability**. Eight high-value application domains where this profile fits, ranked by current ecosystem signal:
+
+### AI4Science (highest leverage)
+
+The MVA framework is structurally a good fit for scientific automation: long horizons, sparse rewards, the success criterion is independently verifiable (the molecule synthesizes / the experiment reproduces / the theorem checks), and accumulated semantic memory (failed reaction → ruled-out pathway) compounds across trials.
+
+| domain | task class | published precedent | why MVA fits |
+|---|---|---|---|
+| **Autonomous chemistry** | Multi-step retrosynthesis planning + lab execution | [Coscientist](https://www.nature.com/articles/s41586-023-06792-0) (Boiko et al. 2023, *Nature*), [ChemCrow](https://arxiv.org/abs/2304.05376) (Bran et al. 2023) | 10-30 step plans, failed routes should self-prune (Procedural + Semantic stores) |
+| **Drug discovery** | Lead optimisation, target deconvolution | [Recursion's Phenomap](https://www.recursion.com/), [Insilico Medicine Pharma.AI](https://insilico.com/) | Memory of which scaffolds failed for which targets is exactly L2.Episodic + L2.Semantic |
+| **Materials science** | Crystal structure search, property prediction | [GNoME](https://deepmind.google/discover/blog/millions-of-new-materials-discovered-with-deep-learning/) (DeepMind 2024), [MatterGen](https://arxiv.org/abs/2312.03687) (Microsoft 2024) | Multi-step exploration with checkable simulations |
+| **Autonomous biology** | Protein engineering loops, gene editing experimental design | [Asta](https://www.anthropic.com/news/anthropic-deepens-research-collaborations) (Anthropic 2025 — automated science assistant for AllenAI) | Multi-day experiment cycles where memory of failed perturbations dominates |
+| **Theorem proving / formal math** | Lean / Coq proof search | [AlphaProof](https://deepmind.google/discover/blog/ai-solves-imo-problems-at-silver-medal-level/) (DeepMind 2024), [Lean Copilot](https://github.com/lean-dojo/LeanCopilot) | Long proof trees with verifiable sub-goals — Reflector writes "this lemma always helps when goal contains X" |
+| **Scientific literature synthesis** | Multi-paper claim verification, hypothesis generation | [Elicit](https://elicit.com/), [Consensus](https://consensus.app/), [STORM](https://storm.genie.stanford.edu/) (Stanford) | Long retrieval chains where Episodic memory of "papers already searched" prevents redundant work |
+
+**Why now (2026 climate):** every major lab now has an AI-for-science arm (DeepMind GNoME / AlphaFold-3, Anthropic Asta, OpenAI partnerships with Scale + scientific orgs, NVIDIA BioNeMo). The bottleneck has shifted from model capability to **agent reliability over long horizons** — which is exactly the MVA framing.
+
+### Coding agents (largest economic prize)
+
+| sub-domain | published precedent | MVA fit |
+|---|---|---|
+| **SWE-bench class** (multi-file repo fixes) | [SWE-agent](https://swe-agent.com/) (Yang et al. 2024), [Devin](https://www.cognition.ai/blog/introducing-devin) (Cognition), [Cursor agent mode](https://www.cursor.com/) | Multi-step file navigation, failed-attempt memory critical |
+| **API integration / scripting** | [Continue.dev](https://continue.dev/), [Aider](https://aider.chat/) | Episodic recall of past similar refactors |
+| **Continuous test/CI debugging** | [Sourcegraph Cody](https://sourcegraph.com/), [GitHub Copilot Workspace](https://githubnext.com/projects/copilot-workspace) | Cross-PR semantic rules ("this lint pattern means X") |
+
+Devin / Cognition / Cursor are billion-dollar bets on exactly the long-horizon-coding problem.
+
+### Continual personalization (memory-native space)
+
+| use case | precedent | MVA fit |
+|---|---|---|
+| **Personal AI assistants** with months of context | [Letta](https://www.letta.com/), [mem0](https://mem0.ai/), [Limitless](https://www.limitless.ai/) | L2.Episodic + Self-model layer specifically designed for this |
+| **Enterprise CSM / support agents** with customer history | [Sierra.ai](https://sierra.ai/), [Decagon](https://decagon.ai/), [Ada](https://www.ada.cx/) | Memory of past tickets + Reflector for policy updates |
+| **Education tutors** | [Khanmigo](https://www.khanacademy.org/khan-labs), [MagicSchool](https://www.magicschool.ai/) | Per-student Self-model, per-curriculum Semantic store |
+
+### Robotics / embodied AI
+
+| use case | precedent | MVA fit |
+|---|---|---|
+| **Robot manipulation policies** | [SIMA](https://deepmind.google/discover/blog/sima-generalist-ai-agent-for-3d-virtual-environments/) (DeepMind 2024), [RT-2](https://robotics-transformer2.github.io/) | Long-horizon task plans, skill library of motion primitives |
+| **Autonomous vehicles** (decision layer) | [Wayve](https://wayve.ai/), [Comma.ai](https://comma.ai/) | Episodic memory of unusual scenarios |
+| **Warehouse / industrial agents** | [Physical Intelligence](https://www.physicalintelligence.company/), [Skild AI](https://www.skild.ai/) | Cross-task skill transfer |
+
+### Browser / OS automation
+
+| use case | precedent | MVA fit |
+|---|---|---|
+| **General browser agents** | [Operator](https://openai.com/index/introducing-operator/) (OpenAI), [Manus](https://manus.im/), [Multion](https://www.multion.ai/) | Multi-page workflows, semantic rules about UI patterns |
+| **Desktop automation** | [Anthropic Computer Use](https://www.anthropic.com/news/3-5-models-and-computer-use), [Open Interpreter](https://www.openinterpreter.com/) | OS-level long horizon, memory of past app interactions |
+| **RPA 2.0** (intelligent process automation) | [UiPath GenAI agents](https://www.uipath.com/), [Automation Anywhere AI Agent Studio](https://www.automationanywhere.com/) | Enterprise long-horizon workflows |
+
+### Other high-signal application domains
+
+| domain | precedent |
 |---|---|
-| Tier 1 alone | arxiv preprint, NeurIPS Agents workshop poster, conversation with one lab |
-| Tier 1 + 2 (cross-task) | NeurIPS / ICLR main conference paper, recruiter conversations |
-| Tier 1 + 2 + 3 (MVA × RL ablation) | landmark paper, direct outreach from frontier labs, RS/Member of Technical Staff offers credible |
-| Tier 1-3 + Anthropic Pokemon beat | conversation with Anthropic agentic team directly; the Pokemon thread is a public-facing recruiting funnel they openly use |
-| Tier 1-5 (open-source tgaer + standard benchmark) | platform-level recognition, multi-year frontier-lab trajectory |
+| **Defense / dual-use** | [Anduril Lattice](https://www.anduril.com/lattice/), [Palantir Maven AI](https://www.palantir.com/) |
+| **Healthcare diagnostics** | [Hippocratic AI](https://www.hippocraticai.com/), [Glass Health](https://glass.health/) |
+| **Legal research / contract review** | [Harvey](https://www.harvey.ai/), [Ironclad AI Assist](https://ironcladapp.com/) |
+| **Financial analysis** | most quant funds + Bloomberg GPT successors; few public products |
+| **Climate / energy grid optimisation** | [DeepMind energy](https://deepmind.google/discover/blog/deepmind-ai-reduces-google-data-centre-cooling-bill-by-40/) (extended), Tapestry / Climavision |
 
-### Concrete near-term moves (next 2 weeks)
+### Where MVA does NOT fit
 
-If the goal is frontier-lab signaling specifically:
+Honest delimitation:
 
-1. **Ship PR 1 + measure on 3 games** (this week) — proof of work, blog-post-able
-2. **Draft a public writeup** of the MVA + the 8 candidate novel contributions — arxiv-style or Substack — this becomes the recruiter-facing artifact
-3. **Engage the Anthropic Pokemon thread publicly** — show our 26B-with-MVA progression, ask thoughtful questions about their memory tool design
-4. **Sketch the Self-Evolution Curve methodology** as a 2-page proposal — circulate to a couple of AI eval researchers for feedback
-5. **Don't try to do everything at once** — pick the Tier that matches the timeline you actually have, and execute that tier cleanly
+- **One-shot tasks** (single-turn Q&A, summarisation, image generation) — no long horizon, no continual learning to do
+- **Pure perception** (image classification, OCR, speech recognition) — no decision-making
+- **Real-time low-latency control** (high-frequency trading, robotics control loops <10ms) — LLM-in-the-loop too slow
+- **Fully novel-per-instance tasks** (creative writing, original research questions) — Procedural cache and Semantic memory degrade to per-instance state with no compounding
 
-The trap to avoid: announcing the full Tier 5 vision and shipping only Tier 1. Better to ship Tier 2 fully and let the Tier 5 vision be visible in the README + design docs but unannounced.
+## Cross-refs
+
+- Sister architecture doc: [`architecture.md`](architecture.md) (current per-game architecture as-shipped)
+- Pokemon stage history: [`experiments/gemma/cross-stage-diagnosis.md`](experiments/gemma/cross-stage-diagnosis.md)
+- 3-game MACLA findings: [`experiments/gemma/macla_findings.md`](experiments/gemma/macla_findings.md)
+- Stage S openevolve writeup: [`experiments/openevolve_milestones/v1.md`](experiments/openevolve_milestones/v1.md) (in `feat/openevolve-milestones-spike` branch)
+- Future repo target: https://github.com/charleneleong-ai/tgaer
+- Frontier-lab references: [Anthropic Claude plays Pokemon](https://www.anthropic.com/news/claude-plays-pokemon), [DeepMind SIMA](https://deepmind.google/discover/blog/sima-generalist-ai-agent-for-3d-virtual-environments/), [OpenAI Operator](https://openai.com/index/introducing-operator/), [DeepSeek-R1](https://github.com/deepseek-ai/DeepSeek-R1)
 
 ## Cross-refs
 
