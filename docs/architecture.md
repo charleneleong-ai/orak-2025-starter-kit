@@ -1,10 +1,10 @@
 # Orak 2025 — Architecture & Roadmap
 
-**Last updated:** 2026-05-24 (added "Current work (MVA)" section reflecting cross-game baselines + futile-action detector PR; per-game Stage S work through PR #104 merged; Stage K/L statuses fast-forwarded — see [`generalized-agent-mva.md`](generalized-agent-mva.md) for the successor architecture and [`cross-stage-diagnosis.md`](experiments/gemma/cross-stage-diagnosis.md) for the per-game stage progression)
+**Last updated:** 2026-05-24 (added "Current work (TGAER)" section reflecting cross-game baselines + futile-action detector PR; per-game Stage S work through PR #104 merged; Stage K/L statuses fast-forwarded — see [`tgaer.md`](tgaer.md) for the successor architecture and [`cross-stage-diagnosis.md`](experiments/gemma/cross-stage-diagnosis.md) for the per-game stage progression)
 
 One-page snapshot of the cognitive architecture, what we've proven useful, what we've ruled out, and what's still open. For depth see [`docs/experiments/gemma/cross-stage-diagnosis.md`](experiments/gemma/cross-stage-diagnosis.md) and [`docs/experiments/gemma/macla_findings.md`](experiments/gemma/macla_findings.md).
 
-> **Successor architecture in progress:** [`generalized-agent-mva.md`](generalized-agent-mva.md) — Memory4 + Reflector **MVA** (*Minimum Viable Agent*, by analogy to MVP) aimed at a single agent that handles any embodied task without per-game scaffolds. PR 1 (futile-action detector) in flight on `feat/futile-action-detector`.
+> **Successor architecture in progress:** [`tgaer.md`](tgaer.md) — **TGAER** (*Toward General-Purpose Abstraction & Embodied Reasoning*), a Memory4 + Reflector layered stack aimed at a single agent that handles any embodied task without per-game scaffolds. PR 1 (futile-action detector) in flight on `feat/futile-action-detector`. Will land in the standalone repo at https://github.com/charleneleong-ai/tgaer.
 
 > ⚠️ **Read this before scanning pokemon results:** every pokemon experiment row dated **2026-03-28 → 2026-05-13** ran with `pokered/data/maps/objects/*.asm` empty. The harness emitted placeholder `OBJ_n_n` tokens instead of real `SPRITE_*` names, so 74–78% of reasoning chains were anchored on placeholders. PR #80 hard-fails on the missing dir; PR #81 reran Stage D + Stage H (n=3 each) under the fix and collapsed the bimodal `[57.14, 57.14, 28.57]` distribution to `[57.14, 57.14, 57.14]` zero-variance. Pokemon rows in this doc are tagged **`PRE-ASM-FIX`** where the placeholder caveat applies. See [`docs/experiments/pokemon-asm-gap.md`](experiments/pokemon-asm-gap.md) for the full list of affected experiments.
 
@@ -29,9 +29,9 @@ Observation  ──>  Subtask planner (D)  ──>  Vector memory (C)  ──>  
    └──────────────────────────────────  Game env (PyBoy + pokered)
 ```
 
-## Successor architecture (MVA — in build, PR 1 in flight)
+## Successor architecture (TGAER — in build, PR 1 in flight)
 
-The architecture above is per-game scaffold-heavy (`_POKEMON_MILESTONE_LIBRARY`, `NavigateToMap` bridges, `map_graph_hint`, exit-tile hints) — it works for pokemon but mario and 2048 have no equivalent scaffolds, and future games would need fresh hand-curation each time. The cross-game baseline analysis (2026-05-23) surfaced shared pathologies — procedure-cache poisoning (mario), MACLA dominance lock-in (2048), futile-action loops (all three games) — that are universal, not pokemon-specific. The Memory4 + Reflector MVA replaces the per-game scaffold with a **task-agnostic, self-evolving five-layer stack**:
+The architecture above is per-game scaffold-heavy (`_POKEMON_MILESTONE_LIBRARY`, `NavigateToMap` bridges, `map_graph_hint`, exit-tile hints) — it works for pokemon but mario and 2048 have no equivalent scaffolds, and future games would need fresh hand-curation each time. The cross-game baseline analysis (2026-05-23) surfaced shared pathologies — procedure-cache poisoning (mario), MACLA dominance lock-in (2048), futile-action loops (all three games) — that are universal, not pokemon-specific. The Memory4 + Reflector TGAER replaces the per-game scaffold with a **task-agnostic, self-evolving five-layer stack**:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -71,7 +71,7 @@ The architecture above is per-game scaffold-heavy (`_POKEMON_MILESTONE_LIBRARY`,
 
 **Net new code:** ~1500 lines + ~500 lines refactor across 8 PRs. Cross-game regression test corpus uses the pokemon v3 (6/7) / mario (21.85% best / 9.04% mean) / 2048 (64% best / 45% mean) baselines from 2026-05-23. Naming caveat: we keep `GameAdapter` / `MilestoneSpec` / `procedure` in orak; the `EnvAdapter` + `Task` + `SkillSpec` + `Skill` renames happen at port time to the new repo at https://github.com/charleneleong-ai/tgaer.
 
-For full details — staged PR plan, have-vs-need by layer with file:line references, expected per-game signal — see [`generalized-agent-mva.md`](generalized-agent-mva.md).
+For full details — staged PR plan, have-vs-need by layer with file:line references, expected per-game signal — see [`tgaer.md`](tgaer.md).
 
 | Layer | Source | Role | Status |
 |---|---|---|---|
@@ -263,9 +263,9 @@ The PR #28 verdict (mario → Stage D) is the production config; the iter-5 100%
 | **Stage M / N / O** | ✅ Merged 2026-05-16+ ([PR #86](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/86), [#87](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/87), [#88](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/88)) | Stage M selector signals plateau at 51.43% (FLAT verdict). Stage N+O bootstrap-neutral signals + planner-side novelty + broadened acquisition. |
 | **Stage Q / R / S** | ✅ Merged 2026-05-19+ ([PRs #92, #97, #101, #103, #104](https://github.com/charleneleong-ai/orak-2025-starter-kit/pulls)) | Stage Q exit-tile coords + procedural perf-gated cache prune. Stage R subgoals + Reflexion + v3 soft+escape-valve planner. Stage S MilestoneSpec.requires_location auto-bridge — lifted v3 pokemon baseline 4/7 → 5/7 → 6/7 across 300/600/1200-step budgets. |
 | **Pokemon v4 step-budget probe** (2000 steps) | Running (PID 1953418, ~96% complete as of 01:43 UTC 2026-05-24) | `step_budget_2000_baseline_20260523T210201Z`. Tests whether M7 (DeliverOaksParcel) also falls to step budget alone or hits a planner wall on the return leg. Decision tree in [`experiments/openevolve_milestones/v1.md`](experiments/openevolve_milestones/v1.md) (on `feat/openevolve-milestones-spike`). |
-| **MVA PR 1 — universal futile-action detector** | ✅ Committed 2026-05-24 (`feat/futile-action-detector` @ [`176f68c`](https://github.com/charleneleong-ai/orak-2025-starter-kit/commit/176f68c)); 3 rollouts in flight | Pokemon @ 1200 (PID 1990348), mario @ 1000 (PID 1991018), 2048 @ 1000 (PID 1992409). See [`generalized-agent-mva.md`](generalized-agent-mva.md) for the full PR 1-8 plan. |
-| **MVA PRs 2-8** | Queued behind PR 1 validation | Per-skill success-rate floor → stagnation→skill demotion → `agent_events.jsonl` telemetry → episode-end pruning → episodic store + retrieval → Reflector → self-model. |
-| **2048 state-abstraction sweep retune** | Open since PR #23 (deprioritized) | Subsumed by MVA work — the right fix is Memory4 cleanup, not 2048-specific param-search. |
+| **TGAER PR 1 — universal futile-action detector** | ✅ Committed 2026-05-24 (`feat/futile-action-detector` @ [`176f68c`](https://github.com/charleneleong-ai/orak-2025-starter-kit/commit/176f68c)); 3 rollouts in flight | Pokemon @ 1200 (PID 1990348), mario @ 1000 (PID 1991018), 2048 @ 1000 (PID 1992409). See [`tgaer.md`](tgaer.md) for the full PR 1-8 plan. |
+| **TGAER PRs 2-8** | Queued behind PR 1 validation | Per-skill success-rate floor → stagnation→skill demotion → `agent_events.jsonl` telemetry → episode-end pruning → episodic store + retrieval → Reflector → self-model. |
+| **2048 state-abstraction sweep retune** | Open since PR #23 (deprioritized) | Subsumed by TGAER work — the right fix is Memory4 cleanup, not 2048-specific param-search. |
 | **Stage J — Qwen3-Thinking** (always-on reasoning budget) | Rerun still deferred | Pre-fix scored 28.57% × 3 — failed M3 (no starter). Post-fix re-run not queued; would only test reasoning budget, not the navigation gate. |
 
 ---
@@ -331,7 +331,7 @@ The current procedure cache has two design gaps that need to close before cumula
 
 Both fixes are local to `agents/macla/procedures/` and don't require a new sweep harness — they're a Stage L-style intervention. Either one alone is testable (n=3 cumulative-memory variant); both together is the more conservative bet. The current Stage K REGRESS-but-floor-stable result establishes the baseline to beat: any redesign needs to deliver `late_mean ≥ early_mean` (no negative transfer) at minimum, ideally improving steps-to-M4 iter-over-iter.
 
-**Update 2026-05-24:** both gaps were addressed in Stage L ([PR #85](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/85)) — procedures keyed on `(map_name, hash(steps))` with `prune_stale_procedures(max_age=2)` on checkpoint load. The "no forget" gap then resurfaced under different conditions in the cross-game baseline analysis (mario procedure poisoning, 2048 dominance lock-in) and is now superseded by the MVA's per-skill success-rate floor (PR 2) and stagnation→skill demotion (PR 3). See [`generalized-agent-mva.md`](generalized-agent-mva.md) for the cross-game framing.
+**Update 2026-05-24:** both gaps were addressed in Stage L ([PR #85](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/85)) — procedures keyed on `(map_name, hash(steps))` with `prune_stale_procedures(max_age=2)` on checkpoint load. The "no forget" gap then resurfaced under different conditions in the cross-game baseline analysis (mario procedure poisoning, 2048 dominance lock-in) and is now superseded by the TGAER's per-skill success-rate floor (PR 2) and stagnation→skill demotion (PR 3). See [`tgaer.md`](tgaer.md) for the cross-game framing.
 
 ---
 
@@ -394,9 +394,9 @@ The sweet spot is **long-horizon agentic tasks with sub-structure**: multiple st
 
 ---
 
-## Current work (2026-05-24) — generalized agent harness (MVA)
+## Current work (2026-05-24) — generalized agent harness (TGAER)
 
-The per-game scaffold work (Stage S openevolve, milestone library) plateaued at pokemon 6/7 @ 1200 steps, and surfaced shared failure modes across mario + 2048 that are NOT pokemon-specific: procedure-cache poisoning (mario locking into kill-on-spawn after ep4), MACLA dominance lock-in (2048 selecting one of 4 procs 84% of decisions), and futile-action loops in all three games. Diagnosing these as universal architectural gaps shifted the priority from "more pokemon scaffolding" to a **task-agnostic Memory4 + Reflector MVA**: see [`generalized-agent-mva.md`](generalized-agent-mva.md) for the full 5-layer design, have-vs-need audit by layer, and 8-PR staged plan.
+The per-game scaffold work (Stage S openevolve, milestone library) plateaued at pokemon 6/7 @ 1200 steps, and surfaced shared failure modes across mario + 2048 that are NOT pokemon-specific: procedure-cache poisoning (mario locking into kill-on-spawn after ep4), MACLA dominance lock-in (2048 selecting one of 4 procs 84% of decisions), and futile-action loops in all three games. Diagnosing these as universal architectural gaps shifted the priority from "more pokemon scaffolding" to a **task-agnostic Memory4 + Reflector TGAER**: see [`tgaer.md`](tgaer.md) for the full 5-layer design, have-vs-need audit by layer, and 8-PR staged plan.
 
 **Cross-game baselines captured 2026-05-23** (wandb under `chaleong`):
 
@@ -412,7 +412,7 @@ The per-game scaffold work (Stage S openevolve, milestone library) plateaued at 
 - 11/11 tests in [`tests/test_futile_action_detector.py`](../tests/test_futile_action_detector.py) — game-agnostic parametrization + state-machine sanity
 - Three regression rollouts launched 2026-05-24 01:37 UTC against the baselines above; cross-game results pending
 
-PRs 2-8 from the MVA plan are queued behind PR 1 validation: per-skill success-rate floor, stagnation→skill demotion, `agent_events.jsonl` telemetry, episode-end pruning, episodic store + retrieval, Reflector post-episode critique, self-model.
+PRs 2-8 from the TGAER plan are queued behind PR 1 validation: per-skill success-rate floor, stagnation→skill demotion, `agent_events.jsonl` telemetry, episode-end pruning, episodic store + retrieval, Reflector post-episode critique, self-model.
 
 ## Cross-refs
 

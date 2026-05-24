@@ -1,6 +1,6 @@
-# Generalized Agent Harness — MVA (Memory4 + Reflector)
+# TGAER — Toward General-Purpose Abstraction & Embodied Reasoning
 
-> **MVA** = **Minimum Viable Agent** — by analogy to MVP (Minimum Viable Product). The smallest agent architecture that can grow into the full long-horizon, self-evolving, embodied-reasoning agent envisioned at the top of this doc. Bootstraps from pokemon's existing scaffolds as data + extends to mario, 2048, and any future env/task via the layered contracts below.
+> **TGAER** = **T**oward **G**eneral-Purpose **A**bstraction & **E**mbodied **R**easoning. A layered agent architecture for long-horizon, self-evolving, cross-medium reasoning — captured here as the in-build version that will land in the standalone repo at https://github.com/charleneleong-ai/tgaer. The two halves of the name map to the two halves of the stack: **General-Purpose Abstraction** = L2 Memory4 + L5 Reflector (what the agent *learns and stores*); **Embodied Reasoning** = L1 EnvAdapter + L3 Pathology guards + L4 Planner (what the agent *does in the world*). Bootstraps from pokemon's existing scaffolds as data + extends to mario, 2048, and any future env/task via the layered contracts below.
 
 **Last updated:** 2026-05-24
 
@@ -14,7 +14,7 @@ This doc captures the **have vs need** audit and the staged build plan. Sister d
 
 ## The vision in one paragraph
 
-The current orak architecture is a per-game scaffold dressed up as a general framework: pokemon's `_POKEMON_MILESTONE_LIBRARY`, `NavigateToMap` bridges, exit-tile hints, and `map_graph_hint` are hand-curated for one game. Mario has none, 2048 has none, and any future task would need fresh scaffolding. The MVA replaces this with a **layered, self-extending agent** built on four contracts: a universal environment adapter, a four-store memory (`Memory4`), a planner with universal pathology guards, and a reflector that writes new skills/rules/prompts after every episode. The agent **bootstraps from data, not code** — pokemon's existing milestone library becomes one game's *initial skill set*, not the architectural unit.
+The current orak architecture is a per-game scaffold dressed up as a general framework: pokemon's `_POKEMON_MILESTONE_LIBRARY`, `NavigateToMap` bridges, exit-tile hints, and `map_graph_hint` are hand-curated for one game. Mario has none, 2048 has none, and any future task would need fresh scaffolding. The TGAER replaces this with a **layered, self-extending agent** built on four contracts: a universal environment adapter, a four-store memory (`Memory4`), a planner with universal pathology guards, and a reflector that writes new skills/rules/prompts after every episode. The agent **bootstraps from data, not code** — pokemon's existing milestone library becomes one game's *initial skill set*, not the architectural unit.
 
 ---
 
@@ -50,7 +50,7 @@ The two layers that matter most for the vision — **long-horizon planning** (L3
 
 ## Have vs need — by layer
 
-The orak repo already ships ~70% of the *infrastructure* for the MVA — what's missing is composition, the failure-mode guards, and the L5 reflector. The table below maps every existing component to a layer and flags the gap.
+The orak repo already ships ~70% of the *infrastructure* for the TGAER — what's missing is composition, the failure-mode guards, and the L5 reflector. The table below maps every existing component to a layer and flags the gap.
 
 ### Layer 1 — GameAdapter (universal interface)
 
@@ -114,7 +114,7 @@ The orak repo already ships ~70% of the *infrastructure* for the MVA — what's 
 
 ## Net new code estimate
 
-If we list everything that doesn't exist today and ship it as a connected MVA:
+If we list everything that doesn't exist today and ship it as a connected TGAER:
 
 1. `GameAdapter` Protocol — interface contract (~50 lines)
 2. `SkillLibrary` with success-rate gate, stagnation demotion, ep-end pruning (~200 lines refactor of `EnhancedHierarchicalMemorySystem`)
@@ -127,7 +127,7 @@ If we list everything that doesn't exist today and ship it as a connected MVA:
 9. Cross-rollout memory persistence — load/save all 4 stores (~100 lines)
 10. `agent_events.jsonl` telemetry stream (~50 lines)
 
-**Total: ~1500 lines new + ~500 lines refactor.** Three weeks of focused work for the full MVA.
+**Total: ~1500 lines new + ~500 lines refactor.** Three weeks of focused work for the full TGAER.
 
 ---
 
@@ -170,7 +170,7 @@ PRs 1-5 don't need embedding infra or extra LLM calls — cheap, ship in a week.
 ### PR 1 — futile-action detector (component of L3, in flight)
 
 **Branch:** `feat/futile-action-detector` (worktree `/workspace/orak-futile-detector`)
-**Commit:** [`176f68c`](https://github.com/charleneleong-ai/orak-2025-starter-kit/commit/176f68c) — `feat(macla): universal futile-action detector (PR 1 of MVA harness)`
+**Commit:** [`176f68c`](https://github.com/charleneleong-ai/orak-2025-starter-kit/commit/176f68c) — `feat(macla): universal futile-action detector (PR 1 of TGAER harness)`
 
 Implementation: agent-side hook in [`unified.py:_base_fallback`](../agents/macla/unified.py#L549).
 - New constant `FUTILE_ACTION_WINDOW = 3` (top of `unified.py`)
@@ -200,7 +200,7 @@ All three share the vLLM server at port 8000 via continuous batching. Pokemon v4
 
 ## Regression test corpus
 
-Live wandb runs that serve as MVA regression baselines:
+Live wandb runs that serve as TGAER regression baselines:
 
 | game | run | duration | best | mean | wandb |
 |---|---|---|---|---|---|
@@ -209,7 +209,7 @@ Live wandb runs that serve as MVA regression baselines:
 | mario (1000) | `stage_s_super_mario_1000_20260523T210441Z` | ~13 min | 21.85% | 9.04% | `chaleong/orak-super-mario` |
 | 2048 (1000) | `stage_s_2048_1000_20260523T210447Z` | ~2.4h | 63.64% | 44.92% | `chaleong/orak-2048` |
 
-Each MVA PR posts a fresh run for the affected game(s), diff'd vs these baselines in the PR body.
+Each TGAER PR posts a fresh run for the affected game(s), diff'd vs these baselines in the PR body.
 
 ---
 
@@ -237,7 +237,7 @@ New code in orak should use **neutral names** that translate cleanly:
 
 ## References & influences
 
-The MVA is not novel architecture — it's a specific stack of patterns that have proven out in the academic and industry agent literature, applied to orak's cross-game test bed. Each layer maps to prior work we're building on. Where an orak experiment validated (or refuted) a pattern, that's cross-referenced too.
+The TGAER is not novel architecture — it's a specific stack of patterns that have proven out in the academic and industry agent literature, applied to orak's cross-game test bed. Each layer maps to prior work we're building on. Where an orak experiment validated (or refuted) a pattern, that's cross-referenced too.
 
 ### Layer 1 — Env + Task split
 
@@ -295,7 +295,7 @@ The four-store split (episodic / procedural / semantic / self-model) follows the
 
 ### What IS (potentially) novel
 
-Each item below is a research-level claim we are uniquely positioned to make given the cross-game test bed + the layered MVA + the bootstrap-vs-cold-start framing. None of these have published treatments to our knowledge — flagging them so we know which experiments to design and report.
+Each item below is a research-level claim we are uniquely positioned to make given the cross-game test bed + the layered TGAER + the bootstrap-vs-cold-start framing. None of these have published treatments to our knowledge — flagging them so we know which experiments to design and report.
 
 1. **The bootstrap-vs-auto-emergence efficient frontier.** *How much hand-curated scaffold does an auto-extending agent actually need to bootstrap?* We have three games on a clean spectrum: pokemon (heavy hand-curated milestone library), mario (cold start, no scaffold), 2048 (cold start). If Reflector + Memory4 alone takes mario from baseline 9.04% → 18%+ without per-game scaffolding, that quantifies the auto-emergence rate. The frontier (scaffold-effort × performance) is, to our knowledge, unmeasured anywhere.
 
@@ -321,13 +321,13 @@ Separate from the research claims above, these are useful artifacts even if ever
 - **Cross-game regression corpus on wandb** — pokemon (1200 / 2000) + mario (1000) + 2048 (1000) baselines as fixed reference points; any future agent change can be diff'd against these in one click
 - **The pathology-event JSONL stream** (PR 4) — a stable telemetry format that survives architecture rewrites; lets others post-hoc analyze trajectories without re-running the LLM
 
-## Research roadmap — extensions beyond the MVA
+## Research roadmap — extensions beyond the TGAER
 
-The 8-PR MVA is *necessary* groundwork. By itself it's a proof of architecture; it doesn't yet test the hardest open questions in the field. This section maps tiered extensions — what each tier adds technically, what published precedent it tests against, and what scope each tier represents.
+The 8-PR TGAER is *necessary* groundwork. By itself it's a proof of architecture; it doesn't yet test the hardest open questions in the field. This section maps tiered extensions — what each tier adds technically, what published precedent it tests against, and what scope each tier represents.
 
-### Field-level open problems the MVA framework can address
+### Field-level open problems the TGAER framework can address
 
-After reviewing active agendas across Anthropic's Computer Use / Pokemon team, DeepMind's SIMA + Genie teams, OpenAI's Operator + Evals teams, Meta FAIR's CICERO line, and the broader academic agent literature (BALROG, GAIA, SWE-bench, OSWorld, WebArena, AgentBench), the genuine open problems where the MVA design is well-positioned to contribute:
+After reviewing active agendas across Anthropic's Computer Use / Pokemon team, DeepMind's SIMA + Genie teams, OpenAI's Operator + Evals teams, Meta FAIR's CICERO line, and the broader academic agent literature (BALROG, GAIA, SWE-bench, OSWorld, WebArena, AgentBench), the genuine open problems where the TGAER design is well-positioned to contribute:
 
 | open problem | why unsolved |
 |---|---|
@@ -338,13 +338,13 @@ After reviewing active agendas across Anthropic's Computer Use / Pokemon team, D
 | **Memory-vs-RL phase boundary** — at what task difficulty does pure-memory stop being enough and you have to do post-training (GRPO/DPO/PPO)? | DeepSeek-R1 showed RL works from scratch. But for agents specifically, the lift from RL vs memory is unmeasured. |
 | **Stable agentic RL on small models** — most agentic RL papers use 7-70B models; can a 4B-active-MoE (Gemma 26B-A4B-it) match 70B with the right architecture? | All compute-constrained labs (Anthropic Sonnet, Mistral, DeepSeek) want efficient agents. |
 
-### Tier 1 — MVA + cross-game ablation (6-8 weeks)
+### Tier 1 — TGAER + cross-game ablation (6-8 weeks)
 
 Already planned in PRs 1-8 above. Tests the architecture on pokemon + mario + 2048.
 
 ### Tier 2 — extend to non-game tasks (4-6 additional weeks)
 
-The MVA framework only matters if it generalizes beyond games. Add `EnvAdapter` implementations for:
+The TGAER framework only matters if it generalizes beyond games. Add `EnvAdapter` implementations for:
 
 - **[WebArena](https://webarena.dev/)** (Zhou et al. 2024, *ICLR*) — browser tasks
 - **[SWE-bench Verified](https://www.swebench.com/)** (Jimenez et al. 2024, *NeurIPS*) — code fix tasks
@@ -356,23 +356,23 @@ This is also where the **Self-Evolution Curve methodology** (open problem #1) be
 
 ### Tier 3 — the agentic-RL × memory comparison (8-12 weeks, GPU-heavy)
 
-The current MVA is pure inference (frozen Gemma 26B served via vLLM). The natural alternative is **agentic RL / post-training**:
+The current TGAER is pure inference (frozen Gemma 26B served via vLLM). The natural alternative is **agentic RL / post-training**:
 
 - **[GRPO](https://arxiv.org/abs/2402.03300)** (Shao et al. 2024 — DeepSeekMath / DeepSeek-R1) — group-relative policy optimization, no value model needed
 - **[DPO](https://arxiv.org/abs/2305.18290)** (Rafailov et al. 2023, *NeurIPS*) and **[SimPO](https://arxiv.org/abs/2405.14734)** (Meng et al. 2024, *NeurIPS*) — preference pair learning from trajectories
 - **[Process Reward Models](https://arxiv.org/abs/2305.20050)** (Lightman et al. 2024, *ICLR*) — step-level rewards
 - **[Tülu 3](https://arxiv.org/abs/2411.15124)** (Lambert et al. 2024) — open-source RL post-training recipe
 
-The repo already contains most of the GSPO infrastructure (offline GSPO gradient loop in `train.py` via Unsloth, gspo_group.json sidecars, paired-rollouts harness). The missing piece is wiring it to MVA's collected trajectories.
+The repo already contains most of the GSPO infrastructure (offline GSPO gradient loop in `train.py` via Unsloth, gspo_group.json sidecars, paired-rollouts harness). The missing piece is wiring it to TGAER's collected trajectories.
 
 The **four-way comparison** at a fixed compute budget:
 
 | arm | model | memory | description |
 |---|---|---|---|
 | A. Pure inference | Gemma 26B frozen | none (vanilla MACLA) | current orak baseline |
-| B. MVA only | Gemma 26B frozen | full Memory4 + Reflector | what PRs 1-8 produce |
+| B. TGAER only | Gemma 26B frozen | full Memory4 + Reflector | what PRs 1-8 produce |
 | C. GRPO only | Gemma 26B fine-tuned on trajectories | none | classic post-training |
-| D. MVA + GRPO | Gemma 26B fine-tuned | full Memory4 + Reflector | does memory + RL compound, substitute, or interfere? |
+| D. TGAER + GRPO | Gemma 26B fine-tuned | full Memory4 + Reflector | does memory + RL compound, substitute, or interfere? |
 
 The "memory vs RL" debate is folklore-level today — Letta claims memory is enough, DeepSeek-R1 says RL is enough. A clean comparison with budget accounting (LLM calls, GPU hours, $ cost) settles whether they substitute, compound, or interfere.
 
@@ -381,12 +381,12 @@ The "memory vs RL" debate is folklore-level today — Letta claims memory is eno
 A separate axis from architecture extension: **reproduce / beat published agent results** on standard benchmarks to make the architecture claim concrete. Candidates:
 
 - **Pokemon Red** — Anthropic's Claude-plays-Pokemon stream has reached Cerulean City (M11+) with Claude 3.7 Sonnet + custom memory tool + heavy scaffolding. Matching or beating with our 26B + auto-emerging skills (no hand-curated milestone library beyond M5) is a direct comparison.
-- **WebArena** — current SOTA hovers ~35-45% success. MVA cross-task transfer should be measured here.
-- **SWE-bench Verified** — current SOTA ~60-65% (Claude 3.7 Sonnet + custom agents). MVA + Reflector on code-edit traces is a clean test.
+- **WebArena** — current SOTA hovers ~35-45% success. TGAER cross-task transfer should be measured here.
+- **SWE-bench Verified** — current SOTA ~60-65% (Claude 3.7 Sonnet + custom agents). TGAER + Reflector on code-edit traces is a clean test.
 
 ### Tier 5 — tgaer as research infrastructure
 
-The orak → tgaer repo split (see [naming convention](#naming-convention-orak-vs-tgaer) above) is operationalised by making tgaer the **reference implementation** of the MVA:
+The orak → tgaer repo split (see [naming convention](#naming-convention-orak-vs-tgaer) above) is operationalised by making tgaer the **reference implementation** of the TGAER:
 
 - Pluggable model backends (vLLM, Anthropic API, OpenAI API, Gemini, local)
 - Pluggable memory backends (in-process, Letta, mem0, custom)
@@ -396,7 +396,7 @@ The orak → tgaer repo split (see [naming convention](#naming-convention-orak-v
 
 ## Efficient frontier — what helps with what?
 
-The deeper question behind the MVA work: **for generalizable self-evolving agents across many mediums (games, web, code, science, robotics), what's the most compute- and effort-efficient capability-lift mechanism at each task class?** The dominant lever shifts as you move along the task spectrum. This section maps the landscape honestly.
+The deeper question behind the TGAER work: **for generalizable self-evolving agents across many mediums (games, web, code, science, robotics), what's the most compute- and effort-efficient capability-lift mechanism at each task class?** The dominant lever shifts as you move along the task spectrum. This section maps the landscape honestly.
 
 ### Capability-lift mechanisms — ordered by cost and ceiling
 
@@ -416,7 +416,7 @@ Eleven mechanisms in current use, with their cost/ceiling/iteration-speed profil
 | 10 | Full SFT / DPO post-training | very high | high | weeks-months | [TRL](https://github.com/huggingface/trl), [Tülu 3](https://arxiv.org/abs/2411.15124) |
 | 11 | RL on agent trajectories (GRPO / PPO / etc) | very high | highest for some tasks | months | [GRPO](https://arxiv.org/abs/2402.03300) (DeepSeek-R1), agentic RL papers |
 
-The MVA stack uses mechanisms **3-8** as a unified architecture; mechanisms **9-11** are the orthogonal post-training axis that Tier 3 of the roadmap tests.
+The TGAER stack uses mechanisms **3-8** as a unified architecture; mechanisms **9-11** are the orthogonal post-training axis that Tier 3 of the roadmap tests.
 
 ### What dominates per task class (honest take)
 
@@ -491,7 +491,7 @@ Which mechanism transfers across mediums vs is medium-specific:
 | LoRA fine-tuning | partial | partial | ✓ | partial | ✓ | ✓ | per-medium (gradients don't transfer well across) |
 | RL on traces (GRPO) | ✓ | ✓ | ✓ | rare | ✓✓ | ✓ | per-medium (reward signal medium-specific) |
 
-The **MVA stack (mechanisms 3-8)** is mostly universal-transfer. The **post-training stack (9-11)** is mostly per-medium. **That's the case for harness-first as the generalisation strategy** — gradients don't transfer across mediums, but memory + critique do.
+The **TGAER stack (mechanisms 3-8)** is mostly universal-transfer. The **post-training stack (9-11)** is mostly per-medium. **That's the case for harness-first as the generalisation strategy** — gradients don't transfer across mediums, but memory + critique do.
 
 ### Open empirical questions (where Tier 3 + Tier 4 of the roadmap deliver evidence)
 
@@ -505,22 +505,22 @@ The **MVA stack (mechanisms 3-8)** is mostly universal-transfer. The **post-trai
 
 For **generalisable self-evolving agents across many mediums** specifically, the efficient frontier looks like:
 
-- **Default to harness + Memory4** for any task class where the base model is single-shot capable. This is most agentic work today. The 8-PR MVA is the right architecture.
+- **Default to harness + Memory4** for any task class where the base model is single-shot capable. This is most agentic work today. The 8-PR TGAER is the right architecture.
 - **Add LoRA post-training (mechanism 9)** only when harness clearly plateaus and the trajectory data quality justifies the GPU spend — usually after thousands of validated harness episodes.
 - **Reserve full GRPO/PPO (mechanism 11)** for narrow tasks where the base model lacks the fundamental skill (math, motor control, novel domains). It's the highest-ceiling mechanism but the worst transfer story across mediums.
 - **The harness wins for cross-medium transfer**; post-training wins for raw ceiling on a single medium. Most real applications are cross-medium, which biases toward harness as the foundation.
 
 This is the working hypothesis the Tier 1-3 roadmap is designed to test. The honest answer to "what helps with what" today is *we have priors but not measurements* — and producing those measurements rigorously **is the contribution**.
 
-## Applications — where MVA architecture matters
+## Applications — where TGAER architecture matters
 
-The MVA design is well-suited to **any task where success is checkable, the trajectory is long-horizon, and continual improvement matters more than peak per-instance capability**. Eight high-value application domains where this profile fits, ranked by current ecosystem signal:
+The TGAER design is well-suited to **any task where success is checkable, the trajectory is long-horizon, and continual improvement matters more than peak per-instance capability**. Eight high-value application domains where this profile fits, ranked by current ecosystem signal:
 
 ### AI4Science (highest leverage)
 
-The MVA framework is structurally a good fit for scientific automation: long horizons, sparse rewards, the success criterion is independently verifiable (the molecule synthesizes / the experiment reproduces / the theorem checks), and accumulated semantic memory (failed reaction → ruled-out pathway) compounds across trials.
+The TGAER framework is structurally a good fit for scientific automation: long horizons, sparse rewards, the success criterion is independently verifiable (the molecule synthesizes / the experiment reproduces / the theorem checks), and accumulated semantic memory (failed reaction → ruled-out pathway) compounds across trials.
 
-| domain | task class | published precedent | why MVA fits |
+| domain | task class | published precedent | why TGAER fits |
 |---|---|---|---|
 | **Autonomous chemistry** | Multi-step retrosynthesis planning + lab execution | [Coscientist](https://www.nature.com/articles/s41586-023-06792-0) (Boiko et al. 2023, *Nature*), [ChemCrow](https://arxiv.org/abs/2304.05376) (Bran et al. 2023) | 10-30 step plans, failed routes should self-prune (Procedural + Semantic stores) |
 | **Drug discovery** | Lead optimisation, target deconvolution | [Recursion's Phenomap](https://www.recursion.com/), [Insilico Medicine Pharma.AI](https://insilico.com/) | Memory of which scaffolds failed for which targets is exactly L2.Episodic + L2.Semantic |
@@ -529,11 +529,11 @@ The MVA framework is structurally a good fit for scientific automation: long hor
 | **Theorem proving / formal math** | Lean / Coq proof search | [AlphaProof](https://deepmind.google/discover/blog/ai-solves-imo-problems-at-silver-medal-level/) (DeepMind 2024), [Lean Copilot](https://github.com/lean-dojo/LeanCopilot) | Long proof trees with verifiable sub-goals — Reflector writes "this lemma always helps when goal contains X" |
 | **Scientific literature synthesis** | Multi-paper claim verification, hypothesis generation | [Elicit](https://elicit.com/), [Consensus](https://consensus.app/), [STORM](https://storm.genie.stanford.edu/) (Stanford) | Long retrieval chains where Episodic memory of "papers already searched" prevents redundant work |
 
-**Why now (2026 climate):** every major lab now has an AI-for-science arm (DeepMind GNoME / AlphaFold-3, Anthropic Asta, OpenAI partnerships with Scale + scientific orgs, NVIDIA BioNeMo). The bottleneck has shifted from model capability to **agent reliability over long horizons** — which is exactly the MVA framing.
+**Why now (2026 climate):** every major lab now has an AI-for-science arm (DeepMind GNoME / AlphaFold-3, Anthropic Asta, OpenAI partnerships with Scale + scientific orgs, NVIDIA BioNeMo). The bottleneck has shifted from model capability to **agent reliability over long horizons** — which is exactly the TGAER framing.
 
 ### Coding agents (largest economic prize)
 
-| sub-domain | published precedent | MVA fit |
+| sub-domain | published precedent | TGAER fit |
 |---|---|---|
 | **SWE-bench class** (multi-file repo fixes) | [SWE-agent](https://swe-agent.com/) (Yang et al. 2024), [Devin](https://www.cognition.ai/blog/introducing-devin) (Cognition), [Cursor agent mode](https://www.cursor.com/) | Multi-step file navigation, failed-attempt memory critical |
 | **API integration / scripting** | [Continue.dev](https://continue.dev/), [Aider](https://aider.chat/) | Episodic recall of past similar refactors |
@@ -543,7 +543,7 @@ Devin / Cognition / Cursor are billion-dollar bets on exactly the long-horizon-c
 
 ### Continual personalization (memory-native space)
 
-| use case | precedent | MVA fit |
+| use case | precedent | TGAER fit |
 |---|---|---|
 | **Personal AI assistants** with months of context | [Letta](https://www.letta.com/), [mem0](https://mem0.ai/), [Limitless](https://www.limitless.ai/) | L2.Episodic + Self-model layer specifically designed for this |
 | **Enterprise CSM / support agents** with customer history | [Sierra.ai](https://sierra.ai/), [Decagon](https://decagon.ai/), [Ada](https://www.ada.cx/) | Memory of past tickets + Reflector for policy updates |
@@ -551,7 +551,7 @@ Devin / Cognition / Cursor are billion-dollar bets on exactly the long-horizon-c
 
 ### Robotics / embodied AI
 
-| use case | precedent | MVA fit |
+| use case | precedent | TGAER fit |
 |---|---|---|
 | **Robot manipulation policies** | [SIMA](https://deepmind.google/discover/blog/sima-generalist-ai-agent-for-3d-virtual-environments/) (DeepMind 2024), [RT-2](https://robotics-transformer2.github.io/) | Long-horizon task plans, skill library of motion primitives |
 | **Autonomous vehicles** (decision layer) | [Wayve](https://wayve.ai/), [Comma.ai](https://comma.ai/) | Episodic memory of unusual scenarios |
@@ -559,7 +559,7 @@ Devin / Cognition / Cursor are billion-dollar bets on exactly the long-horizon-c
 
 ### Browser / OS automation
 
-| use case | precedent | MVA fit |
+| use case | precedent | TGAER fit |
 |---|---|---|
 | **General browser agents** | [Operator](https://openai.com/index/introducing-operator/) (OpenAI), [Manus](https://manus.im/), [Multion](https://www.multion.ai/) | Multi-page workflows, semantic rules about UI patterns |
 | **Desktop automation** | [Anthropic Computer Use](https://www.anthropic.com/news/3-5-models-and-computer-use), [Open Interpreter](https://www.openinterpreter.com/) | OS-level long horizon, memory of past app interactions |
@@ -575,7 +575,7 @@ Devin / Cognition / Cursor are billion-dollar bets on exactly the long-horizon-c
 | **Financial analysis** | most quant funds + Bloomberg GPT successors; few public products |
 | **Climate / energy grid optimisation** | [DeepMind energy](https://deepmind.google/discover/blog/deepmind-ai-reduces-google-data-centre-cooling-bill-by-40/) (extended), Tapestry / Climavision |
 
-### Where MVA does NOT fit
+### Where TGAER does NOT fit
 
 Honest delimitation:
 
