@@ -152,7 +152,7 @@ Building all five layers at once is suicide; stage by ROI:
 
 | stage | scope | size | status (2026-05-24) | regression test |
 |---|---|---|---|---|
-| **PR 1** | Futile-action detector (universal pathology) | ~60 lines + 11 tests | ✅ **committed** @ `176f68c`, **3 rollouts queued** | mario @ 1000 — expect death-loops to drop, mean to lift from 9.04% |
+| **PR 1** | Futile-action detector (universal pathology) | ~60 lines + 11 tests | ✅ **committed** @ [`176f68c`](https://github.com/charleneleong-ai/orak-2025-starter-kit/commit/176f68c), **3 rollouts queued** | mario @ 1000 — expect death-loops to drop, mean to lift from 9.04% |
 | **PR 2** | Per-skill success-rate floor in selection | ~80 lines | pending | mario re-run — kill-on-spawn proc gated by ~ep 8 |
 | **PR 3** | Stagnation → skill demotion | ~60 lines | pending | pokemon @ 1200 — expect stagnation=1081 to clear earlier |
 | **PR 4** | `agent_events.jsonl` telemetry | ~80 lines | pending | any run — verify event log contents |
@@ -166,7 +166,7 @@ PRs 1-5 don't need embedding infra or extra LLM calls — cheap, ship in a week.
 ### PR 1 — futile-action detector (in flight, results pending)
 
 **Branch:** `feat/futile-action-detector` (worktree `/workspace/orak-futile-detector`)
-**Commit:** `176f68c` — `feat(macla): universal futile-action detector (PR 1 of MVA harness)`
+**Commit:** [`176f68c`](https://github.com/charleneleong-ai/orak-2025-starter-kit/commit/176f68c) — `feat(macla): universal futile-action detector (PR 1 of MVA harness)`
 
 Implementation: agent-side hook in [`unified.py:_base_fallback`](../agents/macla/unified.py#L549).
 - New constant `FUTILE_ACTION_WINDOW = 3` (top of `unified.py`)
