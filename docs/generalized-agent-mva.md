@@ -321,6 +321,108 @@ Separate from the research claims above, these are useful artifacts even if ever
 - **Cross-game regression corpus on wandb** — pokemon (1200 / 2000) + mario (1000) + 2048 (1000) baselines as fixed reference points; any future agent change can be diff'd against these in one click
 - **The pathology-event JSONL stream** (PR 4) — a stable telemetry format that survives architecture rewrites; lets others post-hoc analyze trajectories without re-running the LLM
 
+## Toward groundbreaking contribution — strategic roadmap
+
+The 8-PR MVA above is *necessary* groundwork. It's not, by itself, the contribution that lands at a frontier lab or moves the field. This section frames how the MVA extends into work that **could** be groundbreaking — explicitly separating credible bets from ambition theater, and naming the specific open problems at each frontier lab we'd be addressing.
+
+### What the field is missing right now (early 2026)
+
+After reviewing the active agendas of Anthropic's Computer Use / Pokemon team, DeepMind's SIMA + Genie teams, OpenAI's Operator + Evals teams, Meta FAIR's CICERO line, and the broader academic agent literature (BALROG, GAIA, SWE-bench, OSWorld, WebArena, AgentBench), the genuine open problems are:
+
+| open problem | who cares | why unsolved |
+|---|---|---|
+| **Self-Evolution Curve as a benchmark protocol** — no accepted way to measure agent improvement over N trials with no human reset | OpenAI Evals, Anthropic Research, ARC-AGI | All current agent benchmarks are one-shot. BALROG measures plateau height, not learning rate. There's no `score-vs-trial` curve. |
+| **Scaffold-vs-emergence efficient frontier** — how much hand-curation does an auto-emerging agent really need? | DeepMind (SIMA), Anthropic (Pokemon), Cognition (Devin) | Anthropic Pokemon uses heavy scaffolding (custom memory tool + tuned prompts). Voyager uses Minecraft API. Nobody has run the ablation that answers "what could the LLM have figured out on its own?" |
+| **Unified pathology taxonomy + handler** | DeepMind, Anthropic | Reflexion handles one type, LATS another, Self-Refine another. No survey + unification exists. |
+| **Cross-task transfer via memory (without fine-tune)** | Letta.io / MemGPT crowd, plus Anthropic memory team | Letta claims it but on narrow tasks. Cross-game-class transfer (RPG → puzzle → web) is unmeasured. |
+| **Memory-vs-RL phase boundary** — at what task difficulty does pure-memory stop being enough and you have to do post-training (GRPO/DPO/PPO)? | OpenAI (post-training team), DeepSeek, Meta FAIR | DeepSeek-R1 showed RL works from scratch. But for agents specifically, the lift from RL vs memory is unmeasured. |
+| **Stable agentic RL on small models** — most agentic RL papers use 7-70B models; can a 4B-active-MoE (Gemma 26B-A4B-it) match 70B with the right architecture? | All compute-constrained labs | Anthropic Sonnet, Mistral, DeepSeek all want efficient agents. |
+
+### Tier 1 — MVA + cross-game ablation (6-8 weeks)
+
+Already planned (PRs 1-8 above). Lands in: arxiv preprint + NeurIPS Agents workshop. Conversation-starter, not landmark.
+
+### Tier 2 — extend to non-game tasks (4-6 additional weeks)
+
+The MVA framework only matters if it generalizes beyond games. Add `EnvAdapter` implementations for:
+
+- **[WebArena](https://webarena.dev/)** (Zhou et al. 2024, *ICLR*) — browser tasks
+- **[SWE-bench Verified](https://www.swebench.com/)** (Jimenez et al. 2024, *NeurIPS*) — code fix tasks
+- **[OSWorld](https://os-world.github.io/)** (Xie et al. 2024, *NeurIPS*) — desktop / OS-level tasks
+
+If the SAME Memory4 + Reflector reaches competitive scores on browser + code + games with NO task-specific scaffolds — **that's the cross-task generalization landmark**. The contrast with task-specific SOTA agents (Devin for SWE-bench, Operator for web) makes the comparison concrete.
+
+This is also where the **Self-Evolution Curve methodology** (open problem #1) becomes the publishable artifact. We define: run agent for N trials with no human reset, measure score-vs-trial. Publish leaderboards for every task using this protocol. Establish it as the standard for measuring agent learning rather than agent capability.
+
+### Tier 3 — the agentic-RL comparison (8-12 weeks, GPU-heavy)
+
+This is the move the user flagged as not-yet-explored, and it's the most differentiating. The current MVA is pure inference (frozen Gemma 26B served via vLLM). The natural alternative is **agentic RL / post-training**:
+
+- **[GRPO](https://arxiv.org/abs/2402.03300)** (Shao et al. 2024 — DeepSeekMath / DeepSeek-R1) — group-relative policy optimization, no value model needed
+- **[DPO](https://arxiv.org/abs/2305.18290)** (Rafailov et al. 2023, *NeurIPS*) and **[SimPO](https://arxiv.org/abs/2405.14734)** (Meng et al. 2024, *NeurIPS*) — preference pair learning from trajectories
+- **[Process Reward Models](https://arxiv.org/abs/2305.20050)** (Lightman et al. 2024, *ICLR*) — step-level rewards
+- **[Tülu 3](https://arxiv.org/abs/2411.15124)** (Lambert et al. 2024) — open-source RL post-training recipe
+
+We already have most of the GRPO infrastructure in this repo (see closed [Stage L GSPO work](../experiments/) — offline GSPO gradient loop in `train.py` via Unsloth, gspo_group.json sidecars, paired-rollouts harness). The missing piece is wiring it to MVA's collected trajectories.
+
+The **four-way comparison** at a fixed compute budget would be a landmark experiment:
+
+| arm | model | memory | description |
+|---|---|---|---|
+| A. Pure inference | Gemma 26B frozen | none (vanilla MACLA) | current orak baseline |
+| B. MVA only | Gemma 26B frozen | full Memory4 + Reflector | what PRs 1-8 produce |
+| C. GRPO only | Gemma 26B fine-tuned on trajectories | none | classic post-training |
+| D. MVA + GRPO | Gemma 26B fine-tuned | full Memory4 + Reflector | does memory + RL compound, substitute, or interfere? |
+
+**This is the experiment nobody has run rigorously.** The "memory vs RL" debate is folklore-level — Letta claims memory is enough, DeepSeek-R1 says RL is enough. A clean comparison with budget accounting (LLM calls, GPU hours, $ cost) settles it. Even a negative result ("MVA helps for free, GRPO doesn't compound") is publishable.
+
+### Tier 4 — Anthropic Pokemon as conversation-opener
+
+This is the most strategically targeted bet. **Anthropic's Claude-plays-Pokemon thread is the single most public agentic-LLM project right now**, and they have a public memory tool API + scaffolding. Three concrete moves:
+
+1. **Beat their public pokemon results with smaller scaffolding.** If MVA reaches Cerulean City (M11+) with our 26B model + auto-emerging skills (no hand-curated milestone library for the M5+ region), that's a direct conversation starter with Anthropic's agentic team. Their Claude 3.7 Sonnet with heavy scaffolding reached Cerulean — matching or beating with less scaffolding is a signal.
+
+2. **Publish the scaffold-effort frontier curve.** Plot: scaffold-LOC vs final-milestone-reached, for {our MVA, Claude Pokemon, Voyager-style, raw GPT-4}. This is the artifact Anthropic Research would cite.
+
+3. **Open-source the agent benchmark adapter.** Make it trivial for Anthropic / DeepMind / OpenAI to plug their own models into the same eval. Lowers the bar for their teams to use the work.
+
+### Tier 5 — tgaer as research infrastructure
+
+Repo split from orak → tgaer is mentioned above as a naming refresh. The strategic framing is bigger: **tgaer is the reference implementation of the MVA**. Other labs adopt it for their own work. We become the maintainer of the standard.
+
+What that requires:
+- Pluggable model backends (vLLM, Anthropic API, OpenAI API, Gemini, local)
+- Pluggable memory backends (in-process, Letta, mem0, custom)
+- Pluggable env adapters (gymnasium-compatible)
+- Documentation + examples to onboarding-in-a-day quality
+- One canonical benchmark suite (Self-Evolution Curve protocol applied to 6+ envs)
+
+If tgaer becomes the "what LangChain became for chains, but for evolving agents," that's the platform contribution.
+
+### Where this lands you
+
+Honest mapping of (deliverable → likely outcome):
+
+| deliverable | realistic outcome |
+|---|---|
+| Tier 1 alone | arxiv preprint, NeurIPS Agents workshop poster, conversation with one lab |
+| Tier 1 + 2 (cross-task) | NeurIPS / ICLR main conference paper, recruiter conversations |
+| Tier 1 + 2 + 3 (MVA × RL ablation) | landmark paper, direct outreach from frontier labs, RS/Member of Technical Staff offers credible |
+| Tier 1-3 + Anthropic Pokemon beat | conversation with Anthropic agentic team directly; the Pokemon thread is a public-facing recruiting funnel they openly use |
+| Tier 1-5 (open-source tgaer + standard benchmark) | platform-level recognition, multi-year frontier-lab trajectory |
+
+### Concrete near-term moves (next 2 weeks)
+
+If the goal is frontier-lab signaling specifically:
+
+1. **Ship PR 1 + measure on 3 games** (this week) — proof of work, blog-post-able
+2. **Draft a public writeup** of the MVA + the 8 candidate novel contributions — arxiv-style or Substack — this becomes the recruiter-facing artifact
+3. **Engage the Anthropic Pokemon thread publicly** — show our 26B-with-MVA progression, ask thoughtful questions about their memory tool design
+4. **Sketch the Self-Evolution Curve methodology** as a 2-page proposal — circulate to a couple of AI eval researchers for feedback
+5. **Don't try to do everything at once** — pick the Tier that matches the timeline you actually have, and execute that tier cleanly
+
+The trap to avoid: announcing the full Tier 5 vision and shipping only Tier 1. Better to ship Tier 2 fully and let the Tier 5 vision be visible in the README + design docs but unannounced.
+
 ## Cross-refs
 
 - Sister architecture doc: [`architecture.md`](architecture.md) (current per-game architecture as-shipped)
@@ -328,3 +430,4 @@ Separate from the research claims above, these are useful artifacts even if ever
 - 3-game MACLA findings: [`experiments/gemma/macla_findings.md`](experiments/gemma/macla_findings.md)
 - Stage S openevolve writeup: [`experiments/openevolve_milestones/v1.md`](experiments/openevolve_milestones/v1.md) (in `feat/openevolve-milestones-spike` branch)
 - Future repo target: https://github.com/charleneleong-ai/tgaer
+- Frontier-lab references: [Anthropic Claude plays Pokemon](https://www.anthropic.com/news/claude-plays-pokemon), [DeepMind SIMA](https://deepmind.google/discover/blog/sima-generalist-ai-agent-for-3d-virtual-environments/), [OpenAI Operator](https://openai.com/index/introducing-operator/), [DeepSeek-R1](https://github.com/deepseek-ai/DeepSeek-R1)
