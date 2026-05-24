@@ -395,7 +395,7 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                 self._last_critique = getattr(self, "_last_critique", "")
 
         # 1. Provide feedback on previous execution
-        update_info = self._provide_feedback(self._prev_state_str, cur_state_str)
+        update_info = self._provide_feedback(self._prev_state_str, cur_state_str, obs_image)
 
         # 2. Execute task using MACLA
         action, execution_result, memory_stats = self._execute_task(
