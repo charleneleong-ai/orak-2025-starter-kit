@@ -525,6 +525,39 @@ The orak → tgaer repo split (see [naming convention](#naming-convention-orak-v
 - Documentation + examples to onboarding-in-a-day quality
 - One canonical benchmark suite (Self-Evolution Curve protocol applied to 6+ envs)
 
+## Future angles to explore (post-Tier-5)
+
+Beyond the 8-PR TGAER + Tiers 1-5, exploratory directions worth flagging for future iteration. Ranked by strategic leverage (compound with current work × signal for RE-track roles × novelty after the 2026-05-24 audit).
+
+### Top 8 directions
+
+| # | angle | why it could matter |
+|---|---|---|
+| 1 | **MCP-native memory agent** | [Anthropic Skills](https://www.anthropic.com/news/agent-skills) + [Model Context Protocol](https://modelcontextprotocol.io/) are converging into the standard agent surface. TGAER could become the **reference open-source MCP-consumer with Memory4** — no clear claimant yet. Aligns 1:1 with Anthropic FDE role descriptions. |
+| 2 | **Cost/latency Pareto study at SLM scale** | Extend the budget-accounting claim from `$`-only to `(score, $, latency, GPU-hours)`. Frontier-lab eng teams care obsessively; few public studies cover this for agents. Pure measurement, no new architecture. |
+| 3 | **Adversarial robustness of skill libraries** | Reframe TGAER's success-rate floor (PR 2) + dominance-lock-in detection (claim #5) as **defenses** against [AgentPoison](https://huggingface.co/papers/2407.12784) / [SkillTrojan](https://huggingface.co/papers/2604.06811). Lands at safety-flavoured RE roles (Apollo, METR, AISI). |
+| 4 | **Continual learning across weeks/months on Orak** | Most agent benchmarks are one-shot or one-session. Run TGAER on Orak across N sessions over weeks — does the agent measurably improve? This is **the Self-Evolution Curve methodology** as a standalone paper-shaped output. |
+| 5 | **Vision-language TGAER** | Most agent work is text-only. Add VLM support (Pixtral, Llama-4-Scout, Qwen-VL) — directly applies to ARC-AGI-3 grids, [BALROG](https://github.com/balrog-ai/BALROG) VLM track, [OSWorld](https://github.com/xlang-ai/OSWorld) vision mode. Big surface, unclaimed at SLM scale. |
+| 6 | **Composable LLM routing (SLM ↔ frontier)** | TGAER as the orchestrator — uses SLM by default, escalates to frontier API model when needed. Cost-optimal hybrid is genuinely novel as a measured study. |
+| 7 | **Knowledge distillation from frontier traces** | Use Claude/GPT/Gemini to play Orak games via API, distill trajectories, train SLM on them. Hybrid of memory (their experience) + weight updates (your SFT). Connects RL track (Tier 3) to distillation literature. |
+| 8 | **TGAER for AI4Sci automation** | [Anthropic Asta](https://www.anthropic.com/news/anthropic-deepens-research-collaborations), [DeepMind GNoME](https://deepmind.google/discover/blog/millions-of-new-materials-discovered-with-deep-learning/), [Coscientist](https://www.nature.com/articles/s41586-023-06792-0). Long-horizon + checkable success = TGAER fit. Bigger pivot but very high TAM. |
+
+### Quick-fire honourable mentions
+
+- **Empirical study of pathology event ordering** — does futile-first vs loop-first detection matter? Small ablation if claim #2 survives
+- **Multi-agent TGAER extensions** — co-op or competitive play; connects to [CoMAS](https://huggingface.co/papers/2510.08529), [G-Memory](https://github.com/bingreeky/GMemory)
+- **Skill provenance + auditability** — trace each skill back to creating episodes; alignment angle
+- **Curriculum learning across games** — 2048 → mario → pokemon → starcraft, measure transfer
+- **Pure-LLM "from-scratch" baseline (no memory, no scaffold)** — absolute floor; small experiment, big rhetorical value
+
+### Recommended next-3 (if a fork in the road appears)
+
+Picked to compound with current work + maximise RE-track signalling + maintain SLM/A100-40GB constraint:
+
+1. **#1 MCP-native memory agent** — directly maps to Anthropic FDE postings, low extra code
+2. **#4 Continual learning across sessions on Orak** — gives the Self-Evolution Curve a real data anchor, no new infra
+3. **#3 Adversarial robustness reframing** — opens AISI/Apollo/METR roles (UK/remote-friendly per geo constraint)
+
 ## Efficient frontier — what helps with what?
 
 The deeper question behind the TGAER work: **for generalizable self-evolving agents across many mediums (games, web, code, science, robotics), what's the most compute- and effort-efficient capability-lift mechanism at each task class?** The dominant lever shifts as you move along the task spectrum. This section maps the landscape honestly.
