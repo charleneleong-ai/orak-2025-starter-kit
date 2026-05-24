@@ -119,10 +119,11 @@ class ConfigSuccessDetector:
                 is_fatal = True
 
         strong_success = False
-        prev_score = self._extract_int(self.score_pattern, prev_state) or 0
-        cur_score = self._extract_int(self.score_pattern, cur_state) or 0
-        if cur_score > prev_score:
-            strong_success = True
+        if self.score_pattern:
+            prev_score = self._extract_int(self.score_pattern, prev_state) or 0
+            cur_score = self._extract_int(self.score_pattern, cur_state) or 0
+            if cur_score > prev_score:
+                strong_success = True
 
         if self.progress_pattern:
             prev_pos = self._extract_float(self.progress_pattern, prev_state) or 0
