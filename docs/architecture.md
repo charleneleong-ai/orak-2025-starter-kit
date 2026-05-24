@@ -29,6 +29,50 @@ Observation  ──>  Subtask planner (D)  ──>  Vector memory (C)  ──>  
    └──────────────────────────────────  Game env (PyBoy + pokered)
 ```
 
+## Successor architecture (MVA — in build, PR 1 in flight)
+
+The architecture above is per-game scaffold-heavy (`_POKEMON_MILESTONE_LIBRARY`, `NavigateToMap` bridges, `map_graph_hint`, exit-tile hints) — it works for pokemon but mario and 2048 have no equivalent scaffolds, and future games would need fresh hand-curation each time. The cross-game baseline analysis (2026-05-23) surfaced shared pathologies — procedure-cache poisoning (mario), MACLA dominance lock-in (2048), futile-action loops (all three games) — that are universal, not pokemon-specific. The Memory4 + Reflector MVA replaces the per-game scaffold with a **task-agnostic, self-evolving five-layer stack**:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  L5  Reflector                                          │
+│      Post-episode + post-stagnation LLM self-critique   │
+│      → updates planner prompt, prunes/extends Memory4   │
+├─────────────────────────────────────────────────────────┤
+│  L4  Planner (LLM)                                      │
+│      goal + obs + Memory4 retrievals → action / subgoal │
+├─────────────────────────────────────────────────────────┤
+│  L3  Universal pathology guards                         │
+│      futile, loop, stagnation, regression detectors     │
+│      → mutate planner prompt; emit events to Reflector  │
+├─────────────────────────────────────────────────────────┤
+│  L2  Memory4                                            │
+│      ┌─ Episodic   — raw traces, retrievable by obs-sim │
+│      ├─ Procedural — skills, gated by success-rate      │
+│      ├─ Semantic   — rules / invariants from reflector  │
+│      └─ Self-model — capability map, updated per task   │
+├─────────────────────────────────────────────────────────┤
+│  L1  GameAdapter (will become EnvAdapter + Task)        │
+│      obs(), actions(), step(), score(), goal_string()   │
+└─────────────────────────────────────────────────────────┘
+```
+
+| Layer | Source / target | Status |
+|---|---|---|
+| **L1** GameAdapter | `evaluation_utils/mcp_game_servers/{pokemon_red,super_mario,twenty_fourty_eight,star_craft}` | ✅ ~70% there — per-game env servers exist; missing unified `Protocol` + `goal_string()` |
+| **L2.Procedural** SkillLibrary | `agents/macla/macla_lib.py:325` `EnhancedHierarchicalMemorySystem` | partial — kept as bootstrap, needs success-rate gate (PR 2) + stagnation→demote (PR 3) + ep-end pruning (PR 5) |
+| **L2.Episodic** | `game_states.jsonl` is written but not retrievable | ❌ new (PR 6, ~200 lines) — embedding index + obs-sim retrieval |
+| **L2.Semantic** | — | ❌ new (PR 7, part of reflector) — rules written by Reflector |
+| **L2.Self-model** | — | ❌ new (PR 8, ~100 lines) — capability map |
+| **L3** Pathology guards | pokemon-specific hints in `unified.py:_base_fallback` (`map_graph_hint`, `looped_positions_hint`, `subgoal escape valve`) | partial — need to generalize; **PR 1 (futile-action detector) in flight @ `feat/futile-action-detector` `176f68c`** |
+| **L4** Planner | `agents/macla/unified.py:_base_fallback` | ✅ already LLM-based; refactor parameterizes `requires_location` (today pokemon-only) |
+| **L5** Reflector | `record_episode_end` stub at `unified.py:775` | ❌ new (PR 7, ~250 lines) — post-episode LLM critique → memory updates |
+| Telemetry | wandb + weave + `evaluation_summary.json` | ✅ kept; extended with `agent_events.jsonl` (PR 4) |
+
+**Net new code:** ~1500 lines + ~500 lines refactor across 8 PRs. Cross-game regression test corpus uses the pokemon v3 (6/7) / mario (21.85% best / 9.04% mean) / 2048 (64% best / 45% mean) baselines from 2026-05-23. Naming caveat: we keep `GameAdapter` / `MilestoneSpec` / `procedure` in orak; the `EnvAdapter` + `Task` + `SkillSpec` + `Skill` renames happen at port time to the new repo at https://github.com/charleneleong-ai/tgaer.
+
+For full details — staged PR plan, have-vs-need by layer with file:line references, expected per-game signal — see [`generalized-agent-mva.md`](generalized-agent-mva.md).
+
 | Layer | Source | Role | Status |
 |---|---|---|---|
 | Agent shell | `agents/macla/unified.py` (`UnifiedMaclaAgent`) | Orchestrates planner + memory + procedures + reflection | ✅ Net-positive across all 3 games |
