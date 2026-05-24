@@ -241,8 +241,8 @@ The MVA is not novel architecture — it's a specific stack of patterns that hav
 
 ### Layer 1 — Env + Task split
 
-- **[Gymnasium](https://gymnasium.farama.org/)** (Farama, formerly OpenAI Gym) — the canonical `reset / step / observation_space / action_space` interface. Our `GameAdapter` is gymnasium-shaped.
-- **[DeepMind dm_env](https://github.com/google-deepmind/dm_env)** — TimeStep abstraction that decouples env transitions from agent control loop. Influences our `StepResult` shape.
+- **[Gymnasium](https://gymnasium.farama.org/)** (Farama Foundation, 2022 — fork/successor of OpenAI Gym, Brockman et al. 2016) — the canonical `reset / step / observation_space / action_space` interface. Our `GameAdapter` is gymnasium-shaped.
+- **[DeepMind dm_env](https://github.com/google-deepmind/dm_env)** (Muldal et al., 2019) — TimeStep abstraction that decouples env transitions from agent control loop. Influences our `StepResult` shape.
 - **[MetaWorld](https://meta-world.github.io/)** (Yu et al. 2019, *CoRL*) — pioneered the env-vs-task separation: one robot arm env hosts 50 manipulation tasks. Our `EnvAdapter` + `Task` split is the same.
 - **[BabyAI](https://github.com/mila-iqia/babyai)** (Chevalier-Boisvert et al. 2019, *ICLR*) — language-conditioned task hierarchy with `Mission` strings. Inspired `goal_string()` as a first-class adapter method.
 
@@ -266,24 +266,24 @@ The four-store split (episodic / procedural / semantic / self-model) follows the
 
 ### Layer 4 — Planner
 
-- **[ReAct](https://arxiv.org/abs/2210.03629)** again — base loop shape
+- **[ReAct](https://arxiv.org/abs/2210.03629)** (Yao et al. 2022) — base loop shape (referenced above)
 - **[Plan-and-Solve](https://arxiv.org/abs/2305.04091)** (Wang et al. 2023, *ACL*) — decompose first, then act. Influences the subgoal decomposition currently in `MilestoneSpec`.
 - **[Tree of Thoughts](https://arxiv.org/abs/2305.10601)** (Yao et al. 2023, *NeurIPS*) — lookahead via LLM-imagined branches. Maps to optional L4 enhancement once Memory4 is stable.
-- **MACLA** — orak's existing `UnifiedMaclaAgent` in [`agents/macla/unified.py`](../agents/macla/unified.py) IS the L4 planner, kept and refactored rather than replaced.
+- **MACLA** (orak, 2026 — Memory-Augmented Contextual Learning Agent) — orak's existing `UnifiedMaclaAgent` in [`agents/macla/unified.py`](../agents/macla/unified.py) IS the L4 planner, kept and refactored rather than replaced.
 
 ### Layer 5 — Reflector
 
-- **[Reflexion](https://arxiv.org/abs/2303.11366)** — post-episode verbal critique, again. The canonical pattern for L5.
+- **[Reflexion](https://arxiv.org/abs/2303.11366)** (Shinn et al. 2023) — post-episode verbal critique. The canonical pattern for L5.
 - **[GEPA](https://arxiv.org/abs/2507.19457)** (Agrawal et al. 2025) — Genetic-Pareto reflective prompt optimization; the right tool when the prompt itself is the surface to evolve. Slots into L5 as the prompt-evolution component.
 - **[Self-Refine](https://arxiv.org/abs/2303.17651)** (Madaan et al. 2023, *NeurIPS*) — iterative critique-refine loop; precursor to Reflexion.
 - **[STaR](https://arxiv.org/abs/2203.14465)** (Zelikman et al. 2022, *NeurIPS*) — self-taught reasoner; on-policy improvement via rationale generation. Conceptual basis for "reflector writes new skills/rules from successful trajectories."
-- **[ExpeL](https://arxiv.org/abs/2308.10144)** again — its insight-extraction step IS Reflector → L2.Semantic.
+- **[ExpeL](https://arxiv.org/abs/2308.10144)** (Zhao et al. 2023) — its insight-extraction step IS Reflector → L2.Semantic.
 
 ### Cross-cutting
 
-- **Auto-skill writing**: [Voyager](https://voyager.minedojo.org/), [Eureka](https://eureka-research.github.io/) (Ma et al. 2023, *ICLR* — LLM as reward designer/skill author), [SWE-agent](https://swe-agent.com/) (Yang et al. 2024, *NeurIPS*)
-- **Telemetry / event streams**: [LangSmith](https://docs.smith.langchain.com/), [Weave](https://weave-docs.wandb.ai/) — orak already uses both
-- **Sweep orchestration / regression corpus**: [`experiments/autoresearch.py`](../experiments/autoresearch.py) (orak's own) — kept as the harness around the new arch
+- **Auto-skill writing**: [Voyager](https://voyager.minedojo.org/) (Wang et al. 2023), [Eureka](https://eureka-research.github.io/) (Ma et al. 2023, *ICLR* — LLM as reward designer/skill author), [SWE-agent](https://swe-agent.com/) (Yang et al. 2024, *NeurIPS*)
+- **Telemetry / event streams**: [LangSmith](https://docs.smith.langchain.com/) (LangChain, 2023), [Weave](https://weave-docs.wandb.ai/) (W&B, 2024) — orak already uses both
+- **Sweep orchestration / regression corpus**: [`experiments/autoresearch.py`](../experiments/autoresearch.py) (orak's own, 2026) — kept as the harness around the new arch
 
 ### What we are NOT claiming as novel
 
@@ -293,12 +293,33 @@ The four-store split (episodic / procedural / semantic / self-model) follows the
 - Verbal self-critique — Reflexion + Self-Refine
 - Prompt evolution — GEPA + OPRO
 
-### What IS the contribution
+### What IS (potentially) novel
 
-- **Cross-game generalization stress test** — pokemon (long-horizon nav), mario (short episodic platformer), 2048 (deterministic puzzle), planned: starcraft (RTS) — same agent, no per-game scaffolds
-- **The four pathology guards as a unified L3** — most prior work fixes one symptom at a time; we're treating them as a single layer with a shared event protocol that feeds Reflector
-- **Empirical study of what bootstraps vs what auto-emerges** — pokemon's hand-curated milestone library is the *bootstrap*, mario/2048 are the *cold start* — the contrast lets us measure how much scaffold is actually needed
-- **Naming + repo split** — orak (validated patterns) → tgaer (clean abstractions): the architecture becomes portable infrastructure, not a research artifact
+Each item below is a research-level claim we are uniquely positioned to make given the cross-game test bed + the layered MVA + the bootstrap-vs-cold-start framing. None of these have published treatments to our knowledge — flagging them so we know which experiments to design and report.
+
+1. **The bootstrap-vs-auto-emergence efficient frontier.** *How much hand-curated scaffold does an auto-extending agent actually need to bootstrap?* We have three games on a clean spectrum: pokemon (heavy hand-curated milestone library), mario (cold start, no scaffold), 2048 (cold start). If Reflector + Memory4 alone takes mario from baseline 9.04% → 18%+ without per-game scaffolding, that quantifies the auto-emergence rate. The frontier (scaffold-effort × performance) is, to our knowledge, unmeasured anywhere.
+
+2. **Universal pathology event protocol.** Prior work fixes pathologies one at a time — ReAct addresses no-op feedback (futile), LATS handles loops, Reflexion treats stagnation, Self-Refine catches regression. **Unifying them as a single typed event stream feeding one Reflector** — and showing that the Reflector can route on event-type to the right Memory4 store (futile → skill demotion, loop → semantic rule, stagnation → prompt edit, regression → episodic re-retrieval) — is a structural claim we can test cleanly.
+
+3. **Game-shape-invariant Memory4.** Voyager validated skill-library on Minecraft (long, exploratory, voxel). Generative Agents on social sim. Reflexion on AlfWorld + HotpotQA. **No prior work has tested the same Memory4 design simultaneously on**: long-horizon RPG (pokemon, 1200+ steps, sparse rewards) + short-episodic platformer (mario, ~16 calls/episode) + deterministic puzzle (2048) + RTS (starcraft). If the same four stores work across all four with no game-specific code, that's a strong invariance claim.
+
+4. **Procedure-cache hygiene as a phase transition.** Our 2026-05-23 traces document an exact failure shape: mario goes 4 successful episodes → 58 instant-death episodes after one bad procedure dominates selection. Measuring **how the success-rate floor (PR 2) shifts this phase transition** — at what gate threshold does the agent recover, how many episodes of damage before recovery, does the threshold depend on episode length — would be a clean empirical paper on its own.
+
+5. **The dominance-lock-in metric.** 2048 baseline showed 84% of decisions came from 1 of 4 procedures (`proc_697567 = 841/999`). We can define a Gini-style coefficient on procedure-selection distribution and **track it across architectures (with vs without PR 2, PR 3, PR 5).** If it correlates with ceiling score across all 3 games, that's a portable diagnostic anyone in the space can use.
+
+6. **Cross-game semantic transfer.** If the Reflector writes "futile actions waste budget" into the Semantic store while playing mario, does retrieval surface it during pokemon? **Through L2.Semantic, yes — and we can ablate this directly.** Episodic-only vs Semantic-only vs full-Memory4 on the held-out third game. Cross-game LLM-mediated transfer without weight updates is, again, unmeasured.
+
+7. **Self-evolution without weight updates, with budget accounting.** Many papers claim self-improvement but conflate it with fine-tuning. **A rigorous study with the budget made explicit** — (a) LLM call cost per Reflector run, (b) skill-library growth rate, (c) score lift per dollar — would establish whether memory-only self-evolution is parameter-efficient relative to RLHF/DPO. Especially powerful given our model is frozen at vLLM (no fine-tuning possible by construction).
+
+8. **The Reflector → Memory4 write schema.** The Reflector emits four distinct write types (Skill code, Rule string, Prompt patch, Self-model delta). **Quantifying which write-type contributes most to downstream lift** — by ablating each output channel — gives the field a concrete recipe for which Reflector outputs are worth implementing first.
+
+### Engineering contributions
+
+Separate from the research claims above, these are useful artifacts even if every research result above turns out negative:
+
+- **Naming + repo split** — orak (validated patterns) → tgaer (clean abstractions): the architecture becomes portable infrastructure that other agent-research projects can adopt, not a one-off research artifact
+- **Cross-game regression corpus on wandb** — pokemon (1200 / 2000) + mario (1000) + 2048 (1000) baselines as fixed reference points; any future agent change can be diff'd against these in one click
+- **The pathology-event JSONL stream** (PR 4) — a stable telemetry format that survives architecture rewrites; lets others post-hoc analyze trajectories without re-running the LLM
 
 ## Cross-refs
 
