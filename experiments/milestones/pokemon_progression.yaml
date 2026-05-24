@@ -204,3 +204,54 @@ milestones:
         mean: 65.71
         std: 7.83
         scores: [57.14, 71.43, 57.14, 71.43, 71.43]
+  - label: "OpenEvolve v1"
+    description: "scaffold-mutation sweep @ 300 steps — 9 valid candidates, all scored 4/7 in Route1 (mutations couldn't beat baseline)"
+    verdict: FLAT
+    n: 9
+    metrics:
+      # Source: PR #105 / docs/experiments/openevolve_milestones/v1.md
+      # All 9 valid candidates banked identical 57.14% with zero variance.
+      # 4 iters errored at the Gemini diff-format stage (excluded from n).
+      evaluation_score:
+        mean: 57.14
+        std: 0.0
+        scores: [57.14, 57.14, 57.14, 57.14, 57.14, 57.14, 57.14, 57.14, 57.14]
+  - label: "OpenEvolve v2"
+    description: "scaffold-mutation sweep @ 600 steps — 6 valid candidates (3 timeouts/crashes excluded), best=5/7 matched time-adjusted baseline"
+    verdict: "NEUTRAL+"
+    n: 6
+    metrics:
+      # Source: PR #105 / docs/experiments/openevolve_milestones/v1.md
+      # 4 candidates tied 5/7 (71.43%), 2 regressed to 4/7 (57.14%).
+      # 3 iters (3, 7, 8) excluded: 2h timeouts + syntax/runtime crash.
+      # Best == time-adjusted baseline → mutation didn't help.
+      evaluation_score:
+        mean: 66.67
+        std: 7.38
+        scores: [71.43, 71.43, 71.43, 71.43, 57.14, 57.14]
+  - label: "v3 single (1200)"
+    description: "single baseline rollout @ 1200 steps — reached ViridianMart (M6), picked up Oak's Parcel"
+    verdict: KEEP
+    n: 1
+    metrics:
+      # Source: experiments/openevolve_milestones/v1.md §"v3 — 1200-step step-budget probe"
+      # First pokemon run ever to break 5/7 ceiling. Step budget was the
+      # M6 lever. Run cost ~177min single rollout, no mutations.
+      evaluation_score:
+        mean: 85.71
+        std: 0.0
+        scores: [85.71]
+  - label: "v4 single (2000)"
+    description: "single baseline rollout @ 2000 steps — REGRESSED to 5/7, agent looped in ViridianCity (variance demonstrated)"
+    verdict: MIXED
+    n: 1
+    metrics:
+      # Source: experiments/openevolve_milestones/v1.md §"v4 — 2000-step extension probe"
+      # Despite 800 more steps than v3, scored 5/7 — agent spent most of
+      # run looping in ViridianCity escape-valve mode. Confirms variance
+      # is real and "each doubling buys one milestone" is a noisy
+      # heuristic, not a deterministic law.
+      evaluation_score:
+        mean: 71.43
+        std: 0.0
+        scores: [71.43]
