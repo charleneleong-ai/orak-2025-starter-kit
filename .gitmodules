@@ -1,0 +1,3 @@
+[submodule "evaluation_utils/mcp_game_servers/pokemon_red/game/pokered"]
+	path = evaluation_utils/mcp_game_servers/pokemon_red/game/pokered
+	url = https://github.com/pret/pokered.git
