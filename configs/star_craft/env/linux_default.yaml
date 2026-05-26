@@ -18,4 +18,4 @@ query_interval: 10
 num_summaries: 1
 num_actions: 5
 max_episodes: 10
-max_steps: 1000
+max_steps: 2500
