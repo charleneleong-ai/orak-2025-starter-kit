@@ -1,6 +1,6 @@
 # TGAER PR1 — universal futile-action detector × 4 games (n=3 each)
 
-**Verdict:** **NO LIFT.** The detector is flat-to-mildly-negative on 3/4 games and never fires on the 4th (StarCraft). Aggregate Δ ≈ −1pp across mario/2048/pokemon; SC2 stays at the 0.0 floor with all 30 episodes Defeat. Detector is safe to ship as a no-op signal but should not be sold as a lift mechanism.
+**Verdict:** **NO LIFT.** The detector is flat-to-mildly-negative on 3/4 games and structurally blind on the 4th. Root cause across 2 of the 4 games (super_mario, star_craft): their obs strings carry continuously-ticking fields (Time, Minerals, Game time…) that break byte-equality on every frame, so K=3 streaks never form even when the agent is genuinely stuck. Detector is safe to ship as a no-op floor but should not be sold as a lift mechanism — the lift hypothesis moves to PR2 (action-side `_detect_repeated_plan`).
 
 ## Hypothesis
 
@@ -39,15 +39,22 @@ Forest plot — Δ = detector − baseline, per game, with ≈95% CI. Verdict re
 
 **Pokemon detail:** Detector n=2 (heal2, May 24) scored **2.0** — far below the n=1/n=3 cluster at 5–6. Rerun on 2026-05-26 scored **6.0** ([run](../../../../../tree/feat/futile-action-detector/game_logs/pokemon_red)), confirming the 2.0 was stochastic LLM-sampling noise, not a reproducible detector regression. The mean with the outlier included is 4.75; excluding it, 5.67 — exact parity with baseline.
 
-## Failure mode — StarCraft floor
+## Failure mode — ticking-obs floor (2/4 games)
 
-The detector **never fires on StarCraft**. Verified by replaying `_detect_futile_action(K=3)` over the `game_states.jsonl` of an SC2 rollout (2371 iterations across 10 episodes): 0 consecutive byte-identical observation triples. Reason — SC2 observation strings contain continuously-ticking fields (`Game time`, `Minerals`, `Supply`) that increment every frame, so byte-equality is never reached even when the agent is supply-blocked and looping `TRAIN PROBE × 5` indefinitely.
+The detector is blind on **half the games we tested** for the same root reason: their observation strings carry **continuously-ticking fields** that flip a byte on every frame, so consecutive K=3 obs are never byte-identical even when the agent is genuinely stuck.
 
-This is **not a bug in the detector**; it's a limitation of byte-equality as the trigger heuristic for environments whose obs is dominated by free-running counters. A retrospective replay of an action-side variant (`_detect_repeated_plan(K=4)` — hash the chosen action plan, not the obs) fires 615× across the same 2371 iters (127 distinct streaks, 13 nudge moments per episode). That's the PR2 design.
+| Game | Ticking field(s) | Fire rate (per 1000 calls) | Effect |
+|---|---|---|---|
+| star_craft | `Game time`, `Minerals`, `Supply` | **0 / 1000 (0.0%)** | detector never fires; verified 0 byte-identical triples in 2371 iters across 10 eps |
+| super_mario | `Time:` (counts down every frame), `x_pos` | **9–13 / 1000 (~1%)** | detector fires only by accident — when LLM call timing happens to land between time-ticks |
+| pokemon_red | (mostly discrete; map/coords) | many fires (overworld lock-ups) | detector fires; planner's `warp` action breaks the streak immediately |
+| twenty_fourty_eight | (fully discrete) | fires on invalid moves | the +1.01 Δ is plausibly this, but within noise |
 
-## Why the other games didn't lift
+This is **not a bug in the detector**; it's a limitation of byte-equality as the trigger heuristic for any environment whose obs is dominated by free-running counters. The fact that 2 of our 4 games hit this floor is the strongest argument for PR2 — an **action-side** sibling (`_detect_repeated_plan(K=4)`) that hashes the chosen action plan, not the obs. Retrospective replay on the same SC2 trace fires **615×** across 2371 iters (127 distinct streaks, ~13 nudge moments per episode). That hashing dimension bypasses ticking-obs fields entirely.
 
-The detector *does* fire on pokemon/mario/2048, but the planner's hint-driven reaction doesn't unstick the agent in expected value. On pokemon the agent loops between OaksLab and PalletTown via `warp` (which DOES change obs — the detector resets every transition), so the streaks short-circuit. On mario the obs ticks via the player position float, similar to SC2. On 2048 the obs is fully discrete and the detector fires when the agent picks invalid moves — and the +1pp Δ may be that effect, but it's within noise.
+## Why the games where it DID fire still didn't lift
+
+On pokemon the agent loops between OaksLab and PalletTown via `warp` — which DOES change obs, so the streaks short-circuit before K=3 fires. On 2048 the detector fires when the agent picks invalid moves and the planner gets the hint, but the +1pp Δ is within noise so we can't claim a causal lift.
 
 ## Verdict
 
