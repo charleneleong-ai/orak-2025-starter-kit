@@ -1,4 +1,4 @@
-# TGAER PR1 — universal futile-action detector × 4 games (n=3 each)
+# Universal futile-action detector × 4 games (n=3 each)
 
 **Verdict:** **NO LIFT.** The detector is flat-to-mildly-negative on 3/4 games and structurally blind on the 4th. Root cause across 2 of the 4 games (super_mario, star_craft): their obs strings carry continuously-ticking fields (Time, Minerals, Game time…) that break byte-equality on every frame, so K=3 streaks never form even when the agent is genuinely stuck. Detector is safe to ship as a no-op floor but should not be sold as a lift mechanism — the lift hypothesis moves to PR2 (action-side `_detect_repeated_plan`).
 
@@ -10,7 +10,7 @@ A universal pathology guard — "if the last K=3 observations are byte-identical
 
 Single hook in [`agents/macla/unified.py`](../../../agents/macla/unified.py) — `_detect_futile_action` ([L567-597](../../../agents/macla/unified.py#L567-L597)) — runs before the LLM call. Hashes raw `observation` strings (pre-hint), maintains a `deque(maxlen=3)`, fires when all three match. The hint is prepended to the planner prompt as `[Futile-action notice]`.
 
-Commit: [`7b1b69a feat(macla): universal futile-action detector (PR 1 of MVA harness)`](../../../../../commit/7b1b69a).
+Commit: [`68cfc2e feat(macla): universal futile-action detector (PR 1 of MVA harness)`](../../../../../commit/68cfc2e).
 
 ## Schedule
 
@@ -21,8 +21,8 @@ Commit: [`7b1b69a feat(macla): universal futile-action detector (PR 1 of MVA har
 | Inference budget | 1000 calls (pokemon: 1200), per game-specific `MAX_STEPS` |
 | Reps | n=3 per (side, game) — 24 rolls total |
 | SC2 episodes | 10 per roll (full Protoss vs Hard Zerg on Flat64) |
-| Launcher | [`configs/schedules/tgaer_pr1.yaml`](../../../configs/schedules/tgaer_pr1.yaml) via `autoresearch-parallel-batch` (v0.28.0) |
-| Bridge (legacy reconcile) | [`scripts/tgaer_results_bridge.py`](../../../scripts/tgaer_results_bridge.py) → `experiments/tgaer_pr1_{baseline,detector}/results.jsonl` |
+| Launcher | [`configs/schedules/futile_detector.yaml`](../../../configs/schedules/futile_detector.yaml) via `autoresearch-parallel-batch` (v0.28.0) |
+| Results | [`experiments/futile_baseline/results.jsonl`](../../../experiments/futile_baseline/results.jsonl) + [`experiments/futile_detector/results.jsonl`](../../../experiments/futile_detector/results.jsonl) |
 
 ## Results
 
@@ -64,4 +64,4 @@ On pokemon the agent loops between OaksLab and PalletTown via `warp` — which D
 
 - **PR2 — `_detect_repeated_plan(K=4)`** ([L567 sibling](../../../agents/macla/unified.py#L567-L597)). Universal action-side detector. Retrospective replay on SC2 trace: 127 distinct streaks, 13 nudge moments/episode at K=4. Expected lift on SC2 + pokemon ping-pong loops.
 - **SC2 max_steps bump** 1000 → 2500 ([this PR](../../../configs/star_craft/env/linux_default.yaml)). At 1000 calls the agent rarely escapes the early-game supply trap; 2500 gives Stage D Protoss enough rope to reach a tech transition without changing the detector behavior.
-- **Re-bridge cadence.** [`scripts/tgaer_results_bridge.py`](../../../scripts/tgaer_results_bridge.py) is idempotent; today's rerun landed the missing n=2 detector cell cleanly. Re-run anytime new rolls drop in `game_logs/`.
+- **Future sweeps.** Re-run `autoresearch-parallel-batch configs/schedules/futile_detector.yaml` — `parallel_batch`'s completion-check appends to `results.jsonl` directly via `log_experiment`. No bridge script needed.

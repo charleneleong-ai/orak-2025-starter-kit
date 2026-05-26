@@ -1,6 +1,6 @@
-"""Render TGAER PR1 cross-game Δ-forest plot.
+"""Render cross-game Δ-forest plot for the futile-action detector PR.
 
-Loads results from `experiments/tgaer_pr1_{baseline,detector}/results.jsonl`,
+Loads results from `experiments/futile_{baseline,detector}/results.jsonl`,
 computes per-game Δ (detector_mean − baseline_mean) with std-of-difference,
 and renders a forest plot where each game is one row and the verdict reads
 directly off whether the CI band crosses Δ=0. Output:
@@ -50,8 +50,8 @@ def std_of_diff(b: list[float], d: list[float]) -> float:
 
 
 def main() -> None:
-    base = load("tgaer_pr1_baseline")
-    det = load("tgaer_pr1_detector")
+    base = load("futile_baseline")
+    det = load("futile_detector")
 
     rows = []
     for g in GAME_ORDER:
@@ -84,7 +84,7 @@ def main() -> None:
     ax.invert_yaxis()
     ax.set_xlabel("Δ score  (detector − baseline)")
     ax.set_title(
-        "TGAER PR1 — futile-action detector cross-game lift (n=3 per cell)\n"
+        "Futile-action detector — cross-game lift (n=3 per cell)\n"
         "All four CIs touch Δ=0 → no measurable lift; ship as safety floor."
     )
 
