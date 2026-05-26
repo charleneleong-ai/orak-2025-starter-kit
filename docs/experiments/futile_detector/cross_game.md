@@ -26,7 +26,9 @@ Commit: [`7b1b69a feat(macla): universal futile-action detector (PR 1 of MVA har
 
 ## Results
 
-![cross_game_lift](../../../experiments/progress/tgaer_pr1/cross_game_lift.png?raw=true)
+![cross_game_lift](../../../experiments/progress/futile_detector/cross_game_lift.png?raw=true)
+
+Forest plot — Δ = detector − baseline, per game, with ≈95% CI. Verdict reads off the visual: all four CIs cross Δ=0.
 
 | Game | Baseline (mean ± std, n=3) | Detector (mean ± std, n) | Δ |
 |---|---|---|---|
