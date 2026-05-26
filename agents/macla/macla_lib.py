@@ -173,7 +173,6 @@ class ContrastiveContext:
     preconditions_image: Any = None
     postconditions_image: Any = None
     fatal: bool = False
-    observation: str = ""
     # Stage M: did this execution move the salient game state forward?
     # True/False when salient extraction succeeded on both init and term;
     # None when the observation lacked structured key:value lines (e.g.
@@ -1377,45 +1376,6 @@ class MetaProceduralLearner:
 
 
 # =========================================================
-# LLM REASONER
-# =========================================================
-class FrozenLLMReasoner:
-    def __init__(self, generator: Any):
-        """
-        Args:
-            generator: A callable that takes a prompt string and returns a response string.
-                       OR an object with an 'invoke' method (LangChain style).
-        """
-        self.generator = generator
-
-    def _generate(self, prompt: str) -> str:
-        try:
-            if callable(self.generator):
-                return self.generator(prompt)
-            elif hasattr(self.generator, "invoke"):
-                from langchain_core.messages import HumanMessage
-
-                response = self.generator.invoke([HumanMessage(content=prompt)])
-                return response.content if hasattr(response, "content") else str(response)
-            else:
-                logger.warning(
-                    "FrozenLLMReasoner: generator is neither callable nor has invoke method."
-                )
-                return ""
-        except Exception as e:
-            logger.error(f"LLM generation failed: {e}")
-            return ""
-
-    def discover_goal(self, task: str, actions: str, obs_init: str, obs_final: str) -> str:
-        prompt = (
-            "Infer the high-level intent of this episode as a short noun phrase. "
-            'Return JSON: {"goal": "..."}\n'
-            f"TASK: {task}\nACTIONS: {actions}\nINIT_OBS: {obs_init}\nFINAL_OBS: {obs_final}"
-        )
-        return self._generate(prompt)
-
-
-# =========================================================
 # ENHANCED MACLA AGENT
 # =========================================================
 class EnhancedMACLAAgent:
@@ -2039,7 +1999,6 @@ class EnhancedMACLAAgent:
 class LLMMACLAAgent(EnhancedMACLAAgent):
     def __init__(
         self,
-        generator: Any,
         fallback_generator: Any | None = None,
         N_a=1000,
         N_s=100,
@@ -2064,9 +2023,7 @@ class LLMMACLAAgent(EnhancedMACLAAgent):
             refinement_config=refinement_config,
             use_procedure_layer=use_procedure_layer,
         )
-        self.llm = FrozenLLMReasoner(generator)
         self.fallback_generator = fallback_generator
-        self.llm_calls = {"goal_discovery": 0}
 
     def _generate_fallback_actions(
         self, goal: str, observation: str, **kwargs
