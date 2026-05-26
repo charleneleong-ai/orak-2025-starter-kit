@@ -1,0 +1,103 @@
+# Universal futile-action detector — baseline vs detector, n=3 across 4 games.
+#
+# Run with:
+#   autoresearch-parallel-batch configs/schedules/futile_detector.yaml
+#
+# Each slot launches `run.py` from the side's worktree (baseline =
+# orak-master-baselines, detector = orak-futile-detector). The completion check
+# polls `game_logs/<game>/futile_<side>_<game>_*` for an `evaluation_summary.json`
+# and forwards (score, run_id, evaluation_summary) to log_experiment, landing
+# rows in `experiments/futile_{baseline,detector}/results.jsonl`.
+
+experiments_dir: /workspace/orak-futile-detector/experiments
+max_parallel: 12
+max_attempts_per_run: 4
+poll_interval_s: 60
+launch_stagger_s: 45
+
+_anchors:
+  cmd_gemma: &cmd_gemma
+    - ./.venv/bin/python
+    - run.py
+    - -c
+    - gemma_26b
+    - --local
+    - --games
+  completion_summary: &completion_summary
+    file: evaluation_summary.json
+    score_keys: [mean_score, evaluation_score, score]
+
+slots:
+  # ── BASELINE (no detector) — /workspace/orak-master-baselines ───────────
+  - label: baseline_pokemon_red
+    tag: futile_baseline
+    game: pokemon_red
+    n_runs: 3
+    cwd: /workspace/orak-master-baselines
+    log_dir: /workspace/orak-master-baselines/logs
+    command: [*cmd_gemma, pokemon_red]
+    completion: {<<: *completion_summary, glob: "game_logs/pokemon_red/futile_baseline_pokemon_red_*"}
+
+  - label: baseline_super_mario
+    tag: futile_baseline
+    game: super_mario
+    n_runs: 3
+    cwd: /workspace/orak-master-baselines
+    log_dir: /workspace/orak-master-baselines/logs
+    command: [*cmd_gemma, super_mario]
+    completion: {<<: *completion_summary, glob: "game_logs/super_mario/futile_baseline_super_mario_*"}
+
+  - label: baseline_twenty_fourty_eight
+    tag: futile_baseline
+    game: twenty_fourty_eight
+    n_runs: 3
+    cwd: /workspace/orak-master-baselines
+    log_dir: /workspace/orak-master-baselines/logs
+    command: [*cmd_gemma, twenty_fourty_eight]
+    completion: {<<: *completion_summary, glob: "game_logs/twenty_fourty_eight/futile_baseline_twenty_fourty_eight_*"}
+
+  - label: baseline_star_craft
+    tag: futile_baseline
+    game: star_craft
+    n_runs: 3
+    cwd: /workspace/orak-master-baselines
+    log_dir: /workspace/orak-master-baselines/logs
+    command: [*cmd_gemma, star_craft]
+    completion: {<<: *completion_summary, glob: "game_logs/star_craft/futile_baseline_star_craft_*"}
+
+  # ── DETECTOR — /workspace/orak-futile-detector ──────────────────────────
+  - label: detector_pokemon_red
+    tag: futile_detector
+    game: pokemon_red
+    n_runs: 3
+    cwd: /workspace/orak-futile-detector
+    log_dir: /workspace/orak-futile-detector/logs
+    command: [*cmd_gemma, pokemon_red]
+    completion: {<<: *completion_summary, glob: "game_logs/pokemon_red/futile_detector_pokemon_red_*"}
+
+  - label: detector_super_mario
+    tag: futile_detector
+    game: super_mario
+    n_runs: 3
+    cwd: /workspace/orak-futile-detector
+    log_dir: /workspace/orak-futile-detector/logs
+    command: [*cmd_gemma, super_mario]
+    completion: {<<: *completion_summary, glob: "game_logs/super_mario/futile_detector_super_mario_*"}
+
+  - label: detector_twenty_fourty_eight
+    tag: futile_detector
+    game: twenty_fourty_eight
+    n_runs: 3
+    cwd: /workspace/orak-futile-detector
+    log_dir: /workspace/orak-futile-detector/logs
+    command: [*cmd_gemma, twenty_fourty_eight]
+    completion: {<<: *completion_summary, glob: "game_logs/twenty_fourty_eight/futile_detector_twenty_fourty_eight_*"}
+
+  - label: detector_star_craft
+    tag: futile_detector
+    game: star_craft
+    n_runs: 3
+    cwd: /workspace/orak-futile-detector
+    log_dir: /workspace/orak-futile-detector/logs
+    command: [*cmd_gemma, star_craft]
+    completion: {<<: *completion_summary, glob: "game_logs/star_craft/futile_detector_star_craft_*"}
