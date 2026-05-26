@@ -44,6 +44,11 @@ SUBGOAL_STAGNATION_THRESHOLD = 30
 # fires for any env where the agent walks into a wall (pokemon), spams a
 # no-op move (2048), or stands still on a deadly tile (mario).
 FUTILE_ACTION_WINDOW = 3
+# Action-side sibling: when the last REPEATED_PLAN_WINDOW chosen actions are
+# byte-identical strings, the agent is looping on the same rejected plan even
+# though the obs is changing (SC2's `Game time` ticks every frame, mario's
+# `Time:` counts down, etc.). Catches the cases byte-equality of obs misses.
+REPEATED_PLAN_WINDOW = 4
 
 
 # Regex helpers for subgoal completion predicates. The adapter's
@@ -596,6 +601,38 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             f"action this step."
         )
 
+    def _detect_repeated_plan(self) -> str | None:
+        """Action-side sibling of _detect_futile_action: fires when the
+        last REPEATED_PLAN_WINDOW chosen action plans are identical strings,
+        regardless of whether obs is byte-stable. Catches envs where obs
+        ticks continuously (SC2, mario) but the agent loops on the same
+        rejected plan."""
+        if not hasattr(self, "_plan_history"):
+            self._plan_history = deque(maxlen=REPEATED_PLAN_WINDOW)
+            self._repeated_plan_logged = False
+
+        if (
+            len(self._plan_history) < REPEATED_PLAN_WINDOW
+            or len(set(self._plan_history)) > 1
+        ):
+            self._repeated_plan_logged = False
+            return None
+
+        if not self._repeated_plan_logged:
+            logger.info(
+                f"[MACLA] repeated_plan_hint fired (last {REPEATED_PLAN_WINDOW} "
+                f"plans identical: {next(iter(self._plan_history))!r})"
+            )
+            self._repeated_plan_logged = True
+
+        return (
+            f"[Repeated-plan notice] You have chosen the same action plan "
+            f"{REPEATED_PLAN_WINDOW} steps in a row and the goal isn't "
+            f"advancing — the environment is rejecting it or it's a no-op. "
+            f"Pick a structurally different plan this step (different tool, "
+            f"different target, different sub-goal)."
+        )
+
     def _base_fallback(self, goal: str, observation: str, **kwargs) -> tuple[list[str], str]:
         """LLM fallback using game adapter prompts + structured output."""
         obs_image = kwargs.get("obs_image")
@@ -608,6 +645,13 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         futile_hint = self._detect_futile_action(observation)
         if futile_hint:
             observation = f"{futile_hint}\n\n{observation}"
+
+        # Action-side sibling: check before the LLM call whether the last
+        # K=4 plans returned were identical. Fires the [Repeated-plan notice]
+        # so the planner sees the loop hint before this step's plan is chosen.
+        repeated_plan_hint = self._detect_repeated_plan()
+        if repeated_plan_hint:
+            observation = f"{repeated_plan_hint}\n\n{observation}"
 
         # Use defaultdict-style formatting to handle any template vars
         class SafeDict(dict):
@@ -812,6 +856,12 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                 mem = self._macla_agent.memory_system
                 mem._recent_logprobs.append(usage["mean_logprob"])
                 mem._pending_logprob = usage["mean_logprob"]
+            # Record the chosen plan for the action-side repeat detector.
+            # Initialised lazily inside _detect_repeated_plan; if the
+            # detector hasn't been called yet (first step), create here.
+            if not hasattr(self, "_plan_history"):
+                self._plan_history = deque(maxlen=REPEATED_PLAN_WINDOW)
+            self._plan_history.append(action)
             return [action], reasoning
         except Exception as e:
             logger.error(f"Unified fallback failed after retries: {e}")
@@ -859,6 +909,9 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         if hasattr(self, "_obs_hash_window"):
             self._obs_hash_window.clear()
             self._futile_streak_logged = False
+        if hasattr(self, "_plan_history"):
+            self._plan_history.clear()
+            self._repeated_plan_logged = False
         if self._macla_agent and hasattr(self._macla_agent, "memory_system"):
             mem = self._macla_agent.memory_system
             if hasattr(mem, "subgoal_depth"):
