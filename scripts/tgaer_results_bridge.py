@@ -1,4 +1,11 @@
-"""Bridge: orak `evaluation_summary.json` → autoresearch `results.jsonl`.
+"""Legacy bridge: orak `evaluation_summary.json` → autoresearch `results.jsonl`.
+
+NOTE: For new sweeps prefer ``autoresearch-parallel-batch`` driven by
+``configs/schedules/tgaer_pr1.yaml`` — its completion-check writes
+``results.jsonl`` directly via ``log_experiment``, no post-hoc bridge needed.
+This script remains for reconciling the pre-existing ``game_logs/`` runs
+from before the YAML-driven launcher landed (the 24 rolls producing PR1's
+n=3 data).
 
 Walks both worktrees' game_logs/ dirs for `tgaer_(baseline|detector)_*`
 rollouts, extracts per-rollout aggregate (mean across episodes), and

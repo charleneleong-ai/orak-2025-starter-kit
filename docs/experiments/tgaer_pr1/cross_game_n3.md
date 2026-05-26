@@ -21,8 +21,8 @@ Commit: [`7b1b69a feat(macla): universal futile-action detector (PR 1 of MVA har
 | Inference budget | 1000 calls (pokemon: 1200), per game-specific `MAX_STEPS` |
 | Reps | n=3 per (side, game) — 24 rolls total |
 | SC2 episodes | 10 per roll (full Protoss vs Hard Zerg on Flat64) |
-| Launchers | `scripts/tgaer_auto_retry.sh`, `scripts/tgaer_autoheal.py` |
-| Bridge | `scripts/tgaer_results_bridge.py` → `experiments/tgaer_pr1_{baseline,detector}/results.jsonl` |
+| Launcher | [`configs/schedules/tgaer_pr1.yaml`](../../../configs/schedules/tgaer_pr1.yaml) via `autoresearch-parallel-batch` (v0.28.0) |
+| Bridge (legacy reconcile) | [`scripts/tgaer_results_bridge.py`](../../../scripts/tgaer_results_bridge.py) → `experiments/tgaer_pr1_{baseline,detector}/results.jsonl` |
 
 ## Results
 
