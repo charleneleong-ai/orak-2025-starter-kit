@@ -83,7 +83,6 @@ class BaseMaclaAgent(BaseModel):
             location=self.config.gcp_location,
         )
         self._macla_agent = LLMMACLAAgent(
-            generator=self._llm,
             fallback_generator=self._base_fallback,
             context_extractor=self._extract_context,
             postcondition_extractor=self.extract_postconditions,
@@ -107,7 +106,6 @@ class BaseMaclaAgent(BaseModel):
             temperature=temperature,
         )
         self._macla_agent = LLMMACLAAgent(
-            generator=self._llm,
             fallback_generator=self._base_fallback,
             context_extractor=self._extract_context,
             postcondition_extractor=self.extract_postconditions,
@@ -143,7 +141,6 @@ class BaseMaclaAgent(BaseModel):
             llm_kwargs["extra_body"] = extra_body
         self._llm = ChatOpenAI(**llm_kwargs)
         self._macla_agent = LLMMACLAAgent(
-            generator=self._llm,
             fallback_generator=self._base_fallback,
             context_extractor=self._extract_context,
             postcondition_extractor=self.extract_postconditions,
