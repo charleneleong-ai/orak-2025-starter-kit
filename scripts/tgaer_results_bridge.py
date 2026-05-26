@@ -28,17 +28,13 @@ per (tag, game, run_id) and skip already-bridged rows.
 Run:
     uv run python /workspace/orak-futile-detector/scripts/tgaer_results_bridge.py
 """
+
 from __future__ import annotations
 
 import json
-import os
-import re
-import sys
 from glob import glob
 from pathlib import Path
 
-# autoresearch is installed in both worktree venvs — use the one we're running under
-sys.path.insert(0, "/workspace/autoresearch/src")
 from autoresearch.results import load_results, log_experiment
 
 REPO_FOR_TAG = "/workspace/orak-futile-detector"  # any worktree works for storing results.jsonl
@@ -78,14 +74,13 @@ def parse_run(d: Path) -> dict | None:
     mean = sum(scores) / len(scores)
     return {
         "run_id": d.name,
-        "summary": s,  # full evaluation_summary.json verbatim — preserves episodes + all fields
+        "summary": s,
         "best": max(scores),
         "mean": mean,
         "std": (sum((x - mean) ** 2 for x in scores) / len(scores)) ** 0.5,
         "n_episodes": len(scores),
         "total_calls": s["total_inference_calls"],
         "total_tokens": s["total_tokens"],
-        "ctime": sj.stat().st_mtime,
     }
 
 
@@ -118,7 +113,11 @@ def main() -> None:
                     continue
                 # Status: KEEP for completed rollouts (we'll let autoresearch verdict
                 # tooling assign comparative status later); first per (tag, game) gets BASELINE.
-                existing_for_game = [r for r in load_results(experiments_dir=EXPERIMENTS_DIR, tag=tag) if r.get("game") == game]
+                existing_for_game = [
+                    r
+                    for r in load_results(experiments_dir=EXPERIMENTS_DIR, tag=tag)
+                    if r.get("game") == game
+                ]
                 status = "BASELINE" if not existing_for_game else "KEEP"
                 log_experiment(
                     experiments_dir=EXPERIMENTS_DIR,
@@ -137,16 +136,14 @@ def main() -> None:
                         "std": rec["std"],
                         "n_episodes": rec["n_episodes"],
                         "total_tokens": rec["total_tokens"],
-                        # Full evaluation_summary.json content (per-episode breakdown + totals).
-                        # ~50 bytes/episode × ~50 episodes = ~2.5KB per row, negligible at our scale.
                         "evaluation_summary": rec["summary"],
                     },
                 )
                 written += 1
-                print(f"  + {tag} / {game} / n={existing_for_game and len(existing_for_game) + 1 or 1}  best={rec['best']:.2f} mean={rec['mean']:.2f} status={status}")
+                print(
+                    f"  + {tag} / {game} / n={len(existing_for_game) + 1}  best={rec['best']:.2f} mean={rec['mean']:.2f} status={status}"
+                )
     print(f"\nBridged {written} new rows, skipped {skipped} already-bridged.")
-    print(f"  experiments/{('tgaer_pr1_baseline', 'tgaer_pr1_detector')[0]}/results.jsonl")
-    print(f"  experiments/{('tgaer_pr1_baseline', 'tgaer_pr1_detector')[1]}/results.jsonl")
 
 
 if __name__ == "__main__":

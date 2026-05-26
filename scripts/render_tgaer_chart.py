@@ -5,6 +5,7 @@ mean ± std across all n rolls per side, and renders one `Milestone` per game
 via `autoresearch.compare.plot_milestone_bars`. Output: a PR-body PNG at
 `experiments/progress/tgaer_pr1/cross_game_lift.png`.
 """
+
 from __future__ import annotations
 
 import json
@@ -26,19 +27,13 @@ GAME_LABEL = {
 
 
 def load(tag: str) -> list[dict]:
-    return [json.loads(l) for l in (REPO / f"experiments/{tag}/results.jsonl").read_text().splitlines()]
+    return [
+        json.loads(l) for l in (REPO / f"experiments/{tag}/results.jsonl").read_text().splitlines()
+    ]
 
 
 def per_game(rows: list[dict], game: str) -> list[float]:
     return [r["mean"] for r in rows if r["game"] == game]
-
-
-def verdict_for(delta: float, base_scores: list[float], det_scores: list[float]) -> str:
-    if not det_scores or all(s == 0 for s in base_scores + det_scores):
-        return "DISCARD" if not det_scores else "BASELINE"
-    if abs(delta) < 1.0:
-        return "BASELINE"
-    return "KEEP" if delta > 0 else "DISCARD"
 
 
 def main() -> None:
@@ -54,6 +49,7 @@ def main() -> None:
         b_std = statistics.stdev(b) if len(b) > 1 else 0.0
         d_std = statistics.stdev(d) if len(d) > 1 else 0.0
         delta = d_mean - b_mean
+        verdict = "BASELINE" if abs(delta) < 1.0 else ("KEEP" if delta > 0 else "DISCARD")
         milestones.append(
             Milestone(
                 label=GAME_LABEL[g],
@@ -61,7 +57,7 @@ def main() -> None:
                 metric_stds={"baseline (no detector)": b_std, "detector (PR1)": d_std},
                 metric_scores={"baseline (no detector)": b, "detector (PR1)": d},
                 description=f"Δ={delta:+.2f}  base n={len(b)} / det n={len(d)}",
-                verdict=verdict_for(delta, b, d),
+                verdict=verdict,
                 n=len(d),
             )
         )
