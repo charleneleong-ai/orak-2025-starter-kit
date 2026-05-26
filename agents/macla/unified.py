@@ -611,10 +611,7 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             self._plan_history = deque(maxlen=REPEATED_PLAN_WINDOW)
             self._repeated_plan_logged = False
 
-        if (
-            len(self._plan_history) < REPEATED_PLAN_WINDOW
-            or len(set(self._plan_history)) > 1
-        ):
+        if len(self._plan_history) < REPEATED_PLAN_WINDOW or len(set(self._plan_history)) > 1:
             self._repeated_plan_logged = False
             return None
 
