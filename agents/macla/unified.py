@@ -49,6 +49,13 @@ FUTILE_ACTION_WINDOW = 3
 # though the obs is changing (SC2's `Game time` ticks every frame, mario's
 # `Time:` counts down, etc.). Catches the cases byte-equality of obs misses.
 REPEATED_PLAN_WINDOW = 4
+# Semantic sibling (PR 3): hashing-based detectors above fire on byte / token
+# identity. This one watches a real per-game progress signal — the adapter's
+# STAGNATION_PATTERN (fallback: SCORE_PATTERN, PROGRESS_PATTERN). When the
+# extracted value's variance across the last STAGNATION_WINDOW iters is zero,
+# the agent is acting but not advancing the game state. Fires the strongest
+# loop signal we can produce without per-game logic.
+STAGNATION_WINDOW = 20
 
 
 # Regex helpers for subgoal completion predicates. The adapter's
@@ -630,6 +637,80 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             f"different target, different sub-goal)."
         )
 
+    def _detect_progress_stagnation(self, observation: str) -> str | None:
+        """Semantic detector: watches a per-game progress signal extracted via
+        adapter.STAGNATION_PATTERN (fallback: SCORE_PATTERN, PROGRESS_PATTERN).
+        Fires when the extracted numeric value has zero variance across the
+        last STAGNATION_WINDOW iters — i.e. the agent is acting but not
+        advancing the game-native progress metric.
+
+        On SC2 this watches `Supply used` (army size). On pokemon/mario/2048
+        it falls back to SCORE_PATTERN (milestone / x_pos / log2 max-tile).
+        """
+        pattern = (
+            getattr(self._adapter, "STAGNATION_PATTERN", None)
+            or self._adapter.SCORE_PATTERN
+            or self._adapter.PROGRESS_PATTERN
+        )
+        if not pattern:
+            return None
+
+        m = re.search(pattern, observation or "")
+        if not m:
+            return None
+        try:
+            value = float(m.group(1))
+        except (ValueError, IndexError):
+            return None
+
+        if not hasattr(self, "_stagnation_window"):
+            self._stagnation_window = deque(maxlen=STAGNATION_WINDOW)
+            self._stagnation_logged = False
+        self._stagnation_window.append(value)
+
+        if (
+            len(self._stagnation_window) < STAGNATION_WINDOW
+            or len(set(self._stagnation_window)) > 1
+        ):
+            self._stagnation_logged = False
+            return None
+
+        if not self._stagnation_logged:
+            logger.info(
+                f"[MACLA] progress_stagnation_hint fired "
+                f"(value={value} flat for {STAGNATION_WINDOW} iters)"
+            )
+            self._stagnation_logged = True
+
+        return (
+            f"[Progress-stagnation notice] The game-native progress signal "
+            f"(value={value:g}) hasn't moved in {STAGNATION_WINDOW} steps. "
+            f"Your recent plans aren't advancing the goal. Try a fundamentally "
+            f"different action class (build a structure, tech up, switch target)."
+        )
+
+    def _top_procedures_hint(self, k: int = 2) -> str:
+        """Optional hint suffix used by all three detectors: lists the top-K
+        procedures from memory by success rate. Helps the planner re-discover
+        plans it's previously executed successfully, instead of inventing a
+        new (likely-bad) variant.
+        """
+        if not self._macla_agent or not hasattr(self._macla_agent, "memory_system"):
+            return ""
+        procs = getattr(self._macla_agent.memory_system, "procedural_memory", None)
+        if not procs:
+            return ""
+        # success_rate + goal live on entry.procedure (Procedure dataclass),
+        # NOT on the wrapping ProceduralMemoryEntry.
+        ranked = sorted(procs.items(), key=lambda kv: kv[1].procedure.success_rate, reverse=True)
+        if not ranked or ranked[0][1].procedure.success_rate <= 0:
+            return ""
+        bullets = []
+        for key, entry in ranked[:k]:
+            goal = (getattr(entry.procedure, "goal", "") or "")[:60]
+            bullets.append(f"{key} (success={entry.procedure.success_rate:.2f}, {goal})")
+        return f" Top success-rate procedures available: {' · '.join(bullets)}."
+
     def _base_fallback(self, goal: str, observation: str, **kwargs) -> tuple[list[str], str]:
         """LLM fallback using game adapter prompts + structured output."""
         obs_image = kwargs.get("obs_image")
@@ -641,14 +722,21 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         # adding hints later doesn't artificially break the streak.
         futile_hint = self._detect_futile_action(observation)
         if futile_hint:
-            observation = f"{futile_hint}\n\n{observation}"
+            observation = f"{futile_hint}{self._top_procedures_hint()}\n\n{observation}"
 
         # Action-side sibling: check before the LLM call whether the last
         # K=4 plans returned were identical. Fires the [Repeated-plan notice]
         # so the planner sees the loop hint before this step's plan is chosen.
         repeated_plan_hint = self._detect_repeated_plan()
         if repeated_plan_hint:
-            observation = f"{repeated_plan_hint}\n\n{observation}"
+            observation = f"{repeated_plan_hint}{self._top_procedures_hint()}\n\n{observation}"
+
+        # Semantic sibling: watches a real game-native progress signal. Fires
+        # the loudest "stuck" hint we can produce — when neither obs nor plans
+        # are byte-identical but the game's progress metric is flat.
+        stagnation_hint = self._detect_progress_stagnation(observation)
+        if stagnation_hint:
+            observation = f"{stagnation_hint}{self._top_procedures_hint()}\n\n{observation}"
 
         # Use defaultdict-style formatting to handle any template vars
         class SafeDict(dict):
@@ -909,6 +997,9 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         if hasattr(self, "_plan_history"):
             self._plan_history.clear()
             self._repeated_plan_logged = False
+        if hasattr(self, "_stagnation_window"):
+            self._stagnation_window.clear()
+            self._stagnation_logged = False
         if self._macla_agent and hasattr(self._macla_agent, "memory_system"):
             mem = self._macla_agent.memory_system
             if hasattr(mem, "subgoal_depth"):

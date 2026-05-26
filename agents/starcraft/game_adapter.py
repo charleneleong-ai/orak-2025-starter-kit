@@ -193,6 +193,11 @@ DEFAULT_GOAL = "Defeat the Zerg opponent by sequencing economy → tech → army
 SCORE_PATTERN = None
 PROGRESS_PATTERN = r"[Gg]ame[_ ]?time:?\s*(\d+):(\d+)"
 PROGRESS_THRESHOLD = 0.0
+# Used by the unified agent's progress-stagnation detector. PROGRESS_PATTERN
+# above is `game_time`, a free-running counter — useless as a stagnation
+# signal. `Supply used` (army+worker count) rises as the agent builds, stays
+# flat when the build queue stalls, and resets per episode.
+STAGNATION_PATTERN = r"Supply used:?\s*(\d+)"
 LIVES_PATTERN = None
 SUCCESS_KEYWORDS = ["victory"]
 FATAL_KEYWORDS = ["defeat"]
