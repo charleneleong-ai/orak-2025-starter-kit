@@ -406,7 +406,23 @@ class StarCraftShaper(RewardShaper):
         if success:
             return s["victory_bonus"]
 
-        return self._clamp(0.0)
+        reward = 0.0
+
+        # Survival baseline: tiny constant when game_time advances.
+        if cur.get("game_time_sec", 0) > prev.get("game_time_sec", 0):
+            reward += s["survival_increment"]
+
+        # Supply_used delta — army / worker built.
+        supply_delta = cur.get("supply_used", 0) - prev.get("supply_used", 0)
+        if supply_delta > 0:
+            reward += s["supply_used_weight"] * supply_delta
+
+        # Building delta — structure built.
+        building_delta = cur.get("building_count", 0) - prev.get("building_count", 0)
+        if building_delta > 0:
+            reward += s["building_built_weight"] * building_delta
+
+        return self._clamp(reward)
 
 
 # ── Generic fallback ────────────────────────────────────────

@@ -174,3 +174,46 @@ class TestTerminal:
         # Defensive: if both flags somehow set, defeat wins (no false positives).
         r = shaper.compute_reward(prev={}, cur={}, success=True, is_fatal=True)
         assert r == DEFAULT_SHAPING["star_craft"]["fatal_penalty"]
+
+
+class TestPositiveDeltas:
+    def _metrics(self, **overrides):
+        """Helper: build a fully-populated metrics dict with overrides."""
+        base = {
+            "game_time_sec": 100,
+            "mineral": 500,
+            "supply_used": 20,
+            "supply_cap": 23,
+            "supply_left": 3,
+            "worker_supply": 18,
+            "building_count": 2,
+            "enemy_unit_count": 0,
+        }
+        return {**base, **overrides}
+
+    def test_supply_used_delta_rewards_unit_built(self, shaper):
+        prev = self._metrics(supply_used=20)
+        cur = self._metrics(supply_used=22, game_time_sec=110)  # 2 supply built + time advanced
+        r = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
+        # 2 * 0.2 (army) + 0.05 (survival) = 0.45
+        assert r == pytest.approx(0.45)
+
+    def test_building_count_delta_rewards_structure_built(self, shaper):
+        prev = self._metrics(building_count=2)
+        cur = self._metrics(building_count=3, game_time_sec=110)  # +1 structure, time advanced
+        r = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
+        # 1 * 0.5 (building) + 0.05 (survival) = 0.55
+        assert r == pytest.approx(0.55)
+
+    def test_survival_increment_when_only_time_advances(self, shaper):
+        prev = self._metrics(game_time_sec=100)
+        cur = self._metrics(game_time_sec=110)
+        r = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
+        # Just survival baseline.
+        assert r == pytest.approx(0.05)
+
+    def test_no_survival_increment_if_time_did_not_advance(self, shaper):
+        prev = self._metrics(game_time_sec=100)
+        cur = self._metrics(game_time_sec=100)
+        r = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
+        assert r == pytest.approx(0.0)
