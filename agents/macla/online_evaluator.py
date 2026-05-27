@@ -74,6 +74,32 @@ DEFAULT_SHAPING: dict[str, dict[str, float]] = {
         "reward_min": -2.0,
         "reward_max": 3.0,
     },
+    "star_craft": {
+        # Terminal rewards
+        "fatal_penalty": -2.0,
+        "victory_bonus": 3.0,
+        # Per-step positive deltas
+        "supply_used_weight": 0.2,
+        "building_built_weight": 0.5,
+        "survival_increment": 0.05,
+        "first_enemy_bonus": 0.5,
+        # State-based penalties (the load-bearing fix)
+        #
+        # Floated-minerals penalty fires when mineral grows but supply_used
+        # is flat — i.e. the agent is collecting resources without spending
+        # them on units. Symptom from PR3 smoke iter 201: 3980 minerals + only
+        # 1 Pylon + supply-blocked. Without this penalty, a naive Δ-mineral
+        # term would reward the same state. Mirrors the repeat_visit_bonus
+        # warning above: same class of reward hack.
+        "floated_minerals_penalty": -0.3,
+        # Supply-block fires when supply_left <= 0 — the agent cannot train
+        # new units regardless of mineral. Critical state to penalize.
+        "supply_block_penalty": -0.5,
+        # Stagnation is implicit: when game_time does not advance, survival_increment
+        # simply doesn't fire (no explicit counter / penalty needed).
+        "reward_min": -2.0,
+        "reward_max": 3.0,
+    },
 }
 
 
@@ -301,6 +327,117 @@ class PokemonShaper(RewardShaper):
         return self._clamp(reward)
 
 
+# ── StarCraft II ────────────────────────────────────────────
+
+
+class StarCraftShaper(RewardShaper):
+    """Per-step shaped reward for the SC2 adapter.
+
+    Reads structured fields from the obs_str text summary emitted by
+    star_craft_env.obs2text: `Game time`, `Mineral`, `Supply used/cap/left`,
+    `Worker supply`, building counts, and enemy-unit counts. Race-agnostic
+    by construction — the regexes don't reference Pylon/SupplyDepot/Overlord
+    specifically.
+
+    The load-bearing signal is the idleness + supply-block penalties: PR3 smoke
+    showed avg_procedure_success_rate=0.51 across 2500 steps with zero
+    successful_executions — procedural memory had nothing to refine against.
+    Without these penalties, mere mineral accumulation would still earn
+    positive reward, teaching the wrong lesson.
+    """
+
+    # Buildings list — sum of all `X count: N` matches excluding workers
+    # and in-progress markers (Probe/Worker/Producing/Constructing).
+    _BUILDING_EXCLUDE = ("Probe", "Worker", "Producing", "Constructing")
+
+    def __init__(self, shaping: dict):
+        super().__init__(shaping)
+        self._seen_enemy_unit: bool = False
+
+    def reset_episode(self) -> None:
+        super().reset_episode()
+        self._seen_enemy_unit = False
+
+    def extract_metrics(self, state: str) -> dict:
+        # Multi-summary obs_str states (multiple "Summary N:" blocks concatenated)
+        # do not currently occur in the SC2 adapter — empirical check on the PR3
+        # smoke (2500 iters) found zero such cases. game_time_sec uses LAST-match
+        # defensively for future-proofing; all other scalars use _find_int (FIRST
+        # match). If the adapter ever starts emitting multi-summary states, switch
+        # all scalars to LAST-match for delta-consistency.
+        gt_matches = re.findall(r"Game time:\s*(\d+):(\d+)", state)
+        if gt_matches:
+            mm, ss = gt_matches[-1]
+            game_time_sec = int(mm) * 60 + int(ss)
+        else:
+            game_time_sec = 0
+
+        # Building count: sum all "X count: N" matches except worker/in-progress
+        # markers. The regex is greedy over `[\w ]+` and relies on the closed
+        # _BUILDING_EXCLUDE list — if the SC2 adapter ever adds new aggregate
+        # fields like "Total army count:" or "Attack count:" they would inflate
+        # this sum and need explicit exclusion.
+        building_count = 0
+        for name, n in re.findall(r"([\w ]+) count:\s*(\d+)", state):
+            if any(excluded in name for excluded in self._BUILDING_EXCLUDE):
+                continue
+            building_count += int(n)
+
+        # Enemy unit count: sum all "Enemy unittypeid.X: N" matches.
+        enemy_unit_count = sum(int(n) for n in re.findall(r"Enemy unittypeid\.\w+:\s*(\d+)", state))
+
+        return {
+            "game_time_sec": game_time_sec,
+            "mineral": _find_int(r"Mineral:\s*(\d+)", state) or 0,
+            "supply_used": _find_int(r"Supply used:\s*(\d+)", state) or 0,
+            "supply_cap": _find_int(r"Supply cap:\s*(\d+)", state) or 0,
+            "supply_left": _find_int(r"Supply left:\s*(-?\d+)", state) or 0,
+            "worker_supply": _find_int(r"Worker supply:\s*(\d+)", state) or 0,
+            "building_count": building_count,
+            "enemy_unit_count": enemy_unit_count,
+        }
+
+    def compute_reward(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
+        s = self._shaping
+
+        if is_fatal:
+            return s["fatal_penalty"]
+        if success:
+            return s["victory_bonus"]
+
+        reward = 0.0
+
+        # Survival baseline: tiny constant when game_time advances.
+        if cur.get("game_time_sec", 0) > prev.get("game_time_sec", 0):
+            reward += s["survival_increment"]
+
+        # Supply_used delta — army / worker built.
+        supply_delta = cur.get("supply_used", 0) - prev.get("supply_used", 0)
+        if supply_delta > 0:
+            reward += s["supply_used_weight"] * supply_delta
+
+        # Building delta — structure built.
+        building_delta = cur.get("building_count", 0) - prev.get("building_count", 0)
+        if building_delta > 0:
+            reward += s["building_built_weight"] * building_delta
+
+        # First-enemy contact: one-shot bonus (mirrors PokemonShaper map-discovery).
+        if not self._seen_enemy_unit and cur.get("enemy_unit_count", 0) > 0:
+            reward += s["first_enemy_bonus"]
+            self._seen_enemy_unit = True
+
+        # Floated-minerals penalty: mineral grows but supply_used flat → idle.
+        mineral_delta = cur.get("mineral", 0) - prev.get("mineral", 0)
+        if mineral_delta > 0 and supply_delta == 0:
+            reward += s["floated_minerals_penalty"]
+
+        # Supply-block penalty: cannot train new units.
+        if cur.get("supply_left", 1) <= 0:
+            reward += s["supply_block_penalty"]
+
+        return self._clamp(reward)
+
+
 # ── Generic fallback ────────────────────────────────────────
 
 
@@ -323,6 +460,7 @@ SHAPERS: dict[str, type[RewardShaper]] = {
     "super_mario": MarioShaper,
     "twenty_fourty_eight": TwentyFortyEightShaper,
     "pokemon_red": PokemonShaper,
+    "star_craft": StarCraftShaper,
 }
 
 
