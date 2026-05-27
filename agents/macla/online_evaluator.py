@@ -74,6 +74,33 @@ DEFAULT_SHAPING: dict[str, dict[str, float]] = {
         "reward_min": -2.0,
         "reward_max": 3.0,
     },
+    "star_craft": {
+        # Terminal rewards
+        "fatal_penalty": -2.0,
+        "victory_bonus": 3.0,
+        # Per-step positive deltas
+        "supply_used_weight": 0.2,
+        "building_built_weight": 0.5,
+        "survival_increment": 0.05,
+        "first_enemy_bonus": 0.5,
+        # State-based penalties (the load-bearing fix)
+        #
+        # Floated-minerals penalty fires when mineral grows but supply_used
+        # is flat — i.e. the agent is collecting resources without spending
+        # them on units. Symptom from PR3 smoke iter 201: 3980 minerals + only
+        # 1 Pylon + supply-blocked. Without this penalty, a naive Δ-mineral
+        # term would reward the same state. Mirrors the repeat_visit_bonus
+        # warning above: same class of reward hack.
+        "floated_minerals_penalty": -0.3,
+        # Supply-block fires when supply_left <= 0 — the agent cannot train
+        # new units regardless of mineral. Critical state to penalize.
+        "supply_block_penalty": -0.5,
+        # Stagnation (no game_time progress for N steps in a row)
+        "stagnation_threshold_steps": 3,
+        "stagnation_penalty": -0.3,
+        "reward_min": -2.0,
+        "reward_max": 3.0,
+    },
 }
 
 
@@ -301,6 +328,44 @@ class PokemonShaper(RewardShaper):
         return self._clamp(reward)
 
 
+# ── StarCraft II ────────────────────────────────────────────
+
+
+class StarCraftShaper(RewardShaper):
+    """Per-step shaped reward for the SC2 adapter.
+
+    Reads structured fields from the obs_str text summary emitted by
+    star_craft_env.obs2text: `Game time`, `Mineral`, `Supply used/cap/left`,
+    `Worker supply`, building counts, and enemy-unit counts. Race-agnostic
+    by construction — the regexes don't reference Pylon/SupplyDepot/Overlord
+    specifically.
+
+    The load-bearing signal is the idleness + supply-block penalties: PR3 smoke
+    showed avg_procedure_success_rate=0.51 across 2500 steps with zero
+    successful_executions — procedural memory had nothing to refine against.
+    Without these penalties, mere mineral accumulation would still earn
+    positive reward, teaching the wrong lesson.
+    """
+
+    # Buildings list — sum of all `X count: N` matches excluding workers
+    # and in-progress markers (Probe/Worker/Producing/Constructing).
+    _BUILDING_EXCLUDE = ("Probe", "Worker", "Producing", "Constructing")
+
+    def __init__(self, shaping: dict):
+        super().__init__(shaping)
+        self._seen_enemy_unit: bool = False
+
+    def reset_episode(self) -> None:
+        super().reset_episode()
+        self._seen_enemy_unit = False
+
+    def extract_metrics(self, state: str) -> dict:
+        return {}
+
+    def compute_reward(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
+        return 0.0
+
+
 # ── Generic fallback ────────────────────────────────────────
 
 
@@ -323,6 +388,7 @@ SHAPERS: dict[str, type[RewardShaper]] = {
     "super_mario": MarioShaper,
     "twenty_fourty_eight": TwentyFortyEightShaper,
     "pokemon_red": PokemonShaper,
+    "star_craft": StarCraftShaper,
 }
 
 
