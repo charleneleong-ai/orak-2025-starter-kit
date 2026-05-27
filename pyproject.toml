@@ -166,6 +166,9 @@ ignore = [
     "W291",   # trailing-whitespace inside prompt strings (model wording is sacred)
 ]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
