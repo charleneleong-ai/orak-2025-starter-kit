@@ -95,9 +95,8 @@ DEFAULT_SHAPING: dict[str, dict[str, float]] = {
         # Supply-block fires when supply_left <= 0 — the agent cannot train
         # new units regardless of mineral. Critical state to penalize.
         "supply_block_penalty": -0.5,
-        # Stagnation (no game_time progress for N steps in a row)
-        "stagnation_threshold_steps": 3,
-        "stagnation_penalty": -0.3,
+        # Stagnation is implicit: when game_time does not advance, survival_increment
+        # simply doesn't fire (no explicit counter / penalty needed).
         "reward_min": -2.0,
         "reward_max": 3.0,
     },
