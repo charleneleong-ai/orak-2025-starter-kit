@@ -109,3 +109,53 @@ class TestRegistry:
 )
 def test_default_shaping_star_craft_has_key(key):
     assert key in DEFAULT_SHAPING["star_craft"], f"missing DEFAULT_SHAPING['star_craft']['{key}']"
+
+
+class TestExtractMetrics:
+    def test_empty_state_returns_zero_defaults(self, shaper, obs_strings):
+        m = shaper.extract_metrics(obs_strings["iter_1_empty"])
+        assert m["game_time_sec"] == 0
+        assert m["mineral"] == 0
+        assert m["supply_used"] == 0
+        assert m["supply_cap"] == 0
+        assert m["supply_left"] == 0
+        assert m["worker_supply"] == 0
+        assert m["building_count"] == 0
+        assert m["enemy_unit_count"] == 0
+
+    def test_productive_state_extracts_all_fields(self, shaper, obs_strings):
+        m = shaper.extract_metrics(obs_strings["iter_51_productive"])
+        assert m["game_time_sec"] == 89  # 01:29 = 89s
+        assert m["mineral"] == 515
+        assert m["supply_used"] == 21
+        assert m["supply_cap"] == 23
+        assert m["supply_left"] == 2
+        assert m["worker_supply"] == 20
+        # building_count: Nexus(1) + Pylon(1) = 2  (Probe/Constructing/Producing excluded)
+        assert m["building_count"] == 2
+        assert m["enemy_unit_count"] == 0
+
+    def test_floated_state_extracts_negative_supply_left(self, shaper, obs_strings):
+        m = shaper.extract_metrics(obs_strings["iter_201_floated"])
+        assert m["game_time_sec"] == 356  # 05:56 = 356s
+        assert m["mineral"] == 3980
+        assert m["supply_left"] == -15
+        # building_count: Pylon(1) + Gateway(2) = 3
+        assert m["building_count"] == 3
+        # enemy_unit_count: zergling(3) + ravager(3) + roach(4) = 10
+        assert m["enemy_unit_count"] == 10
+
+    @pytest.mark.parametrize(
+        "field,patched,expected_key,expected_value",
+        [
+            ("Game time: 01:29", "Game time: 12:34", "game_time_sec", 754),
+            ("Mineral: 515", "Mineral: 9999", "mineral", 9999),
+            ("Supply left: 2", "Supply left: -1", "supply_left", -1),
+        ],
+    )
+    def test_extract_handles_value_variations(
+        self, shaper, obs_strings, field, patched, expected_key, expected_value
+    ):
+        state = obs_strings["iter_51_productive"].replace(field, patched)
+        m = shaper.extract_metrics(state)
+        assert m[expected_key] == expected_value
