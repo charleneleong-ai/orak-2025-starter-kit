@@ -126,8 +126,8 @@ class Procedure:
     postconditions: list[str] = field(default_factory=list)
     reasoning: str = ""
     concepts: set[str] = field(default_factory=set)
-    alpha: int = 1
-    beta: int = 1
+    alpha: float = 1.0
+    beta: float = 1.0
     execution_count: int = 0
     generalisability_score: float = 0.5
     confidence: float = 0.5
@@ -152,8 +152,8 @@ class MetaProcedure:
     preconditions_meta: list[str]
     sub_procedures: list[str]
     composition_policy: dict[str, any]
-    alpha: int = 1
-    beta: int = 1
+    alpha: float = 1.0
+    beta: float = 1.0
     execution_count: int = 0
 
     @property
