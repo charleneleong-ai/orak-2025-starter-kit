@@ -422,6 +422,11 @@ class StarCraftShaper(RewardShaper):
         if building_delta > 0:
             reward += s["building_built_weight"] * building_delta
 
+        # First-enemy contact: one-shot bonus (mirrors PokemonShaper map-discovery).
+        if not self._seen_enemy_unit and cur.get("enemy_unit_count", 0) > 0:
+            reward += s["first_enemy_bonus"]
+            self._seen_enemy_unit = True
+
         # Floated-minerals penalty: mineral grows but supply_used flat → idle.
         mineral_delta = cur.get("mineral", 0) - prev.get("mineral", 0)
         if mineral_delta > 0 and supply_delta == 0:

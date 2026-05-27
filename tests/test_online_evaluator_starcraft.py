@@ -255,3 +255,35 @@ class TestPenalties:
         r = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
         # -0.3 (floated) + -0.5 (supply block) + 0.05 (survival) = -0.75
         assert r == pytest.approx(-0.75)
+
+
+class TestEpisodeState:
+    def test_first_enemy_bonus_fires_once(self, shaper):
+        # First contact: enemy_unit_count goes from 0 → 1.
+        prev = _metrics(enemy_unit_count=0)
+        cur = _metrics(enemy_unit_count=1, game_time_sec=100)  # no time advance
+        r1 = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
+        # +0.5 first-enemy bonus
+        assert r1 == pytest.approx(0.5)
+
+        # Second step: enemy still visible — no bonus.
+        prev2 = _metrics(enemy_unit_count=1)
+        cur2 = _metrics(enemy_unit_count=3, game_time_sec=100)
+        r2 = shaper.compute_reward(prev=prev2, cur=cur2, success=False, is_fatal=False)
+        assert r2 == pytest.approx(0.0)
+
+    def test_reset_episode_clears_seen_enemy_flag(self, shaper):
+        # Fire the one-shot bonus.
+        prev = _metrics(enemy_unit_count=0)
+        cur = _metrics(enemy_unit_count=1, game_time_sec=100)
+        r1 = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
+        assert r1 == pytest.approx(0.5)
+        assert shaper._seen_enemy_unit is True
+
+        # Reset → flag cleared.
+        shaper.reset_episode()
+        assert shaper._seen_enemy_unit is False
+
+        # Now first-enemy bonus fires again in the new episode.
+        r2 = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
+        assert r2 == pytest.approx(0.5)
