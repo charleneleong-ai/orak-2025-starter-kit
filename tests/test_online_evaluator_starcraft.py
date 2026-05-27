@@ -159,3 +159,18 @@ class TestExtractMetrics:
         state = obs_strings["iter_51_productive"].replace(field, patched)
         m = shaper.extract_metrics(state)
         assert m[expected_key] == expected_value
+
+
+class TestTerminal:
+    def test_is_fatal_returns_fatal_penalty(self, shaper):
+        r = shaper.compute_reward(prev={}, cur={}, success=False, is_fatal=True)
+        assert r == DEFAULT_SHAPING["star_craft"]["fatal_penalty"]
+
+    def test_success_returns_victory_bonus(self, shaper):
+        r = shaper.compute_reward(prev={}, cur={}, success=True, is_fatal=False)
+        assert r == DEFAULT_SHAPING["star_craft"]["victory_bonus"]
+
+    def test_is_fatal_takes_precedence_over_success(self, shaper):
+        # Defensive: if both flags somehow set, defeat wins (no false positives).
+        r = shaper.compute_reward(prev={}, cur={}, success=True, is_fatal=True)
+        assert r == DEFAULT_SHAPING["star_craft"]["fatal_penalty"]

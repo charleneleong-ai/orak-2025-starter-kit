@@ -399,7 +399,14 @@ class StarCraftShaper(RewardShaper):
         }
 
     def compute_reward(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
-        return 0.0
+        s = self._shaping
+
+        if is_fatal:
+            return s["fatal_penalty"]
+        if success:
+            return s["victory_bonus"]
+
+        return self._clamp(0.0)
 
 
 # ── Generic fallback ────────────────────────────────────────
