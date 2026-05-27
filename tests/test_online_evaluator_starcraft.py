@@ -80,6 +80,21 @@ def shaper() -> StarCraftShaper:
     return StarCraftShaper(DEFAULT_SHAPING["star_craft"])
 
 
+def _metrics(**overrides) -> dict:
+    """Build a fully-populated metrics dict for compute_reward tests."""
+    base = {
+        "game_time_sec": 100,
+        "mineral": 500,
+        "supply_used": 20,
+        "supply_cap": 23,
+        "supply_left": 3,
+        "worker_supply": 18,
+        "building_count": 2,
+        "enemy_unit_count": 0,
+    }
+    return {**base, **overrides}
+
+
 class TestRegistry:
     def test_star_craft_registered_in_SHAPERS(self):
         assert SHAPERS["star_craft"] is StarCraftShaper
@@ -177,43 +192,66 @@ class TestTerminal:
 
 
 class TestPositiveDeltas:
-    def _metrics(self, **overrides):
-        """Helper: build a fully-populated metrics dict with overrides."""
-        base = {
-            "game_time_sec": 100,
-            "mineral": 500,
-            "supply_used": 20,
-            "supply_cap": 23,
-            "supply_left": 3,
-            "worker_supply": 18,
-            "building_count": 2,
-            "enemy_unit_count": 0,
-        }
-        return {**base, **overrides}
-
     def test_supply_used_delta_rewards_unit_built(self, shaper):
-        prev = self._metrics(supply_used=20)
-        cur = self._metrics(supply_used=22, game_time_sec=110)  # 2 supply built + time advanced
+        prev = _metrics(supply_used=20)
+        cur = _metrics(supply_used=22, game_time_sec=110)  # 2 supply built + time advanced
         r = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
         # 2 * 0.2 (army) + 0.05 (survival) = 0.45
         assert r == pytest.approx(0.45)
 
     def test_building_count_delta_rewards_structure_built(self, shaper):
-        prev = self._metrics(building_count=2)
-        cur = self._metrics(building_count=3, game_time_sec=110)  # +1 structure, time advanced
+        prev = _metrics(building_count=2)
+        cur = _metrics(building_count=3, game_time_sec=110)  # +1 structure, time advanced
         r = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
         # 1 * 0.5 (building) + 0.05 (survival) = 0.55
         assert r == pytest.approx(0.55)
 
     def test_survival_increment_when_only_time_advances(self, shaper):
-        prev = self._metrics(game_time_sec=100)
-        cur = self._metrics(game_time_sec=110)
+        prev = _metrics(game_time_sec=100)
+        cur = _metrics(game_time_sec=110)
         r = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
         # Just survival baseline.
         assert r == pytest.approx(0.05)
 
     def test_no_survival_increment_if_time_did_not_advance(self, shaper):
-        prev = self._metrics(game_time_sec=100)
-        cur = self._metrics(game_time_sec=100)
+        prev = _metrics(game_time_sec=100)
+        cur = _metrics(game_time_sec=100)
         r = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
         assert r == pytest.approx(0.0)
+
+
+class TestPenalties:
+    def test_floated_minerals_penalty_fires_when_mineral_grows_supply_flat(self, shaper):
+        prev = _metrics(mineral=500, supply_used=20)
+        cur = _metrics(mineral=800, supply_used=20)  # gained 300 minerals, no units built
+        r = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
+        # -0.3 (floated). game_time_sec same in both, so no survival increment.
+        assert r == pytest.approx(-0.3)
+
+    def test_no_floated_penalty_when_supply_grew(self, shaper):
+        prev = _metrics(mineral=500, supply_used=20)
+        cur = _metrics(mineral=550, supply_used=22)  # gained mineral AND built unit
+        r = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
+        # 2 * 0.2 = 0.4 (supply) + 0 (no time advance) — NO floated penalty
+        assert r == pytest.approx(0.4)
+
+    def test_supply_block_penalty_fires_when_supply_left_zero(self, shaper):
+        prev = _metrics(supply_left=5)
+        cur = _metrics(supply_left=0)
+        r = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
+        # -0.5 supply block. supply_used unchanged → no army reward. No time advance.
+        assert r == pytest.approx(-0.5)
+
+    def test_supply_block_penalty_fires_when_supply_left_negative(self, shaper):
+        cur = _metrics(supply_left=-15)  # iter-201 scenario
+        prev = _metrics(supply_left=-15)
+        r = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
+        assert r == pytest.approx(-0.5)
+
+    def test_iter_201_failure_state_gets_strongly_negative_reward(self, shaper):
+        """Smoke gun: iter-201 floated AND supply-blocked → both penalties stack."""
+        prev = _metrics(mineral=3500, supply_used=23, supply_left=-15, game_time_sec=350)
+        cur = _metrics(mineral=3980, supply_used=23, supply_left=-15, game_time_sec=356)
+        r = shaper.compute_reward(prev=prev, cur=cur, success=False, is_fatal=False)
+        # -0.3 (floated) + -0.5 (supply block) + 0.05 (survival) = -0.75
+        assert r == pytest.approx(-0.75)

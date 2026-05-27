@@ -422,6 +422,15 @@ class StarCraftShaper(RewardShaper):
         if building_delta > 0:
             reward += s["building_built_weight"] * building_delta
 
+        # Floated-minerals penalty: mineral grows but supply_used flat → idle.
+        mineral_delta = cur.get("mineral", 0) - prev.get("mineral", 0)
+        if mineral_delta > 0 and supply_delta == 0:
+            reward += s["floated_minerals_penalty"]
+
+        # Supply-block penalty: cannot train new units.
+        if cur.get("supply_left", 1) <= 0:
+            reward += s["supply_block_penalty"]
+
         return self._clamp(reward)
 
 
