@@ -1,4 +1,5 @@
 import asyncio
+import os
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -9,10 +10,32 @@ import weave
 from dotenv import load_dotenv
 from loguru import logger
 
-from config.utils import load_hydra_settings
-from evaluation_utils.commons import GAME_DATA_DIR, GAME_SERVER_PORTS, setup_logging
-from evaluation_utils.renderer import get_renderer
-from evaluation_utils.runner import Runner
+# Neutralize weave's langchain auto-tracer. WEAVE_DISABLED only gates
+# weave.init/ops, not the langchain BaseTracer hook — that's gated by
+# WEAVE_TRACE_LANGCHAIN plus an `inheritable=True` ContextVar registration
+# (see weave/integrations/langchain/langchain.py:14). Its
+# on_chat_model_start JSON-encodes a langchain ModelMetaclass, raises
+# TypeError, leaks trace context, and accumulated 4500+ stuck threads in
+# qwen35_n3 seed 1 (froze 2026-05-29 02:39Z after 8h50m). Env var + class
+# patch together; the patch is needed because inheritable hooks attach
+# even when the env var is false.
+os.environ.setdefault("WEAVE_TRACE_LANGCHAIN", "false")
+try:
+    from weave.integrations.langchain.langchain import WeaveTracer  # noqa: E402
+
+    WeaveTracer.on_chat_model_start = lambda self, *a, **kw: None
+    WeaveTracer._on_chat_model_start = lambda self, *a, **kw: None
+except ImportError:
+    pass
+
+from config.utils import load_hydra_settings  # noqa: E402
+from evaluation_utils.commons import (  # noqa: E402
+    GAME_DATA_DIR,
+    GAME_SERVER_PORTS,
+    setup_logging,
+)
+from evaluation_utils.renderer import get_renderer  # noqa: E402
+from evaluation_utils.runner import Runner  # noqa: E402
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
