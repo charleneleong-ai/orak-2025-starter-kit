@@ -126,8 +126,8 @@ class Procedure:
     postconditions: list[str] = field(default_factory=list)
     reasoning: str = ""
     concepts: set[str] = field(default_factory=set)
-    alpha: int = 1
-    beta: int = 1
+    alpha: float = 1.0
+    beta: float = 1.0
     execution_count: int = 0
     generalisability_score: float = 0.5
     confidence: float = 0.5
@@ -152,8 +152,8 @@ class MetaProcedure:
     preconditions_meta: list[str]
     sub_procedures: list[str]
     composition_policy: dict[str, any]
-    alpha: int = 1
-    beta: int = 1
+    alpha: float = 1.0
+    beta: float = 1.0
     execution_count: int = 0
 
     @property
@@ -388,6 +388,11 @@ class EnhancedHierarchicalMemorySystem:
         # loop trauma forward (a tile that looped in iter 1 might be
         # the right move in iter 5 with richer procedural memory).
         self._position_visits: Counter[tuple[str, int, int]] = Counter()
+        # Per-episode trace of proc_keys executed via record_execution_outcome.
+        # Drained at episode boundary by EpisodeCredit's assign_retrospective_credit.
+        # maxlen=2000 is generous — TD-lambda weight at position -2000 is
+        # 0.95^2000 ≈ 1e-45, so older entries are irrelevant.
+        self._episode_proc_trace: deque[str] = deque(maxlen=2000)
 
     def __setstate__(self, state: dict) -> None:
         """Stage R v4 (4): zero out per-episode stagnation tracking on
@@ -405,6 +410,7 @@ class EnhancedHierarchicalMemorySystem:
         self._subgoal_stagnation_key = None
         self._subgoal_stagnation_steps = 0
         self._position_visits = Counter()
+        self._episode_proc_trace = deque(maxlen=2000)
 
     # ── subgoal stack ─────────────────────────────────────────────────
     def push_subgoal(self, subgoal: Subgoal) -> None:
@@ -688,6 +694,25 @@ class EnhancedHierarchicalMemorySystem:
             entry.success_contexts.pop(0)
         if len(entry.failure_contexts) > 15:
             entry.failure_contexts.pop(0)
+
+        # Per-episode trace — drained by EpisodeCredit at episode end. The
+        # defensive `getattr` initialises the deque if the instance was
+        # restored from a checkpoint that predates this field.
+        trace = getattr(self, "_episode_proc_trace", None)
+        if trace is None:
+            self._episode_proc_trace = deque(maxlen=2000)
+            trace = self._episode_proc_trace
+        trace.append(proc_key)
+
+    def drain_episode_trace(self) -> list[str]:
+        """Return the per-episode proc trace (oldest -> newest) and clear it.
+
+        Called at episode end by `assign_retrospective_credit`. The defensive
+        getattr handles older pickled checkpoints that predate this field.
+        """
+        trace = list(getattr(self, "_episode_proc_trace", []))
+        self._episode_proc_trace = deque(maxlen=2000)
+        return trace
 
     def _prune_procedural_memory(self):
         if not self.procedural_memory:
