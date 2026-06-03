@@ -26,6 +26,10 @@ from collections import deque
 
 from loguru import logger
 
+from evaluation_utils.mcp_game_servers.star_craft.progress import (
+    extract_metrics as sc2_extract_metrics,
+)
+
 # ── Shaping defaults ────────────────────────────────────────
 
 # Per-game default shaping params. See module docstring for override syntax.
@@ -346,10 +350,6 @@ class StarCraftShaper(RewardShaper):
     positive reward, teaching the wrong lesson.
     """
 
-    # Buildings list — sum of all `X count: N` matches excluding workers
-    # and in-progress markers (Probe/Worker/Producing/Constructing).
-    _BUILDING_EXCLUDE = ("Probe", "Worker", "Producing", "Constructing")
-
     def __init__(self, shaping: dict):
         super().__init__(shaping)
         self._seen_enemy_unit: bool = False
@@ -359,43 +359,10 @@ class StarCraftShaper(RewardShaper):
         self._seen_enemy_unit = False
 
     def extract_metrics(self, state: str) -> dict:
-        # Multi-summary obs_str states (multiple "Summary N:" blocks concatenated)
-        # do not currently occur in the SC2 adapter — empirical check on the PR3
-        # smoke (2500 iters) found zero such cases. game_time_sec uses LAST-match
-        # defensively for future-proofing; all other scalars use _find_int (FIRST
-        # match). If the adapter ever starts emitting multi-summary states, switch
-        # all scalars to LAST-match for delta-consistency.
-        gt_matches = re.findall(r"Game time:\s*(\d+):(\d+)", state)
-        if gt_matches:
-            mm, ss = gt_matches[-1]
-            game_time_sec = int(mm) * 60 + int(ss)
-        else:
-            game_time_sec = 0
-
-        # Building count: sum all "X count: N" matches except worker/in-progress
-        # markers. The regex is greedy over `[\w ]+` and relies on the closed
-        # _BUILDING_EXCLUDE list — if the SC2 adapter ever adds new aggregate
-        # fields like "Total army count:" or "Attack count:" they would inflate
-        # this sum and need explicit exclusion.
-        building_count = 0
-        for name, n in re.findall(r"([\w ]+) count:\s*(\d+)", state):
-            if any(excluded in name for excluded in self._BUILDING_EXCLUDE):
-                continue
-            building_count += int(n)
-
-        # Enemy unit count: sum all "Enemy unittypeid.X: N" matches.
-        enemy_unit_count = sum(int(n) for n in re.findall(r"Enemy unittypeid\.\w+:\s*(\d+)", state))
-
-        return {
-            "game_time_sec": game_time_sec,
-            "mineral": _find_int(r"Mineral:\s*(\d+)", state) or 0,
-            "supply_used": _find_int(r"Supply used:\s*(\d+)", state) or 0,
-            "supply_cap": _find_int(r"Supply cap:\s*(\d+)", state) or 0,
-            "supply_left": _find_int(r"Supply left:\s*(-?\d+)", state) or 0,
-            "worker_supply": _find_int(r"Worker supply:\s*(\d+)", state) or 0,
-            "building_count": building_count,
-            "enemy_unit_count": enemy_unit_count,
-        }
+        # Delegates to the single-source SC2 obs parser in star_craft.progress,
+        # so the shaper's reward signal and the eval progress-metric can never
+        # drift on field extraction.
+        return sc2_extract_metrics(state)
 
     def compute_reward(self, prev: dict, cur: dict, success: bool, is_fatal: bool) -> float:
         s = self._shaping
