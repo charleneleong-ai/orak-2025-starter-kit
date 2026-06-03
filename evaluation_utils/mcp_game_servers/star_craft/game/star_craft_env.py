@@ -16,6 +16,11 @@ from mcp_game_servers.gameio.window_capture import WindowCapture
 from mcp_game_servers.utils.types.game_io import Action, Obs
 
 from .utils.bots import sc2_run_game
+from evaluation_utils.mcp_game_servers.star_craft.progress import (
+    extract_metrics,
+    merge_peaks,
+    milestone_score,
+)
 from .utils.actions import ActionDescriptions
 
 LADDER_MAP_2023 = [
@@ -181,6 +186,9 @@ class StarCraftEnv(BaseEnv):
 
         self.summary = {}
         self.executed_actions = []
+        # Running peak metrics for the current episode, feeding the milestone
+        # progress score. Reset each episode in reset().
+        self._episode_peaks: dict = {}
 
         # IMPORTANT:
         # This env runs inside a gRPC server which has background threads.
@@ -265,6 +273,7 @@ class StarCraftEnv(BaseEnv):
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         self.check_process(reset=True)
         self.game_end_event.clear()
+        self._episode_peaks = {}
 
         image = None
         minimap_image = None
@@ -360,13 +369,21 @@ class StarCraftEnv(BaseEnv):
 
         return state, 0, done, False, None
 
-    def evaluate(self, obs: Obs):
+    def _is_victory(self) -> bool:
         result = self.transaction['result']
-        if result is None:
-            return 0, self.transaction['done']
-        if result.name.lower() == "victory":
-            return 1, self.transaction['done']
-        return 0, self.transaction['done']
+        return result is not None and result.name.lower() == "victory"
+
+    def evaluate(self, obs: Obs):
+        # Progressive milestone score (0-100) over the episode's peak economic/
+        # military state, replacing the binary Victory/0 metric. Victory remains
+        # the top milestone (and is exposed separately as star_craft_victory in
+        # get_game_info). Shares the single-source obs parser + ladder with the
+        # retro path in star_craft.progress, so live and retro cannot drift.
+        text = " ".join(str(v) for v in getattr(self, "summary", {}).values())
+        if text.strip():
+            self._episode_peaks = merge_peaks(self._episode_peaks, extract_metrics(text))
+        score = milestone_score(self._episode_peaks, self._is_victory())
+        return score, self.transaction['done']
 
     def get_game_info(self) -> dict:
         return {
@@ -375,4 +392,7 @@ class StarCraftEnv(BaseEnv):
             "action_executed": self.executed_actions,
             "action_dict": self.action_dict,
             "num_actions": self.num_actions,
+            # Secondary binary win signal, retained for Orak-benchmark
+            # comparability alongside the progressive milestone score.
+            "star_craft_victory": int(self._is_victory()),
         }
