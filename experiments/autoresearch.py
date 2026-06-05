@@ -1179,15 +1179,14 @@ class OrakPlanner:
             )
             print(f"{'=' * 60}\n")
 
-            env = {
-                "WEAVE_ENABLED": "false",
-                "WEAVE_DISABLED": "true",
-            }
+            # Weave Option B: keep weave enabled (default) so traces link to the
+            # W&B run; the thread leaks are handled in run.py / act_with_weave_context
+            # rather than by disabling weave.
             yield IterPlan(
                 cmd=cmd,
                 description=description,
                 notes=description,
-                env=env,
+                env={},
                 cwd=ROOT,
                 timeout_min=ITER_TIMEOUT_MIN,
                 sidecar_payload={"games": self.games},

@@ -69,6 +69,16 @@ def test_wraps_when_active_client_does_not_match(weave, current):
     assert weave.wrap.call_count == 1
 
 
+def test_short_circuit_on_disabled_stub(weave):
+    """WEAVE_DISABLED makes weave.init return an entity=project="DISABLED"
+    stub that never matches the real project — pre-guard it cache-missed
+    every step and leaked a finish() thread per call (~12/min in qwen35_n3
+    seed 1). The guard must skip the wrap."""
+    weave.get.return_value = SimpleNamespace(entity="DISABLED", project="DISABLED")
+    assert act_with_weave_context(_agent(), {}, 1) == {"action": "noop"}
+    weave.wrap.assert_not_called()
+
+
 @pytest.mark.parametrize("project", [None, ""])
 def test_pass_through_when_no_weave_project(weave, project):
     agent = SimpleNamespace(act=lambda obs, step: {"ok": True})

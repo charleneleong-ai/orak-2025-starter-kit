@@ -9,10 +9,20 @@ import weave
 from dotenv import load_dotenv
 from loguru import logger
 
-from config.utils import load_hydra_settings
-from evaluation_utils.commons import GAME_DATA_DIR, GAME_SERVER_PORTS, setup_logging
-from evaluation_utils.renderer import get_renderer
-from evaluation_utils.runner import Runner
+from evaluation_utils.weave_compat import neutralize_weave_langchain_tracer
+
+# Must run before any agent acts: neutralizes weave's langchain auto-tracer,
+# whose callback leaked 4500+ threads in qwen35_n3 seed 1. See weave_compat.
+neutralize_weave_langchain_tracer()
+
+from config.utils import load_hydra_settings  # noqa: E402
+from evaluation_utils.commons import (  # noqa: E402
+    GAME_DATA_DIR,
+    GAME_SERVER_PORTS,
+    setup_logging,
+)
+from evaluation_utils.renderer import get_renderer  # noqa: E402
+from evaluation_utils.runner import Runner  # noqa: E402
 
 app = typer.Typer(pretty_exceptions_enable=False)
 

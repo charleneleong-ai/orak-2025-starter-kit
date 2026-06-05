@@ -45,9 +45,14 @@ def act_with_weave_context(agent, obs, step):
     from weave.trace.context import weave_client_context as wcc
 
     cur = wcc.get_weave_client()
-    cur_full = (
-        f"{cur.entity}/{cur.project}" if cur is not None and getattr(cur, "entity", None) else None
-    )
+    cur_entity = getattr(cur, "entity", None) if cur is not None else None
+    # WEAVE_DISABLED=1 makes weave.init return a stub with entity="DISABLED" that
+    # never matches the real project below; without this guard the cache fast-path
+    # misses every step and the with-block leaks a finish() thread each call
+    # (~12/min in qwen35_n3 seed 1 2026-05-29).
+    if cur_entity == "DISABLED":
+        return agent.act(obs, step=step)
+    cur_full = f"{cur_entity}/{cur.project}" if cur_entity else None
     if cur_full == weave_project:
         return agent.act(obs, step=step)
     entity, _, project = weave_project.rpartition("/")
