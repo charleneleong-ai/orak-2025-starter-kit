@@ -379,7 +379,9 @@ class StarCraftEnv(BaseEnv):
         # the top milestone (and is exposed separately as star_craft_victory in
         # get_game_info). Shares the single-source obs parser + ladder with the
         # retro path in star_craft.progress, so live and retro cannot drift.
-        text = " ".join(str(v) for v in getattr(self, "summary", {}).values())
+        # Score the rendered obs text, not str(self.summary): the dict-repr's
+        # underscore keys never match the regexes, collapsing live scores to ~0.
+        text = self.obs2text(obs) or ""
         if text.strip():
             self._episode_peaks = merge_peaks(self._episode_peaks, extract_metrics(text))
         score = milestone_score(self._episode_peaks, self._is_victory())
