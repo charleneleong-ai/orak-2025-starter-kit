@@ -1,5 +1,9 @@
 """StarCraft II milestone-ladder progress metric (star_craft.progress)."""
 
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
 from evaluation_utils.mcp_game_servers.star_craft.progress import (
@@ -10,6 +14,12 @@ from evaluation_utils.mcp_game_servers.star_craft.progress import (
     run_progress,
     split_episodes,
 )
+
+# star_craft_env uses bare ``mcp_game_servers...`` imports, so evaluation_utils
+# must sit on sys.path as a package root for the live-evaluate test below.
+_EVAL_UTILS = Path(__file__).resolve().parents[1] / "evaluation_utils"
+if str(_EVAL_UTILS) not in sys.path:
+    sys.path.insert(0, str(_EVAL_UTILS))
 
 # Real SC2 obs_str field formats (from seed-1 game_states). Supply left omitted
 # on purpose — it is absent in many real states and must default to 0.
@@ -179,3 +189,55 @@ class TestExtractMetrics:
     def test_empty_text_yields_all_zero_metrics(self):
         m = extract_metrics("")
         assert m["supply_used"] == 0 and m["building_count"] == 0 and m["game_time_sec"] == 0
+
+
+# A mid-game obs dict in the env's native ``self.summary`` shape — rendered by
+# StarCraftObs.to_text() into the same "- Supply used: N / Nexus count: N" text
+# the agent sees and the retro ladder parses.
+_LIVE_SUMMARY = {
+    "Summary 1": {
+        "resource": {
+            "game_time": "03:43",
+            "worker_supply": 21,
+            "mineral": 295,
+            "supply_cap": 47,
+            "supply_used": 38,
+            "army_supply": 8,
+        },
+        "building": {
+            "nexus_count": 1,
+            "pylon_count": 4,
+            "gas_buildings_count": 2,
+            "gateway_count": 1,
+            "cybernetics_core_count": 1,
+            "forge_count": 1,
+        },
+        "unit": {"probe_count": 21, "zealot_count": 4},
+    }
+}
+
+
+class TestEvaluateSourcesObs:
+    """evaluate() must score the rendered obs text, not str(self.summary)."""
+
+    @staticmethod
+    def _bare_env(victory: bool):
+        m = pytest.importorskip("mcp_game_servers.star_craft.game.star_craft_env")
+        env = m.StarCraftEnv.__new__(m.StarCraftEnv)
+        env._episode_peaks = {}
+        # Empty on purpose — pre-fix evaluate() read str(self.summary), scoring 0.
+        env.summary = {}
+        env.transaction = {
+            "result": SimpleNamespace(name="Victory") if victory else None,
+            "done": False,
+        }
+        return env, m.StarCraftObs(observation=_LIVE_SUMMARY)
+
+    @pytest.mark.parametrize("victory", [False, True])
+    def test_scores_rendered_obs_not_summary_repr(self, victory):
+        env, obs = self._bare_env(victory)
+        expected = milestone_score(extract_metrics(obs.to_text()), victory)
+        score, done = env.evaluate(obs)
+        assert score == expected  # exact value pinned to the live parser
+        assert score > 0  # regression floor: pre-fix scored 0 off empty summary
+        assert done is False
