@@ -383,10 +383,11 @@ class EnhancedHierarchicalMemorySystem:
         # anti-perseveration hint. v3 introspect found iter 5 revisited
         # PalletTown(7,10) 44 times — the LLM wasn't catching loops
         # from text history alone, so we inject the count directly.
-        # Per-episode signal: zeroed in __setstate__ alongside the
-        # stagnation counter so cumulative iters don't carry stale
-        # loop trauma forward (a tile that looped in iter 1 might be
-        # the right move in iter 5 with richer procedural memory).
+        # Per-episode signal, but reset at the agent's episode-start gate
+        # (reset_position_visits), NOT in __setstate__ — it must survive
+        # intra-episode checkpoint round-trips to ever cross threshold, so
+        # cumulative iters don't carry stale loop trauma forward (a tile that
+        # looped in iter 1 might be the right move in iter 5).
         self._position_visits: Counter[tuple[str, int, int]] = Counter()
         # Per-episode trace of proc_keys executed via record_execution_outcome.
         # Drained at episode boundary by EpisodeCredit's assign_retrospective_credit.
@@ -401,15 +402,17 @@ class EnhancedHierarchicalMemorySystem:
         stagnation=440, so the escape valve fired from step 1 and the
         planner never saw the active_subgoal block).
 
-        The stagnation counter is a *per-episode* signal — what the
-        next iter inherits is the procedural memory and subgoal stack,
-        not the bookkeeping that watches them. Same shape will apply
-        to v4(1)'s anti-perseveration position counter.
+        NOTE: ``_position_visits`` is deliberately NOT reset here. The
+        agent is pickle-round-tripped on *every* checkpoint (not just at
+        iter boundaries), so zeroing the loop counter on unpickle wiped
+        it every step — across a 1200-step run a tile revisited 980×
+        never crossed the threshold-5 and the looped hint fired 0 times.
+        It is reset once per episode at the agent's _subgoal_init_done
+        gate instead (see reset_position_visits).
         """
         self.__dict__.update(state)
         self._subgoal_stagnation_key = None
         self._subgoal_stagnation_steps = 0
-        self._position_visits = Counter()
         self._episode_proc_trace = deque(maxlen=2000)
 
     # ── subgoal stack ─────────────────────────────────────────────────
@@ -452,6 +455,13 @@ class EnhancedHierarchicalMemorySystem:
         if not map_name or map_name == "unknown":
             return
         self._position_visits[(map_name, x, y)] += 1
+
+    def reset_position_visits(self) -> None:
+        """Clear the per-episode loop counter. Called once per episode by the
+        agent (at the _subgoal_init_done gate), not in __setstate__ — so the
+        counter survives intra-episode checkpoint round-trips and only resets
+        between episodes."""
+        self._position_visits = Counter()
 
     def looped_positions_hint(self, threshold: int = 5, max_display: int = 5) -> str | None:
         """Render the "### Recently looped" block for the planner.
