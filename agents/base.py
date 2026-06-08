@@ -93,17 +93,30 @@ class BaseOrakAgent(weave.Model):
             if hasattr(self, "AGENT_TAGS"):
                 tags.extend(self.AGENT_TAGS)
 
+            # Surface rollout group as a tag so wandb.Api can filter trainer
+            # rollouts by group_id without scanning every run's config blob.
+            if self.wandb_config.rollout_group_id:
+                tags.append(f"rollout_group:{self.wandb_config.rollout_group_id}")
+
             # Use project-specific run_id to avoid cross-game collisions
             run_id = self.wandb_config.run_id
             if run_id and self.wandb_config.project:
                 run_id = f"{run_id}_{self.wandb_config.project}"
+
+            wandb_config_payload = self.config.to_dict() if hasattr(self.config, "to_dict") else {}
+            # Paired-rollout metadata in wandb.config so the trainer can join
+            # by (rollout_group_id, rollout_idx) when pulling Artifacts.
+            wandb_config_payload["rollout_group_id"] = self.wandb_config.rollout_group_id
+            wandb_config_payload["rollout_idx"] = self.wandb_config.rollout_idx
+            wandb_config_payload["adapter_name"] = self.wandb_config.adapter_name
+
             self._wandb_run = wandb.init(
                 project=self.wandb_config.project,
                 entity=self.wandb_config.entity,
                 id=run_id,
                 resume="allow",
                 reinit="create_new",
-                config=self.config.to_dict() if hasattr(self.config, "to_dict") else {},
+                config=wandb_config_payload,
                 tags=tags,
                 notes=self.wandb_config.notes,
                 name=self.wandb_config.run_id,
@@ -274,6 +287,15 @@ class BaseOrakAgent(weave.Model):
                             "cached": log_extras.get("tokens_cached", 0),
                         },
                     }
+                    # Paired-rollout fields (null when not running in rollout
+                    # mode, so the trainer-side reader can do an unconditional
+                    # `.get("rollout_group_id")` on every record).
+                    if self.wandb_config:
+                        record["rollout_group_id"] = self.wandb_config.rollout_group_id
+                        record["rollout_idx"] = self.wandb_config.rollout_idx
+                        record["adapter_name"] = self.wandb_config.adapter_name
+                    if "response_logprobs" in log_extras:
+                        record["response_logprobs"] = log_extras["response_logprobs"]
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
             except Exception as e:
                 logger.error(f"Failed to log raw request: {e}")
