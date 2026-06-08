@@ -217,27 +217,52 @@ class TestAntiPerseveration:
         assert needle in unified_src
 
 
+class TestLoopCounterSurvivesCheckpoint:
+    """The agent is pickle-round-tripped on every checkpoint; the per-episode
+    loop counter must survive so it can cross threshold and fire the hint.
+    Pre-fix, __setstate__ zeroed it every round-trip, so across a run that
+    round-trips each step the count never climbed past 1 — the looped hint
+    fired 0/1200 times despite a single tile being revisited 980×."""
+
+    def test_position_visits_survive_pickle_roundtrip(self, mem):
+        for _ in range(8):
+            mem.record_position("PalletTown", 9, 10)
+        loaded = pickle.loads(pickle.dumps(mem))
+        assert loaded.position_visits[("PalletTown", 9, 10)] == 8
+        assert loaded.looped_positions_hint() is not None  # threshold crossed
+
+    def test_reset_position_visits_clears_counter(self, mem):
+        for _ in range(8):
+            mem.record_position("PalletTown", 9, 10)
+        mem.reset_position_visits()
+        assert sum(mem.position_visits.values()) == 0
+
+    def test_unified_resets_loop_counter_at_episode_start(self, unified_src):
+        # Reset happens in-process once per episode (the _subgoal_init_done
+        # gate), NOT in __setstate__ — that is the whole fix.
+        assert "reset_position_visits" in unified_src
+
+
 # ── v4 (4): __setstate__ resets per-episode state ───────────────────
 
 
 class TestSetstateReset:
-    """Per-episode counters (stagnation + position visits) zero on unpickle;
-    cumulative state (subgoal stack, procedural memory) survives."""
+    """Stagnation counter zeros on unpickle; cumulative state (subgoal stack,
+    procedural memory) survives. The position counter is the exception — it
+    must SURVIVE round-trips (reset at episode start instead), see
+    TestLoopCounterSurvivesCheckpoint."""
 
-    def test_per_episode_counters_zero_on_unpickle(self, mem):
+    def test_stagnation_zeros_on_unpickle_but_stack_survives(self, mem):
         mem.push_subgoal(_sub("ViridianCity"))
         mem.push_subgoal(_sub("Route1"))
         for _ in range(35):
             mem.record_subgoal_step()
-        for _ in range(20):
-            mem.record_position("PalletTown", 7, 10)
 
         loaded = pickle.loads(pickle.dumps(mem))
 
-        # Per-episode signals reset.
+        # Per-episode stagnation signal resets.
         assert loaded.subgoal_stagnation_steps == 0
         assert loaded._subgoal_stagnation_key is None
-        assert sum(loaded.position_visits.values()) == 0
         # Cumulative state preserved.
         assert loaded.subgoal_depth() == 2
         assert loaded.peek_subgoal().name == "Route1"

@@ -399,6 +399,13 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         if not getattr(self, "_subgoal_init_done", False):
             self._subgoal_init_done = True
             self._init_episode_subgoals()
+            # Reset the anti-perseveration loop counter once per episode here
+            # (in-process, fires once) rather than in __setstate__ — the agent
+            # is pickle-round-tripped on every checkpoint, so resetting on
+            # unpickle wiped the counter before it could cross threshold and
+            # the looped-positions hint never fired.
+            if self._macla_agent and hasattr(self._macla_agent, "memory_system"):
+                self._macla_agent.memory_system.reset_position_visits()
 
         # Refresh the self-reflection critique (cached between reflect_every
         # invocations). _base_fallback reads self._last_critique to inject
