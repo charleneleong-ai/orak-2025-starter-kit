@@ -30,6 +30,7 @@ from agents.macla.macla_lib import (
     MilestoneSpec,
     Subgoal,
     build_score_milestone_stack,
+    subgoal_survives_escape_valve,
 )
 
 
@@ -58,6 +59,7 @@ class TestSubgoalDataclass:
         assert s.description == "D"
         assert s.completion({}) is False
         assert s.suggested_tools == []
+        assert s.critical is False  # opt-in escape-valve exemption
 
     def test_picklable(self):
         """Stack persists via the existing checkpoint pickle path —
@@ -314,6 +316,20 @@ class TestRequiresLocationBridge:
         assert bridge.completion({"map_name": "Viridian"}) is True
         assert bridge.completion({"map_name": "Other"}) is False
 
+    def test_gateway_bridge_is_critical_but_milestone_is_not(self):
+        """The auto-inserted nav bridge is the milestone gateway → escape-valve
+        exempt; the score-gate milestone itself stays droppable."""
+        library = {
+            5: MilestoneSpec(
+                name="EnterX", description="...", suggested_tools=["move_to"], requires_location="X"
+            ),
+        }
+        stack = build_score_milestone_stack(library, nav_factory=self._nav)
+        bridge = next(sg for sg in stack if sg.name == "NavigateToMap(X)")
+        milestone = next(sg for sg in stack if sg.name == "EnterX")
+        assert bridge.critical is True
+        assert milestone.critical is False
+
     def test_multiple_requires_location_inserts_each_bridge(self):
         library = {
             5: MilestoneSpec(
@@ -358,6 +374,28 @@ class TestRequiresLocationBridge:
             "NavigateToMap(X)",
             "NavigateToMap(Start)",
         ]
+
+
+class TestEscapeValveExemption:
+    """``subgoal_survives_escape_valve`` keeps a subgoal in the planner prompt
+    while it is below the stagnation threshold, OR indefinitely if it is
+    ``critical`` (a milestone gateway with no better goal to switch to)."""
+
+    @pytest.mark.parametrize(
+        "critical,stagnation,survives",
+        [
+            (False, 10, True),  # below threshold → kept
+            (False, 30, False),  # at threshold, droppable → dropped
+            (False, 99, False),  # well past threshold → dropped
+            (True, 30, True),  # critical → kept past threshold
+            (True, 99, True),  # critical → kept indefinitely
+        ],
+    )
+    def test_survival_matrix(self, critical, stagnation, survives):
+        sg = Subgoal(
+            name="N", description="D", completion=partial(_map_matches, "X"), critical=critical
+        )
+        assert subgoal_survives_escape_valve(sg, stagnation, threshold=30) is survives
 
 
 if __name__ == "__main__":
