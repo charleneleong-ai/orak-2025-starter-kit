@@ -28,7 +28,7 @@ from agents.base import BaseOrakAgent
 from agents.macla.base import BaseMaclaAgent
 from agents.macla.context_extractors import build_context_extractor
 from agents.macla.interaction_sweep import decide_interaction_sweep
-from agents.macla.macla_lib import _extract_map_name
+from agents.macla.macla_lib import _extract_map_name, subgoal_survives_escape_valve
 from agents.macla.reflexion import build_reflexion_summary
 from agents.macla.structured_output import safe_structured_invoke
 
@@ -904,9 +904,8 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
 
                     mem.record_subgoal_step()
                     active = mem.peek_subgoal()
-                    if (
-                        active is not None
-                        and mem.subgoal_stagnation_steps < SUBGOAL_STAGNATION_THRESHOLD
+                    if active is not None and subgoal_survives_escape_valve(
+                        active, mem.subgoal_stagnation_steps, SUBGOAL_STAGNATION_THRESHOLD
                     ):
                         suggested = (
                             f" (suggested tools: {', '.join(active.suggested_tools)})"
@@ -914,6 +913,17 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                             else ""
                         )
                         active_subgoal_str = f"{active.name}: {active.description}{suggested}"
+                        # Only a critical subgoal can survive past the threshold —
+                        # log that the valve was deliberately held open for it.
+                        if (
+                            active.critical
+                            and mem.subgoal_stagnation_steps >= SUBGOAL_STAGNATION_THRESHOLD
+                        ):
+                            logger.info(
+                                f"[MACLA] escape valve SUPPRESSED for critical subgoal "
+                                f"{active.name} stagnation={mem.subgoal_stagnation_steps} "
+                                f">= {SUBGOAL_STAGNATION_THRESHOLD} — kept in planner prompt"
+                            )
                     elif active is not None:
                         logger.info(
                             f"[MACLA] subgoal escape valve fired: {active.name} "
