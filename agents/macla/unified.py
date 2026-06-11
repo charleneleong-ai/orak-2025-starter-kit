@@ -975,8 +975,11 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
         self._last_llm_user_text = user_text
 
         try:
+            # Action call is the per-step hot path → use the fast (non-thinking)
+            # LLM. Defaults to _llm unless config.fast_extra_body opts into the
+            # role-based thinking split (planner/reflector keep _llm).
             result, usage = with_retries(
-                lambda: safe_structured_invoke(self._llm, messages, self._action_schema),
+                lambda: safe_structured_invoke(self._fast_llm, messages, self._action_schema),
                 label="macla_unified.llm",
             )
             reasoning = getattr(result, "reasoning", "")

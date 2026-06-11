@@ -33,6 +33,10 @@ class BaseMaclaAgent(BaseModel):
 
     # MACLA-specific private attributes
     _macla_agent: LLMMACLAAgent = PrivateAttr()
+    # Fast (non-thinking) LLM for the per-step action call. Defaults to the
+    # same instance as ``_llm`` unless ``config.fast_extra_body`` opts into a
+    # role-based thinking split (planner thinks, action doesn't).
+    _fast_llm: Any = PrivateAttr(default=None)
     _last_execution_result: dict | None = PrivateAttr(default=None)
     _macla_step_count: int = PrivateAttr(default=0)
     _learning_step_interval: int = PrivateAttr(default=10)
@@ -82,6 +86,7 @@ class BaseMaclaAgent(BaseModel):
             project=self.config.gcp_project,
             location=self.config.gcp_location,
         )
+        self._fast_llm = self._llm  # no thinking split for Vertex
         self._macla_agent = LLMMACLAAgent(
             fallback_generator=self._base_fallback,
             context_extractor=self._extract_context,
@@ -105,6 +110,7 @@ class BaseMaclaAgent(BaseModel):
             api_key=self.config.api_key,
             temperature=temperature,
         )
+        self._fast_llm = self._llm  # no thinking split for hosted OpenAI
         self._macla_agent = LLMMACLAAgent(
             fallback_generator=self._base_fallback,
             context_extractor=self._extract_context,
@@ -140,6 +146,15 @@ class BaseMaclaAgent(BaseModel):
         if extra_body:
             llm_kwargs["extra_body"] = extra_body
         self._llm = ChatOpenAI(**llm_kwargs)
+        # Role-based thinking split: a separate fast (non-thinking) LLM for the
+        # per-step action call when the config opts in; otherwise share _llm.
+        # Same model/url/sampling — only extra_body (e.g. enable_thinking) differs.
+        fast_extra_body = self.config.fast_extra_body
+        self._fast_llm = (
+            ChatOpenAI(**{**llm_kwargs, "extra_body": fast_extra_body})
+            if fast_extra_body
+            else self._llm
+        )
         self._macla_agent = LLMMACLAAgent(
             fallback_generator=self._base_fallback,
             context_extractor=self._extract_context,
