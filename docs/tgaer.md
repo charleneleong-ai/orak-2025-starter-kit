@@ -2,7 +2,9 @@
 
 > **TGAER** = **T**oward **G**eneral-Purpose **A**bstraction & **E**mbodied **R**easoning. A layered agent architecture for long-horizon, self-evolving, cross-medium reasoning — captured here as the in-build version that will land in the standalone repo at https://github.com/charleneleong-ai/tgaer. The two halves of the name map to the two halves of the stack: **General-Purpose Abstraction** = L2 Memory4 + L5 Reflector (what the agent *learns and stores*); **Embodied Reasoning** = L1 EnvAdapter + L3 Pathology guards + L4 Planner (what the agent *does in the world*). Bootstraps from pokemon's existing scaffolds as data + extends to mario, 2048, and any future env/task via the layered contracts below.
 
-**Last updated:** 2026-05-24
+**Last updated:** 2026-06-12
+
+> **Status update 2026-06-12 — L3 PRs 1–3 landed.** The "PR 1 (futile-action detector) in flight" status throughout this doc is stale: PR 1 merged as [#107](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/107) (2026-05-26, ships as a safety floor — no cross-game lift), the action-side repeated-plan sibling as [#109](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/109), and the progress-stagnation detector + procedure-aware hint enrichment as [#110](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/110) (both 2026-05-27). Episode-end retrospective credit assignment landed as [#114](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/114). Separately, the pokemon M5 ceiling was broken — M6 (OAK's PARCEL) banked live via the escape-valve exemption ([#122](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/122)); see the [Update 2026-06-12](architecture.md#update-2026-06-12--m5-ceiling-broken-l3-guards-landed) banner in `architecture.md`. Read the per-PR `in flight` statuses below against this note.
 
 A successor architecture to the per-game MACLA scaffold. North star: a single agent that **excels at embodied reasoning for any task, plans long-horizon, executes, and self-evolves through interaction with its environment** — without hand-curated per-game milestone libraries, map graphs, or hint injectors.
 

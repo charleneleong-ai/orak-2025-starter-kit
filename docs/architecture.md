@@ -1,10 +1,10 @@
 # Orak 2025 — Architecture & Roadmap
 
-**Last updated:** 2026-05-24 (added "Current work (TGAER)" section reflecting cross-game baselines + futile-action detector PR; per-game Stage S work through PR #104 merged; Stage K/L statuses fast-forwarded — see [`tgaer.md`](tgaer.md) for the successor architecture and [`cross-stage-diagnosis.md`](experiments/gemma/cross-stage-diagnosis.md) for the per-game stage progression)
+**Last updated:** 2026-06-12 — see the [**Update 2026-06-12**](#update-2026-06-12--m5-ceiling-broken-l3-guards-landed) banner below: the Gemma-era M5 ceiling is broken (M6 banked live, M7 in progress) and the TGAER L3 guards (PRs 1–3) have landed. Prior 2026-05-24 pass added the "Current work (TGAER)" section reflecting cross-game baselines + the futile-action detector; per-game Stage S work through PR #104 merged. See [`tgaer.md`](tgaer.md) for the successor architecture and [`cross-stage-diagnosis.md`](experiments/gemma/cross-stage-diagnosis.md) for the per-game stage progression.
 
 One-page snapshot of the cognitive architecture, what we've proven useful, what we've ruled out, and what's still open. For depth see [`docs/experiments/gemma/cross-stage-diagnosis.md`](experiments/gemma/cross-stage-diagnosis.md) and [`docs/experiments/gemma/macla_findings.md`](experiments/gemma/macla_findings.md).
 
-> **Successor architecture in progress:** [`tgaer.md`](tgaer.md) — **TGAER** (*Toward General-Purpose Abstraction & Embodied Reasoning*), a Memory4 + Reflector layered stack targeting **SLMs that fit on a single A100 40GB** (Gemma-4 26B-A4B-it / Qwen 7-14B class). Submitted to the **[Orak benchmark](https://github.com/krafton-ai/Orak)** (KRAFTON 2025) and planned for the **[ARC-AGI-3 competition](https://arcprize.org/competitions/2026/arc-agi-3)** (milestone #1 June 30, 2026). Per the credibility-weighted literature audit in `tgaer.md`, this is an agent implementation + measured ablations against published baselines ([AgentEvolver](https://github.com/modelscope/AgentEvolver) 1.4k★, [Agent0](https://github.com/aiming-lab/Agent0) 1.2k★, [SkillsBench](https://github.com/benchflow-ai/skillsbench) 1.2k★, [Memory-R1](https://huggingface.co/papers/2508.19828) paper-only), not a benchmark invention. PR 1 (futile-action detector) on `feat/futile-action-detector`. Standalone repo target: https://github.com/charleneleong-ai/tgaer.
+> **Successor architecture in progress:** [`tgaer.md`](tgaer.md) — **TGAER** (*Toward General-Purpose Abstraction & Embodied Reasoning*), a Memory4 + Reflector layered stack targeting **SLMs that fit on a single A100 40GB** (Gemma-4 26B-A4B-it / Qwen 7-14B class). Submitted to the **[Orak benchmark](https://github.com/krafton-ai/Orak)** (KRAFTON 2025) and planned for the **[ARC-AGI-3 competition](https://arcprize.org/competitions/2026/arc-agi-3)** (milestone #1 June 30, 2026). Per the credibility-weighted literature audit in `tgaer.md`, this is an agent implementation + measured ablations against published baselines ([AgentEvolver](https://github.com/modelscope/AgentEvolver) 1.4k★, [Agent0](https://github.com/aiming-lab/Agent0) 1.2k★, [SkillsBench](https://github.com/benchflow-ai/skillsbench) 1.2k★, [Memory-R1](https://huggingface.co/papers/2508.19828) paper-only), not a benchmark invention. L3 guards PRs 1–3 have landed ([#107](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/107), [#109](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/109), [#110](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/110)) — see the [Update 2026-06-12](#update-2026-06-12--m5-ceiling-broken-l3-guards-landed) banner. Standalone repo target: https://github.com/charleneleong-ai/tgaer.
 
 > ⚠️ **Read this before scanning pokemon results:** every pokemon experiment row dated **2026-03-28 → 2026-05-13** ran with `pokered/data/maps/objects/*.asm` empty. The harness emitted placeholder `OBJ_n_n` tokens instead of real `SPRITE_*` names, so 74–78% of reasoning chains were anchored on placeholders. PR #80 hard-fails on the missing dir; PR #81 reran Stage D + Stage H (n=3 each) under the fix and collapsed the bimodal `[57.14, 57.14, 28.57]` distribution to `[57.14, 57.14, 57.14]` zero-variance. Pokemon rows in this doc are tagged **`PRE-ASM-FIX`** where the placeholder caveat applies. See [`docs/experiments/pokemon-asm-gap.md`](experiments/pokemon-asm-gap.md) for the full list of affected experiments.
 
@@ -29,7 +29,7 @@ Observation  ──>  Subtask planner (D)  ──>  Vector memory (C)  ──>  
    └──────────────────────────────────  Game env (PyBoy + pokered)
 ```
 
-## Successor architecture (TGAER — in build, PR 1 in flight)
+## Successor architecture (TGAER — in build, L3 guards PRs 1–3 landed)
 
 The architecture above is per-game scaffold-heavy (`_POKEMON_MILESTONE_LIBRARY`, `NavigateToMap` bridges, `map_graph_hint`, exit-tile hints) — it works for pokemon but mario and 2048 have no equivalent scaffolds, and future games would need fresh hand-curation each time. The cross-game baseline analysis (2026-05-23) surfaced shared pathologies — procedure-cache poisoning (mario), MACLA dominance lock-in (2048), futile-action loops (all three games) — that are universal, not pokemon-specific. The Memory4 + Reflector TGAER replaces the per-game scaffold with a **task-agnostic, self-evolving five-layer stack**:
 
@@ -64,7 +64,7 @@ The architecture above is per-game scaffold-heavy (`_POKEMON_MILESTONE_LIBRARY`,
 | **L2.Episodic** | `game_states.jsonl` is written but not retrievable | ❌ new (PR 6, ~200 lines) — embedding index + obs-sim retrieval |
 | **L2.Semantic** | — | ❌ new (PR 7, part of reflector) — rules written by Reflector |
 | **L2.Self-model** | — | ❌ new (PR 8, ~100 lines) — capability map |
-| **L3** Pathology guards | pokemon-specific hints in `unified.py:_base_fallback` (`map_graph_hint`, `looped_positions_hint`, `subgoal escape valve`) | partial — need to generalize; **PR 1 (futile-action detector) in flight @ `feat/futile-action-detector` [`eda10f0`](https://github.com/charleneleong-ai/orak-2025-starter-kit/commit/eda10f0)** |
+| **L3** Pathology guards | pokemon-specific hints in `unified.py:_base_fallback` (`map_graph_hint`, `looped_positions_hint`, `subgoal escape valve`) | ✅ generalized — futile-action ([#107](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/107)), repeated-plan ([#109](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/109)), progress-stagnation ([#110](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/110)) detectors merged + milestone-stall hint→override ([#119](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/119)), escape-valve exemption ([#122](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/122)) |
 | **L4** Planner | `agents/macla/unified.py:_base_fallback` | ✅ already LLM-based; refactor parameterizes `requires_location` (today pokemon-only) |
 | **L5** Reflector | `record_episode_end` stub at `unified.py:775` | ❌ new (PR 7, ~250 lines) — post-episode LLM critique → memory updates |
 | Telemetry | wandb + weave + `evaluation_summary.json` | ✅ kept; extended with `agent_events.jsonl` (PR 4) |
@@ -97,6 +97,37 @@ For full details — staged PR plan, have-vs-need by layer with file:line refere
 ## Verdict from 11 stages (A → K)
 
 **The 57.14% pokemon ceiling lives at M5 (`'Viridian' in map_name`), not in reasoning, model lineage, or cognitive scaffolding.** Pre-asm-fix bimodal `[57.14, 57.14, 28.57]` results in Stages G/H/B' were placeholder-reasoning artifacts during the scripted M1-M4 phase; they collapse to zero variance under #80. M1-M4 are scripted progressions (cutscene + name screen + forced rival battle). M5 is the first milestone that demands real navigation: cross Route1 from south to north, ~25 tiles. **0 / 6 post-fix runs ever set foot in Viridian.** ([PR #81](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/81), [PR #82](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/82))
+
+> The "ceiling lives at M5" claim above is the **Gemma-era** verdict (57.14% × 6, σ=0). It has since been broken — see the update below.
+
+---
+
+## Update 2026-06-12 — M5 ceiling broken, L3 guards landed
+
+The M5 navigation gate above was a **model-and-mechanism artefact, not a hard wall**, and it has been pushed back two milestones since the 2026-05-24 snapshot.
+
+**Navigation wall broken — M6 banked live.**
+
+| Step | What changed | PR |
+|---|---|---|
+| M5 reached by *every* seed | Qwen3.6 reasoning + the truncfix (`max_tokens` 8192→10240) flipped 97% press-A fallback → 94% real `move_to`; all 3 pokemon seeds clear **M5 (Viridian, 71%) by ~step 170** — the milestone the bugged Gemma runs never reached in 1200 steps | [#113](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/113) |
+| Loop counter survives checkpoints | Anti-perseveration counter no longer zeroed on every checkpoint round-trip, so `looped_positions_hint` actually fires | [#118](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/118) |
+| Interaction-stall detector + hint→override | Generalised milestone-stall detector escalates hint→override when the agent paces the right map but won't interact | [#119](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/119) |
+| Role-based thinking split | Fast action LLM + thinking planner, so the reasoning budget lands on planning, not per-step actions | [#121](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/121) |
+| **Escape-valve exemption → M6 broke live** | The subgoal escape valve was dropping the milestone-gateway nav (`NavigateToMap(ViridianMart)`) after 30 stagnant steps — the one map the agent must reach. Exempting milestone-gateway navs kept it alive and the agent grabbed **OAK's PARCEL (M6)** in live validation | [#122](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/122) |
+
+The new ceiling is **M7 (deliver the parcel to Oak's Lab)** — an interaction/back-tracking problem on the Route1 south-reversal, not the M5 spatial gate. Live n=3 validation (`qwen36_pokemon_escapeval`) is in progress.
+
+**TGAER L3 universal pathology guards — PRs 1–3 landed** (the "PR 1 in flight" status throughout this doc is stale):
+
+| L3 guard | Status | PR |
+|---|---|---|
+| Futile-action detector (obs-identical → "your last actions did nothing") | ✅ Merged 2026-05-26 — ships as a safety floor (no cross-game lift) | [#107](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/107) |
+| Repeated-plan detector (action-side sibling) | ✅ Merged 2026-05-27 | [#109](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/109) |
+| Progress-stagnation detector + procedure-aware hint enrichment | ✅ Merged 2026-05-27 | [#110](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/110) |
+| Episode-end retrospective credit assignment (TD-λ over proc-trace) | ✅ Merged 2026-06-02 | [#114](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/114) |
+
+Related infra that landed alongside: SC2 reward shaping + progressive milestone metric ([#111](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/111), [#115](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/115), [#117](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/117)) and weave Option B ([#116](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/116)). The per-PR `in flight` / `Running` statuses in the sections below predate this update and should be read against this banner.
 
 ---
 
@@ -262,9 +293,10 @@ The PR #28 verdict (mario → Stage D) is the production config; the iter-5 100%
 | **Stage L — map-aware procedure cache** | ✅ Merged 2026-05-15 ([PR #85](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/85), commit [`058c53a`](https://github.com/charleneleong-ai/orak-2025-starter-kit/commit/058c53a)) | Procedures keyed on `(map_name, hash(steps))`, retrieval filters wrong-map matches, `prune_stale_procedures(max_age=2)` on checkpoint load. |
 | **Stage M / N / O** | ✅ Merged 2026-05-16+ ([PR #86](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/86), [#87](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/87), [#88](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/88)) | Stage M selector signals plateau at 51.43% (FLAT verdict). Stage N+O bootstrap-neutral signals + planner-side novelty + broadened acquisition. |
 | **Stage Q / R / S** | ✅ Merged 2026-05-19+ ([PRs #92, #97, #101, #103, #104](https://github.com/charleneleong-ai/orak-2025-starter-kit/pulls)) | Stage Q exit-tile coords + procedural perf-gated cache prune. Stage R subgoals + Reflexion + v3 soft+escape-valve planner. Stage S MilestoneSpec.requires_location auto-bridge — lifted v3 pokemon baseline 4/7 → 5/7 → 6/7 across 300/600/1200-step budgets. |
-| **Pokemon v4 step-budget probe** (2000 steps) | Running (PID 1953418, ~96% complete as of 01:43 UTC 2026-05-24) | `step_budget_2000_baseline_20260523T210201Z`. Tests whether M7 (DeliverOaksParcel) also falls to step budget alone or hits a planner wall on the return leg. Decision tree in [`experiments/openevolve_milestones/v1.md`](experiments/openevolve_milestones/v1.md) (on `feat/openevolve-milestones-spike`). |
-| **TGAER PR 1 — universal futile-action detector** | ✅ Committed 2026-05-24 (`feat/futile-action-detector` @ [`eda10f0`](https://github.com/charleneleong-ai/orak-2025-starter-kit/commit/eda10f0)); 3 rollouts in flight | Pokemon @ 1200 (PID 1990348), mario @ 1000 (PID 1991018), 2048 @ 1000 (PID 1992409). See [`tgaer.md`](tgaer.md) for the full PR 1-8 plan. |
-| **TGAER PRs 2-8** | Queued behind PR 1 validation | Per-skill success-rate floor → stagnation→skill demotion → `agent_events.jsonl` telemetry → episode-end pruning → episodic store + retrieval → Reflector → self-model. |
+| **Pokemon M7 step-budget / interaction probe** | ✅ Answered — it's a planner/interaction wall, not pure step budget | M6 fell to the escape-valve exemption ([#122](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/122), broke live); M7 (deliver parcel) is the current ceiling, validated by the `qwen36_pokemon_escapeval` n=3 run. See the [Update 2026-06-12](#update-2026-06-12--m5-ceiling-broken-l3-guards-landed) banner. |
+| **TGAER PR 1 — universal futile-action detector** | ✅ Merged 2026-05-26 ([#107](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/107)) | Ships as a safety floor — no cross-game lift, but suppresses futile-action loops. See [`tgaer.md`](tgaer.md) for the full PR 1-8 plan. |
+| **TGAER PRs 2-3** | ✅ Merged — repeated-plan ([#109](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/109)) + progress-stagnation detector ([#110](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/110)) | Action-side futile sibling + procedure-aware hint enrichment. |
+| **TGAER PRs 4-8** | Queued | `agent_events.jsonl` telemetry → episode-end pruning ([#114](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/114) lands ep-end credit assignment) → episodic store + retrieval → Reflector → self-model. |
 | **2048 state-abstraction sweep retune** | Open since PR #23 (deprioritized) | Subsumed by TGAER work — the right fix is Memory4 cleanup, not 2048-specific param-search. |
 | **Stage J — Qwen3-Thinking** (always-on reasoning budget) | Rerun still deferred | Pre-fix scored 28.57% × 3 — failed M3 (no starter). Post-fix re-run not queued; would only test reasoning budget, not the navigation gate. |
 
@@ -407,7 +439,7 @@ The per-game scaffold work (Stage S openevolve, milestone library) plateaued at 
 | mario | `stage_s_super_mario_1000_20260523T210441Z` | 1000 | 21.85% | 9.04% | 58 consecutive 8.20% deaths after ep4 — procedure poisoning |
 | 2048 | `stage_s_2048_1000_20260523T210447Z` | 1000 | 63.64% | 44.92% | 17 episodes, only 4 unique procs across 999 selections |
 
-**PR 1 in flight — universal futile-action detector** (branch `feat/futile-action-detector` @ [`eda10f0`](https://github.com/charleneleong-ai/orak-2025-starter-kit/commit/eda10f0)):
+**PR 1 — universal futile-action detector** (✅ merged as [#107](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/107) 2026-05-26; snapshot below is the pre-merge state):
 - Agent-side hook in [`unified.py:_base_fallback`](../agents/macla/unified.py#L549) that hashes the planner-visible obs, fires when K=3 consecutive obs are byte-identical, injects a "your last actions did nothing" hint
 - 11/11 tests in [`tests/test_futile_action_detector.py`](../tests/test_futile_action_detector.py) — game-agnostic parametrization + state-machine sanity
 - Three regression rollouts launched 2026-05-24 01:37 UTC against the baselines above; cross-game results pending
