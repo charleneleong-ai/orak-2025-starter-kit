@@ -157,6 +157,14 @@ class LocalConfig(AgentConfig):
     #   Sampling overrides:   {"top_k": 40, "repetition_penalty": 1.05}
     #   Qwen3 chat template:  {"chat_template_kwargs": {...}}
     extra_body: dict = field(default_factory=dict)
+    # Role-based thinking split: `extra_body` for the per-step *action* call
+    # only (the hot path — runs every step). Planner / reflector keep the
+    # `extra_body` above. Set this to disable reasoning on the cheap, frequent
+    # action call while the strategic planner still thinks, e.g. for a Qwen3
+    # reasoning model: {"chat_template_kwargs": {"enable_thinking": False}}.
+    # Empty (default) → the action call shares the single thinking LLM, so
+    # behaviour is unchanged.
+    fast_extra_body: dict = field(default_factory=dict)
     # vLLM-specific (ignored by Ollama/MLX)
     tensor_parallel_size: int = 1  # num GPUs for tensor parallelism
     gpu_memory_utilization: float = 0.90
@@ -245,6 +253,7 @@ class LocalConfig(AgentConfig):
             "server_type": self.server_type,
             "supports_vision": self.supports_vision,
             "extra_body": self.extra_body,
+            "fast_extra_body": self.fast_extra_body,
             "max_tokens": self.max_tokens,
             "tensor_parallel_size": self.tensor_parallel_size,
             "gpu_memory_utilization": self.gpu_memory_utilization,
