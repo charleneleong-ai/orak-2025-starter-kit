@@ -239,6 +239,37 @@ def graph_hint(current_map: str | None, visited_maps: set[str]) -> str | None:
     return "\n".join(lines)
 
 
+# ── Interaction-sweep adapter surface ─────────────────────────────────
+# Twin of graph_hint: the generic milestone-stall controller in unified.py
+# reads this via getattr(self._adapter, "interaction_targets", None). Games
+# without interactable NPCs (2048, mario) don't export it — getattr returns
+# None and the sweep never fires (safe degradation, same as graph_hint).
+#
+# The pokemon obs renders each on-screen tile as "(x, y): LABEL". Interactable
+# labels are SPRITE_* (an NPC to talk to) and Warp→<dest> (a building to enter);
+# walkable/blocked tiles are bare "O"/"X" and are ignored.
+_INTERACTABLE_RE = re.compile(r"\(\s*(\d+),\s*(\d+)\):\s*(SPRITE_\w+|Warp\S+)")
+
+
+def interaction_targets(observation: str) -> list[tuple[str, int, int]]:
+    """Parse visible interactables from the obs grid as (label, x, y) tuples."""
+    return [
+        (m.group(3), int(m.group(1)), int(m.group(2)))
+        for m in _INTERACTABLE_RE.finditer(observation or "")
+    ]
+
+
+def interaction_action(target: tuple[str, int, int]) -> str:
+    """Phase-2 override primitive — the atomic high-level tool for ``target``.
+    Both navigate *and* interact in a single step: interact_with_object walks to
+    an NPC and runs its dialog; warp_with_warp_point walks onto a warp tile and
+    enters. (interact_with_object rejects warps, hence the split.)"""
+    label, x, y = target
+    if label.startswith("Warp"):
+        return f"use_tool(warp_with_warp_point, (x_dest={x}, y_dest={y}))"
+    return f"use_tool(interact_with_object, (object_name='{label}'))"
+
+
 # ── Trajectory introspection adapter (introspect) ─────────
 # Consumed by `introspect --adapter agents.pokemon_red.game_adapter`.
 # Mario / 2048 ship their own equivalent blocks when they need introspection.

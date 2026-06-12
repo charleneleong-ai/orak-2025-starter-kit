@@ -27,6 +27,7 @@ from agents._harness import format_recent_history, with_retries
 from agents.base import BaseOrakAgent
 from agents.macla.base import BaseMaclaAgent
 from agents.macla.context_extractors import build_context_extractor
+from agents.macla.interaction_sweep import decide_interaction_sweep
 from agents.macla.macla_lib import _extract_map_name
 from agents.macla.reflexion import build_reflexion_summary
 from agents.macla.structured_output import safe_structured_invoke
@@ -59,11 +60,9 @@ STAGNATION_WINDOW = 20
 
 
 # Regex helpers for subgoal completion predicates. The adapter's
-# completion functions read obs dict keys (map_name, recent_dialog,
-# score); we extract those from the raw observation string here so the
-# act-loop has a single source for what each subgoal sees.
+# completion functions read obs dict keys (map_name, recent_dialog) parsed
+# from the observation string; score comes from the harness (_last_score).
 _DIALOG_RE = re.compile(r"\[Filtered Screen Text\]\s*(.*?)\s*(?:\[|$)", re.DOTALL)
-_SCORE_RE = re.compile(r"[Ss]core:?\s*(\d+)")
 # Stage R v4 (1): pull (x, y) from "Your position (x, y): (X, Y)" so the
 # anti-perseveration counter can track per-tile dwell. Pokemon-only
 # format today; games without this line return None and the counter
@@ -84,12 +83,6 @@ def _extract_recent_dialog(observation: str) -> str:
     won't fire, which is fine."""
     m = _DIALOG_RE.search(observation or "")
     return m.group(1).strip() if m else ""
-
-
-def _extract_raw_score(observation: str) -> int:
-    """Extract the raw 0-7 score from the obs. Falls back to 0."""
-    m = _SCORE_RE.search(observation or "")
-    return int(m.group(1)) if m else 0
 
 
 # ── Game adapter registry ────────────────────────────────────────────
@@ -390,6 +383,11 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
     @weave.op()
     def _get_action(self, task_description: str, cur_state_str: str, obs_image=None):
         """MACLA action loop: feedback → execute → log → validate → return 8-tuple."""
+        # Stash the raw obs before preprocessing — the pokemon preprocessor
+        # rewrites the obs into a structured summary that DROPS the "Map on
+        # Screen" tile grid, so interaction_sweep (Stage S) must parse this
+        # pre-preprocess obs or it sees zero SPRITE_*/Warp interactables.
+        self._raw_cur_state = cur_state_str
         if self._obs_preprocessor is not None:
             cur_state_str = self._obs_preprocessor.preprocess(cur_state_str)
 
@@ -406,6 +404,7 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
             # the looped-positions hint never fired.
             if self._macla_agent and hasattr(self._macla_agent, "memory_system"):
                 self._macla_agent.memory_system.reset_position_visits()
+                self._macla_agent.memory_system.reset_interaction_sweep()
 
         # Refresh the self-reflection critique (cached between reflect_every
         # invocations). _base_fallback reads self._last_critique to inject
@@ -838,6 +837,43 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                     logger.info(
                         f"[MACLA] looped_positions_hint fired ({sum(1 for v in mem.position_visits.values() if v >= 5)} cells over threshold)"
                     )
+                # Stage S: interaction sweep — graduated hint→override when
+                # story-stalled (milestone flat + looping) in an explored map,
+                # where the gate is an interaction, not a place. Parser + action
+                # are per-game (getattr None → never fires, as for graph_hint);
+                # the decision logic lives in interaction_sweep.py.
+                # Milestone progress comes from the harness score (_last_score,
+                # the raw 0-7 game_info["score"]) — the text obs never carries a
+                # score, so the old text-scanning parser always read 0 and the
+                # stall counter tracked total steps instead of steps-since-gain.
+                raw_score = getattr(self, "_last_score", 0) or 0
+                itargets_fn = getattr(self._adapter, "interaction_targets", None)
+                if itargets_fn is not None:
+                    raw_obs = getattr(self, "_raw_cur_state", None) or observation
+                    mem.record_milestone_step(raw_score)
+                    sweep = decide_interaction_sweep(
+                        stall_steps=mem.milestone_stall_steps,
+                        looping=any(n >= 5 for n in mem.position_visits.values()),
+                        targets=itargets_fn(raw_obs),
+                        tried=mem.interaction_tried(current_map or ""),
+                        player_pos=pos or (0, 0),
+                    )
+                    if sweep.mode == "override":
+                        label, tx, ty = sweep.target
+                        mem.record_interaction_tried(current_map or "", tx, ty)
+                        action = self._adapter.interaction_action(sweep.target)
+                        logger.info(
+                            f"[MACLA] interaction_sweep OVERRIDE → {label} "
+                            f"(stall={mem.milestone_stall_steps})"
+                        )
+                        self._last_llm_usage = None
+                        if not hasattr(self, "_plan_history"):
+                            self._plan_history = deque(maxlen=REPEATED_PLAN_WINDOW)
+                        self._plan_history.append(action)
+                        return [action], f"interaction-sweep override: {label}"
+                    if sweep.mode == "hint":
+                        observation = f"{sweep.hint}\n\n{observation}"
+                        logger.info("[MACLA] interaction_sweep hint fired")
                 # Prepend the per-iter Reflexion summary (built once
                 # per episode in record_episode_end_into_reflexion).
                 reflexion = getattr(self, "_reflexion_summary", "")
@@ -857,7 +893,7 @@ class UnifiedMaclaAgent(BaseMaclaAgent, BaseOrakAgent):
                     obs_for_completion = {
                         "map_name": current_map or "",
                         "recent_dialog": _extract_recent_dialog(observation),
-                        "score": _extract_raw_score(observation),
+                        "score": raw_score,
                     }
                     popped = mem.check_active_subgoal_completion(obs_for_completion)
                     if popped is not None:

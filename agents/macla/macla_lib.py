@@ -389,6 +389,12 @@ class EnhancedHierarchicalMemorySystem:
         # cumulative iters don't carry stale loop trauma forward (a tile that
         # looped in iter 1 might be the right move in iter 5).
         self._position_visits: Counter[tuple[str, int, int]] = Counter()
+        # Interaction-sweep (milestone-stall) tracking — sibling of the loop
+        # counter, watching the milestone score instead of position. Same
+        # per-episode discipline as the loop counter (see reset_interaction_sweep).
+        self._milestone_score: int = -1
+        self._milestone_stall_steps: int = 0
+        self._interaction_tried: set[tuple[str, int, int]] = set()
         # Per-episode trace of proc_keys executed via record_execution_outcome.
         # Drained at episode boundary by EpisodeCredit's assign_retrospective_credit.
         # maxlen=2000 is generous — TD-lambda weight at position -2000 is
@@ -462,6 +468,36 @@ class EnhancedHierarchicalMemorySystem:
         counter survives intra-episode checkpoint round-trips and only resets
         between episodes."""
         self._position_visits = Counter()
+
+    # ── interaction sweep / milestone-stall detector ───────────────────
+    @property
+    def milestone_stall_steps(self) -> int:
+        return self._milestone_stall_steps
+
+    def record_milestone_step(self, score: int) -> None:
+        """Tally one step against the milestone score. Resets the stall counter
+        when the score increases (progress), otherwise increments it."""
+        if score > self._milestone_score:
+            self._milestone_score = score
+            self._milestone_stall_steps = 0
+        else:
+            self._milestone_stall_steps += 1
+
+    def record_interaction_tried(self, map_name: str, x: int, y: int) -> None:
+        """Mark an interactable tile swept this episode so the controller skips it."""
+        self._interaction_tried.add((map_name, x, y))
+
+    def interaction_tried(self, map_name: str) -> set[tuple[int, int]]:
+        """Tiles already swept in ``map_name`` this episode, as (x, y) pairs."""
+        return {(x, y) for (m, x, y) in self._interaction_tried if m == map_name}
+
+    def reset_interaction_sweep(self) -> None:
+        """Clear per-episode stall + tried state. Called once per episode at the
+        agent's _subgoal_init_done gate, NOT in __setstate__ — same discipline as
+        reset_position_visits, so the counter survives checkpoint round-trips."""
+        self._milestone_score = -1
+        self._milestone_stall_steps = 0
+        self._interaction_tried = set()
 
     def looped_positions_hint(self, threshold: int = 5, max_display: int = 5) -> str | None:
         """Render the "### Recently looped" block for the planner.
