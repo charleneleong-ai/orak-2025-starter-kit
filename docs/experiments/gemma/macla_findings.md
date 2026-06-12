@@ -11,16 +11,30 @@ the unified-architecture claim holds vs breaks. It is deliberately scoped to
 the empirical findings — no recommendations beyond honest framings of the
 options at end.
 
+> **Update (2026-05-03, PR #28):** A cross-game Stage D ablation invalidated
+> the "uniform substrate" framing. The substrate does not generalize — each
+> game wants a different optimal stack. Per-game verdicts and the pokemon
+> reward-hack audit are incorporated below.
+
 ## TL;DR
 
 | Game | Best score | Where | Verdict |
 |---|---|---|---|
 | **super_mario** | **100.0%** (W1-1 complete) | `macla_procedure_carryover/` iter 5 | **Strong fit.** Procedures generalise; carry-over compounds 35→44→52→100. |
 | **twenty_fourty_eight** | **8.40%** | `macla_procedure_carryover/` iter 5 | **Partial fit.** Lucky one-shot per sweep; ceiling around 8% across configurations. |
-| **pokemon_red** | **14.29%** (1 of 7 flags) | All sweeps, iter 1 (cold) | **Doesn't fit.** Bottleneck is LLM-side task decomposition, not MACLA's procedure-learning. |
+| **pokemon_red** | **14.29%** (1 of 7 flags) | Stage A baseline (post-fix, n=2 identical) | **Eval-harness confounded.** Original 0% readings were triple-confounded (reward hack, early-kill, obs ambiguity). Post-fix, reliably scores 14.29 but only under Stage A. |
 
 **The unified-arch claim works within a sub-class of games — those with
 repeating contexts and dense reward.** It does not hold uniformly.
+
+**The substrate does not generalize across games** (PR #28). vmem helps
+1 of 3 games, planner helps 1 of 3, and no single config wins everywhere:
+
+| | vmem (Stage A → C) | planner (Stage C → D) | Best stage |
+|---|---|---|---|
+| **2048** | **+48% HELPS** | −23% REGRESSES | Stage C |
+| **mario** | 0% null | **+25% HELPS** | Stage D |
+| **pokemon** | ? *(not measured post-fix)* | −100% REGRESSES | Stage A |
 
 ## Sweeps run
 
@@ -65,6 +79,12 @@ a meaningful fraction of subsequent observations.
 The `RegexSpatialExtractor` is a good fit for mario's observation format —
 keys procedures by entity-relative-to-player tokens (e.g. `goomba_ahead_near`)
 which are short, repeating, semantically meaningful.
+
+**Stage D ablation (PR #28):** vmem gave 0% lift (Stage A 35.18 == Stage C
+35.18). The full +25% lift to 43.90 comes from the planner's sub-goal
+scaffolding helping the agent persist past death clusters (x=1000-1100
+region). vmem is dead weight here — a `Stage D − vmem` config could match
+43.90 at lower memory cost.
 
 ### twenty_fourty_eight — partial fit ⚠️
 
@@ -117,61 +137,106 @@ challenge. Strategic abstraction collapses it to ~hundreds of clusters but
 the procedure landscape and the param search interact in ways we didn't
 fully untangle in this study.
 
-### pokemon_red — doesn't fit ❌
+**Stage D ablation (PR #28):** vmem is the real mover here (+48%, Stage A
+4.36 → Stage C 6.46). Planner regresses −23% (Stage C 6.46 → Stage D 5.00)
+— inference cost overhead without compensating lift. Best config: **Stage C**
+(vmem on, planner off). Verdict applied in `6db13b6`.
 
-Across all three sweeps, pokemon's best score is **14.29% — exactly 1 flag
-of 7** — and never improves past iter 1 / iter 5 / iter 11 (the iters that
-happen to break out of the starting building). Every other iter sits at 0%.
+### pokemon_red — eval-harness confounded ⚠️ *(revised from ❌)*
 
-The diagnostic action distribution from the only successful 14.29% iter
-(`game_logs/pokemon_red/20260427_224956/`):
+> **Revision note (PR #28):** The original "doesn't fit / LLM bottleneck"
+> framing was partially wrong. The 0% readings that led to that conclusion
+> were triple-confounded by eval-harness bugs. Post-fix, pokemon reliably
+> scores 14.29 under Stage A. The LLM-side task-decomposition bottleneck
+> is real but was not the *proximate* cause of the 0% scores.
 
-```
-Steps 1-40:  oscillates RedsHouse1f ↔ RedsHouse2f via warp_with_warp_point
-             mashes interact_with_object SIGN_REDSHOUSE1F_TV
-Step 41:     finally exits to PalletTown via warp_with_warp_point  ← +1 flag
-Steps 41-157: wanders PalletTown, interacts with SIGN_PALLETTOWN sign
-              never reaches Route 1, never visits Oak's lab,
-              never gets a starter Pokemon
-```
+#### What was actually broken
 
-Action histogram for that iter:
+**Root cause #1 — warp-loop reward hack.** `_reward_pokemon` in
+`online_evaluator.py` gave +1.5 for every `map_name` change. Warping
+`RedsHouse1f → RedsHouse2f → RedsHouse1f` via the staircase gave +1.5 each
+transition. Agent learned warping = reliable reward and never explored past
+the starting house. 150 of 190 steps in a typical run orbited the warp tile +
+TV. Fix: track visited maps per episode; first visit → `map_discovery_bonus`
+(1.5), re-visit → `repeat_visit_bonus` (default 0). Shipped in `f37765f`.
 
-```
-19× interact_with_object SIGN_PALLETTOWN_PLAYERSHOUSE_SIGN
-12× move_to (3, 6)
-11× warp_with_warp_point (7, 1)
-10× move_to (4, 6)
- 8× use_tool(move_to (3, 5))
- 8× interact SIGN_REDSHOUSE1F_TV
-```
+**Root cause #2 — autoresearch early-kill triage.** `TRIAGE_SCORE_PLATEAU_STEPS`
+was hardcoded to 80. Pokemon's first scoring event is sparse (Stage C only
+got it at ~step 100-150). Stage A and D got killed at step 80-93 before they
+could prove anything. Fix: per-game thresholds
+`TRIAGE_SCORE_PLATEAU_STEPS_PER_GAME = {"pokemon_red": 200}`. Shipped in
+`f37765f`.
 
-**Why pokemon doesn't fit:**
+**Root cause #3 — obs-label ambiguity.** The staircase warp point and the
+exit door were both labeled `WarpPoint` in observations. Agent couldn't
+distinguish "go upstairs" from "leave the house". Fix: prompt-level
+exit-vs-staircase heuristic (bottom-edge convention). Shipped in `ccc0be0`.
 
-The bottleneck is **upstream of MACLA**. The LLM-side agent doesn't know
-the canonical Pokemon Red opening sequence (leave house → Oak's lab →
-choose starter → Route 1 → Brock). It emits plausible-looking but useless
-actions: "interact with TV", "warp through doorway", "move one square".
-MACLA can only learn procedures from actions the LLM emits, and the LLM
-emits sign-mashing.
+#### Post-fix results (PR #28 v6)
 
-We confirmed this is not fixable by anything in MACLA's scope:
+| Stage | Score | n | Steps | Notes |
+|---|---|---|---|---|
+| **A** (no substrate) | **14.29** | 2 (identical) | 168 | Reaches PalletTown reliably; 4 maps visited |
+| **D** (vmem + planner) | **0.00** | 2 (identical) | 150-181 | Planner's per-step latency leaves too few steps to reach Oak's Lab |
 
-- ❌ Checkpoint carry-over (PR #22): procedures persisted across iters,
-  but the procedures were "in RedsHouse1f, talk to TV". Persistence of
-  bad procedures is worthless.
-- ❌ Reward shaping (PR #23 reward changes): tighter pokemon stagnation
-  (-0.2→-0.4 after 3 turns). Agent still doesn't know which direction to
-  walk; penalty doesn't generate the missing knowledge.
-- ❌ State abstraction (PR #23 extractor): only changed 2048's key
-  scheme. Pokemon used `DictFieldExtractor` already; the issue isn't the
-  context key, it's that the LLM never generates a useful action
-  sequence to abstract.
+Stage A's 168 steps barely reach the first scoring event. Stage D's planner
+overhead reduces effective steps to ~150-181 in the same 30-min budget,
+which isn't enough. **The planner is actively harmful** on pokemon — not
+because it decomposes poorly, but because it eats the step budget a
+sparse-reward game needs.
 
-**What would unblock pokemon** is curriculum / subgoal decomposition at
-the prompt level: explicit "Step 1: leave the player's house. Step 2:
-visit Professor Oak…". That is a different research direction (task
-decomposition / hierarchical RL) and outside the scope of this study.
+**Missing: post-fix Stage C.** The 14.29 used as Stage C in the cross-game
+scoreboard is pre-fix historical data (before the warp-loop fix, early-kill
+fix, and obs-ambiguity fix). Whether vmem helps or hurts pokemon under fair
+conditions is unknown — a post-fix Stage C run is needed to fill that cell.
+
+#### Retrospective — was the warp-loop always there?
+
+~80% of all gemma-4 pokemon runs in the project's history were stuck in the
+starter house. The historical 14.29 from `pokemon_check` (used as Stage C
+baseline in earlier scoreboards) was n=1 of 3 — the only iter that randomly
+walked south. The "below capability floor" reading in v5 was wrong; it was
+obs-layer ambiguity that occasionally gave random-exploration luck.
+
+#### What would still unblock pokemon further
+
+The LLM-side bottleneck is real even post-fix — the agent reliably exits the
+house now but still doesn't reach Oak's Lab or get a starter Pokemon.
+Curriculum / subgoal decomposition at the prompt level remains the path
+forward for pokemon, but that is outside the scope of this study.
+
+## Stage D cross-game ablation (PR #28)
+
+PR #28 ran a controlled ablation of the two substrate components (vmem,
+planner) across all three games. Previously, planner was only enabled on
+pokemon based on the theory-driven assumption that mario (perception/timing)
+and 2048 (lookahead-search) wouldn't benefit from task decomposition. **The
+assumption was never measured** — PR #28 flipped the configs and let
+autoresearch produce the data.
+
+### Cross-game scoreboard
+
+| Game | Stage A baseline | Stage C (vmem) | Stage D (vmem + planner) |
+|---|---|---|---|
+| 2048 | 4.36 _(n=2)_ | **6.46** _(n=4)_ ✅ | 5.00 _(n=2)_ |
+| mario | 35.18 _(n=2, 0.1% spread)_ | 35.18 _(n=2)_ | **43.90** _(n=2)_ ✅ |
+| pokemon | **14.29** _(n=2, identical)_ ✅ | 14.29 _(n=1 historical, pre-fix)_ ⚠️ | 0.00 _(n=2, identical)_ |
+
+### Per-game verdicts
+
+- **2048 → Stage C** (vmem on, planner off). Applied in `6db13b6`.
+- **mario → Stage D** (vmem on, planner on), but vmem is dead weight (A==C).
+  The +25% lift is planner-only. Applied in `6db13b6`.
+- **pokemon → Stage A** (no substrate). Planner's per-step latency starves
+  the step budget. Config pending separate commit.
+
+### What this means
+
+The data didn't just disprove the theory; it disproved the **uniform
+substrate** premise underneath it. There is no single (vmem, planner)
+configuration that wins everywhere. vmem helps 1 of 3 games, planner helps
+1 of 3, and the pokemon vmem effect is unmeasured post-fix. The correct
+framing is **per-game routing**, not a shipped cross-game stack.
 
 ## The unified-arch claim — where it holds vs breaks
 
@@ -181,7 +246,7 @@ decomposition / hierarchical RL) and outside the scope of this study.
 | Dense reward on continuous progress signal | mario (x_pos delta per step) | Strong |
 | Strategic invariants encodable as features | 2048 (corner-anchor, chain) | Partial — needs the right state abstraction *and* the param-search retuned for it |
 | Combinatorial state space, sparse reward | 2048 with 16 cells × ~10 values | Partial — state abstraction helps but doesn't solve |
-| Long-horizon exploration, sparse reward, agent doesn't know task structure | pokemon (open-world RPG) | Doesn't fit — bottleneck is LLM-side |
+| Long-horizon exploration, sparse reward, agent doesn't know task structure | pokemon (open-world RPG) | Confounded — eval-harness bugs masked signal; post-fix, Stage A works but planner hurts |
 
 The phrase "unified architecture" describes **the agent's core** (memory
 system, Bayesian selector, contrastive refinement, meta-learner). But
@@ -192,26 +257,32 @@ everything that connects that core to a specific game is bespoke:
 - Per-game state extractors (`RegexSpatialExtractor` /
   `DictFieldExtractor` / `GeometricExtractor` /
   `StrategicGridExtractor`)
-- Per-game reward shapers in `online_evaluator.py`
+- Per-game reward shapers via `RewardShaper` registry (`MarioShaper`,
+  `TwentyFortyEightShaper`, `PokemonShaper`) in `online_evaluator.py`
 - Per-game system prompts in `configs/<game>/agent/<type>.yaml`
 - Per-game env configs (`max_steps`, `target_tile`, `success_condition`)
 - Per-game game-server runners under `evaluation_utils/mcp_game_servers/<game>/`
 - Per-game wandb project routing
+- **Per-game substrate routing** (PR #28): which combination of vmem +
+  planner to enable
 
 A more honest phrasing: **MACLA is a unified core wrapped in per-game
 adapters.** The adapters are non-trivial — they encode meaningful researcher
 knowledge about each game. Adding a 4th game is real work, not a config
-change.
+change. The substrate itself is another per-game adapter, not a universal
+primitive.
 
 ## What the architectural fixes did and didn't do
 
-Three substantive architecture improvements landed across PR #20, #22, #23:
+Four substantive architecture improvements landed across PR #20, #22, #23,
+#28:
 
 | Fix | Source | What it actually moved |
 |---|---|---|
 | Triage thresholds + preserve-new-best guard | PR #20 / #22 | Caught mario's 77% breakthrough that an earlier triage would have killed |
 | Checkpoint carry-over (`--prev-run-id`) | PR #22 | mario climbed 35→100 across 5 iters; 2048 reached 8.40% (vs 6.02% prior); pokemon flat |
 | Reward shaping + strategic state abstraction | PR #23 | 2048 cold start +44% (4.88→7.04) but param search couldn't navigate the new landscape; ceiling regressed to 7.04 |
+| Cross-game substrate ablation + eval-harness fixes | PR #28 | Revealed non-generalization; fixed pokemon reward hack + early-kill + obs ambiguity; per-game `RewardShaper` registry; `autoresearch.retrospective` failure-mode detectors |
 
 The strongest result is checkpoint carry-over (PR #22) — mario went from
 a one-shot 61.13% ceiling under PR #20 to a sustained climb to 100%. That
@@ -223,6 +294,13 @@ cold-start lift is real, but the ceiling regression suggests the
 autoresearch param search itself is part of the architecture and needs
 re-tuning when keying scheme changes. We did not run the additional
 sweeps that would pin this down.
+
+PR #28's main contribution is methodological: the cross-game ablation
+exposed that substrate components aren't general-purpose primitives, and the
+pokemon eval-harness audit uncovered three nested failure modes (reward hack,
+early-kill, obs ambiguity) that had been masking signal since the project's
+start. The `autoresearch.retrospective` module (v0.9.0+) now surfaces these
+patterns automatically after each iter.
 
 ## Limitations of this study
 
@@ -240,21 +318,27 @@ sweeps that would pin this down.
 - **PR #23's autoresearch param bounds were inherited from PR #22**
   rather than re-tuned for the new state-abstraction keying scheme. This
   likely undersells state abstraction's potential.
-- **Pokemon trajectories were inspected from one successful iter
-  (run_id 20260427_224956) and one failed iter (20260428_000044).**
-  Conclusions about pokemon's LLM-side bottleneck are based on the
-  pattern of action histograms but a more rigorous test would replay
-  multiple failed iters and trace the LLM reasoning step by step.
+- **Pokemon eval-harness was confounded for the entire MACLA study
+  (PRs #20-#23).** The warp-loop reward hack, early-kill triage, and
+  obs-label ambiguity were only discovered and fixed in PR #28. All
+  pokemon readings in the MACLA sweeps above are suspect — the agent may
+  have been reward-hacking rather than genuinely failing. The "doesn't
+  fit" verdict for pokemon in the original TL;DR was based on confounded
+  data.
+- **Pokemon Stage C baseline is n=1 historical.** The 14.29 used for
+  Stage C in the cross-game scoreboard comes from a single iter in
+  `pokemon_check` that happened to escape the starting house pre-fix.
+  Not a controlled comparison.
 
 ## Honest options going forward
 
 The study produced enough signal to support several different next moves
 without strong grounds to prefer one over another:
 
-1. **Rename the claim, ship what works.** Reframe MACLA as
-   *unified-core-with-game-adapters that fits action-platformers*. Ship the
-   PR #22 carry-over work as the demonstrated win. Move on to other game
-   classes that fit (other Atari-style games, perhaps).
+1. **Ship per-game routing, close the substrate question.** The cross-game
+   ablation (PR #28) gives a clear verdict per game. Ship the per-game
+   configs (2048 → Stage C, mario → Stage D, pokemon → Stage A) and move
+   on. The substrate is a per-game adapter, not a universal primitive.
 2. **Re-tune autoresearch under state abstraction.** PR #23's cold-start
    lift suggests the architecture extension works; the autoresearch
    harness just wasn't ready for it. Two more sweeps with widened
@@ -263,16 +347,22 @@ without strong grounds to prefer one over another:
 3. **Address the pokemon class of game directly.** Build subgoal
    decomposition / curriculum / task-aware prompting and re-run pokemon.
    This is a different research direction (hierarchical agents, not
-   memory-augmented procedural learning).
+   memory-augmented procedural learning). The eval-harness fixes from
+   PR #28 are a prerequisite — now done.
 4. **Stop here, write the paper / blog post.** The findings as documented
    are sufficient for a results write-up. The honest "where it works,
-   where it doesn't, why" framing is more valuable than another sweep.
+   where it doesn't, why" framing — including the eval-harness confound
+   narrative — is more valuable than another sweep.
 
 No recommendation is encoded in this report.
 
 ## Reproducibility
 
 All sweep results live under `experiments/unified_macla/<config>/results.jsonl`.
+Cross-game ablation results under `experiments/<tag>/gemma/results.jsonl`
+(tags: `harness_check`, `harness_check_mario`, `harness_check_pokemon_v4`,
+`cognitive_check_v2`, `mario_check`, `pokemon_check`, `stage_d_ablation_2048`,
+`stage_d_ablation_mario_v3`, `pokemon_check_v7`).
 Trajectories and game-state logs are under `game_logs/<game>/<run_id>/`.
 WandB projects: `orak-pokemon-red`, `orak-2048`, `orak-super-mario` (per-run
 URLs in each `results.jsonl` row).
@@ -281,3 +371,4 @@ Reference PRs:
 - [#20](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/20) — autoresearch framework + initial tuning fixes
 - [#22](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/22) — checkpoint carry-over
 - [#23](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/23) — reward shaping + state abstraction (still open; not merged because validation didn't break PR #22's ceiling)
+- [#28](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/28) — Stage D cross-game ablation + eval-harness fixes (reward hack, early-kill, obs ambiguity, `RewardShaper` registry, `autoresearch.retrospective`)

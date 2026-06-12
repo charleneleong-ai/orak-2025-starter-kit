@@ -1,162 +1,173 @@
 # Training Plan — Gemma 4 E4B agentic RL on Orak
 
-How to turn the harness + cognitive infra (PRs [#25](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/25), [#26](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/26)) into a self-improving model. Phased, cost-aware, grounded in what we already have vs what's missing.
+How to turn the harness + cognitive infra (PRs [#25](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/25), [#26](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/26)) into a self-improving model.
 
-> **Status: planning doc.** No training runs yet. Numbers below are estimates from public Unsloth/TRL benchmarks + our observed inference throughput; treat as ±50%.
+> **Status (2026-05-03):** Stage D cross-game ablation complete (PR #28 merged). Per-game substrate configs locked. No training runs yet.
+> See [`macla_findings.md`](macla_findings.md) for full ablation results and [`../agentic-rl-research/vlm_options.md`](../../agentic-rl-research/vlm_options.md) for current model options.
+
+---
+
+## Current state (updated 2026-05-03)
+
+| Layer | Status | Where |
+|---|---|---|
+| Cognitive substrate (Stage A→D) | ✅ shipped | PRs [#25](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/25) + [#26](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/26) |
+| Stage D ablation (mario + 2048) | ✅ complete | PR [#28](https://github.com/charleneleong-ai/orak-2025-starter-kit/pull/28) merged |
+| Per-game substrate configs locked | ✅ shipped | `gemma_stage_c.yaml` (2048), `gemma.yaml` Stage D (mario), `gemma_stage_a.yaml` (pokemon) |
+| `autoresearch-verdict` CLI | ✅ shipped v0.5.1 | [autoresearch#10](https://github.com/charleneleong-ai/autoresearch/pull/10) |
+| Eval-harness fixes | ✅ shipped | Reward hack + early-kill + obs-ambiguity fixed (PR #28) |
+| Phase 1 RFT (training) | ⏳ not started | needs `filter_top_k.py` |
+| Phase 2 GRPO | ⏳ not started | gated on Phase 1 |
+| Phase 3 self-improvement loop | ⏳ not started | gated on Phase 2 |
+
+---
+
+## Stage D results — verdicts locked
+
+Full data in [`macla_findings.md`](macla_findings.md) and PR #28.
+
+| Game | Stage A | Stage C (vmem) | Stage D (vmem+planner) | Verdict | Config |
+|---|---|---|---|---|---|
+| **2048** | 4.36 | **6.46** (+48%) | 5.00 (−23%) | Stage C wins | `gemma_stage_c.yaml` |
+| **mario** | 35.18 | 35.18 (0%) | **43.90** (+25%) | Stage D wins | `gemma.yaml` |
+| **pokemon** | **14.29** | 14.29 (pre-fix, n=1) | 0.00 | Stage A wins | `gemma_stage_a.yaml` |
+
+Key insight: **no single cross-game substrate configuration wins**. vmem helps 1 of 3 games,
+planner helps 1 of 3. Per-game routing is the correct framing.
+
+**Missing data point:** pokemon Stage C post-fix. The historical 14.29 used as Stage C baseline
+was collected before the warp-loop reward hack, early-kill, and obs-ambiguity fixes (PR #28).
+A post-fix Stage C run (2 episodes) is needed before deciding if vmem helps pokemon.
+
+---
+
+## Direction — two-track approach (updated with Stage D results)
+
+| Observation | Implication | Action |
+|---|---|---|
+| 2048 lifted +48% with vmem (4.36→6.46) | Cognitive layer landing; training likely to compound | 2048 is Phase 1 RFT target |
+| mario solved 100% via carry-over (PR #22) | Architecture was bottleneck, not model | Do not train mario — regression risk |
+| pokemon ceiling 14.29% post eval-harness fixes | Model-size or subgoal bottleneck | Test better base model before training |
+| Gemma 4 26B A4B exists (85.5% tau2-bench vs 57.5% E4B) | 28-point agentic jump, 13GB AWQ fits L4 | Run `harness_check` with 26B A4B before any training run |
+
+**Track A — training on Gemma 4 E4B:** Phase 1 RFT on 2048. Gate: +10% lift on at least one game.
+
+**Track B — model upgrade:** Swap to Gemma 4 26B A4B (AWQ) or Qwen3-VL-8B-FP8, re-baseline all games. Gate: +10% from base model swap alone.
+
+See [`vlm_options.md`](../../agentic-rl-research/vlm_options.md) for full model comparison, memory math, and vLLM serve commands.
+
+Tracks converge at the gate: if either passes, continue that track. If both fail, the bottleneck is MACLA architecture — improve reward shaping or state abstraction before more training.
+
+---
 
 ## What we have
 
-| Piece | Source | Status |
-|---|---|---|
-| ShareGPT-shaped trajectories | `agents/_harness/trajectory.py` (PR #25) | per-episode files in `game_logs/<game>/<run_id>/logs/trajectory_samples.jsonl` |
-| Per-step rewards | `agents/macla/online_evaluator.py` | shaped: position/score/lives for mario, score/max_tile/corner-anchor for 2048, score/flags/map-transitions for pokemon |
-| Episode scores | `evaluation_summary.json` per run | `evaluation_score` (0-100) |
-| Failure attribution | `failed_trajectories.jsonl` + `is_fallback` flag | clean episodes vs corrupted ones split automatically |
-| Eval harness | `experiments/autoresearch.py` | already runs the loop |
-| LoRA inference path | vLLM `--enable-lora` | not currently configured but supported |
-| Existing LoRA dir | `/workspace/gemma4_rl/gemma_4_lora` | empty placeholder |
+| Piece | Status |
+|---|---|
+| ShareGPT trajectories | `game_logs/<game>/<run_id>/logs/trajectory_samples.jsonl` per episode |
+| Per-step rewards | `RewardShaper` per game in `agents/macla/online_evaluator.py` |
+| Episode scores | `evaluation_score` (0–100) in `evaluation_summary.json` |
+| Failure attribution | `is_fallback` flag per step |
+| Eval harness | `experiments/autoresearch.py` (per-game triage thresholds fixed PR #28) |
+| GRPO + SFT trainers | `UnslothGRPOTrainer`, `UnslothSFTTrainer`, `UnslothDPOTrainer` compiled in `gemma4_rl/unsloth_compiled_cache/` |
+| `train.py` | Full GRPO CLI with Unsloth + TRL at `/workspace/gemma4_rl/train.py` |
+| LoRA adapter dir | `/workspace/gemma4_rl/gemma_4_lora/` — empty placeholder ready |
+| LoRA inference | vLLM `--enable-lora` supported but not yet in serving scripts |
 
-## What's missing
+## What's missing (priority order)
 
-| Piece | Effort | Blocker for |
+| Piece | Effort | Blocks |
 |---|---|---|
-| Trajectory filter (`filter_top_k.py`) | 1-2 hr | Phase 1 |
-| Unsloth SFT runner (filtered ShareGPT → LoRA) | 4-6 hr | Phase 1 |
-| `serving/gemma_serve.sh` w/ `--enable-lora` | 30 min | Phase 1 deploy |
-| GRPO trainer config (TRL or VeRL) | 1-2 days | Phase 2 |
-| Reward fn wiring (game score → numeric reward) | 2-4 hr | Phase 2 |
-| Self-improvement loop scheduler | 1 hr (cron) | Phase 3 |
-| Procedure → SFT data converter | 1 day | Phase 4 |
+| Post-fix pokemon Stage C baseline | 0 LOC, 2 episodes | pokemon DPO/KTO decision |
+| `experiments/training/filter_top_k.py` | ~50 LOC, no GPU | Phase 1 SFT, DPO, KTO |
+| `experiments/training/game_reward_fns.py` | ~100 LOC | Phase 2 GRPO (wraps `RewardShaper` → GRPO reward_funcs) |
+| `serving/gemma_serve.sh` with `--enable-lora` | ~10 LOC | Serving LoRA adapters in dev |
+
+See [`agentic_rl_pipeline.md`](../../agentic-rl-research/agentic_rl_pipeline.md) for full training loop and reward function wiring.
+
+---
 
 ## Phases
 
 ### Phase 1 — Rejection-sampling fine-tune (RFT)
 
-Filter `trajectory_samples.jsonl` to top-K% by `final_score` per game. LoRA-SFT Gemma 4 E4B on those via Unsloth.
+Filter `trajectory_samples.jsonl` top-K% by `final_score`. LoRA-SFT Gemma 4 E4B via Unsloth.
+Target game: **2048** (strongest signal from Stage C vmem lift).
 
-**Hyperparameters (starting point):**
-- LoRA rank: 16-32, alpha: 32, target modules: `["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]`
-- Sequence length: 4096
-- Batch size: 2 with gradient accumulation 8 (effective 16)
-- LR: 2e-4 cosine, warmup 5%
-- Epochs: 3
-- Optimizer: AdamW 8-bit (bitsandbytes)
-
-**Data sizing (rough):** 3 games × 50 episodes × 200 steps = 30K trajectory steps. After top-30% filter: ~9K steps × 4K tokens = **~36M tokens** to train on.
+Hyperparameters: LoRA rank 16–32, alpha 2×rank, seq_len 4096, batch 2 + grad_accum 8, LR 2e-4 cosine, 3 epochs, AdamW 8-bit.
+Data: ~9K filtered steps × 4K tokens ≈ **36M tokens** to train on.
 
 ### Phase 2 — GRPO with shaped rewards
 
-DeepSeek-R1's group-relative policy optimization. Sample N rollouts per checkpointed game state, normalize rewards within the group, no critic network.
-
-**Wiring:**
-- Reference model: base Gemma 4 E4B (frozen)
-- Policy: Phase 1 LoRA
-- N (group size): 8
-- Reward: `OnlineAgentEvaluator.evaluate_step` shaped reward + final score bonus
-- `is_fallback=True` steps → −1.0 reward (silent fallbacks become training signal)
-
-**Cost:** ~10-50× SFT cost for the same data — most of the wall-clock is rollouts via vLLM, not the gradient update.
+GRPO on 2048 with verifiable reward (score + corner-anchor + chain bonuses + fallback penalty −1.0).
+See [`agentic_rl_pipeline.md`](../../agentic-rl-research/agentic_rl_pipeline.md) for exact reward function wiring.
+Group size N=8, reference = base E4B frozen, policy = Phase 1 LoRA. Cost ~10–20× SFT.
 
 ### Phase 3 — Self-improvement loop
 
-Weekly cron: rollout → filter → SFT → redeploy. Curriculum: mario (highest historical baseline) → 2048 → pokemon. Track score trend across loops.
+Weekly cron: rollout → filter → SFT → redeploy. Curriculum: 2048 → pokemon → (mario only if regression).
 
-The autoresearch loop (`experiments/autoresearch.py`) is already 80% of this. What's needed: a wrapper script that runs `[autoresearch sweep, filter, SFT, deploy]` end-to-end.
+### Phase 4 — Procedure distillation (deferred)
 
-### Phase 4 — Procedure distillation
-
-Convert MACLA's `Procedure` objects to `(precondition_obs, action, postcondition_obs)` SFT triples, augment Phase 1 data. Goal: model internalizes procedures, MACLA selector can be ablated. Cleanest deployment: pure-LLM agent, no procedure runtime.
+Convert MACLA `Procedure` objects to SFT triples. Gated on Phase 2 success.
 
 ---
 
-## GPU options + wall-clock estimates
+## GPU options + cost
 
-Throughput numbers assume Gemma 4 E4B (~4B effective params), bf16 unless noted, Unsloth + LoRA rank 16. Numbers are rough — actual depends on seq len, batch, grad-checkpointing.
+Throughput assumes Gemma 4 E4B, BF16, Unsloth LoRA rank 16.
 
-| GPU | VRAM | SFT throughput | Phase 1 wall-clock (36M tokens × 3 ep) | GRPO viable? |
+| GPU | VRAM | SFT tok/s | Phase 1 (36M × 3ep) | GRPO viable? | $/hr | Phase 1 cost |
+|---|---|---|---|---|---|---|
+| A100 40GB (on-hand) | 40GB | ~12K | ~2.5hr | tight (N=4) | $0 | $0 |
+| A100 80GB | 80GB | ~14K | ~2hr | yes (N=8–16) | $1.60 | ~$2.40 |
+| H100 80GB FP8 | 80GB | ~30K | ~1hr | yes (N=16+) | $2.50 | ~$1.90 |
+
+GRPO multiplier: ~10–20× SFT wall-clock. H100 cheapest per cycle at scale.
+
+Operational rule: monthly → pause vLLM, train, redeploy ($0 extra); weekly → second GPU; daily → 80GB single node.
+
+---
+
+## Model upgrade path
+
+Run this **before** committing Phase 1 compute. See [`vlm_options.md`](../../agentic-rl-research/vlm_options.md).
+
+| Tier | Model | VRAM | tau2-bench | Recommended for |
 |---|---|---|---|---|
-| RTX 4090 | 24 GB | ~6K tok/s (QLoRA 4-bit) | ~5 hr | no — too tight for rollouts |
-| L40S 48 GB | 48 GB | ~10K tok/s | ~3 hr | marginal |
-| A100 40 GB | 40 GB | ~12K tok/s | ~2.5 hr | tight (N=4 rollouts max) |
-| A100 80 GB | 80 GB | ~14K tok/s | ~2 hr | yes (N=8-16) |
-| H100 80 GB (FP8) | 80 GB | ~30K tok/s | ~1 hr | yes (N=16+) |
-| H200 / H100 NVL | 96-141 GB | ~35K tok/s | ~50 min | yes, comfortable |
+| 1 (current) | Gemma 4 E4B | ~16GB | 57.5% | All baselines indexed here |
+| **2 (next)** | **Gemma 4 26B A4B (AWQ)** | **~13GB** | **85.5%** | **Run harness_check first** |
+| 3 | Qwen3-VL-8B-FP8 | ~8GB | GUI-focused | Most context headroom on L4 |
+| 4 | Qwen3-VL-32B (AWQ) | ~17GB | — | Best pure VLM quality |
+| 5 (future) | Qwen3.6-35B-A3B (4-bit) | ~17.5GB | MMMU 81.7 | Wait for vLLM vision API confirm |
 
-GRPO multiplier: ~10-20× SFT wall-clock for one full GRPO sweep (rollouts dominate).
+---
 
-## Cloud cost matrix
+## Next steps (updated 2026-05-03)
 
-Approximate **on-demand** rates from major cloud providers (RunPod / Lambda / Coreweave), April 2026. Spot is ~30-50% cheaper.
+| # | Step | Status | Effort |
+|---|---|---|---|
+| ~~1~~ | ~~Stage D verdict~~ | ✅ done | auto |
+| ~~2~~ | ~~Decide Stage D disposition~~ | ✅ done | PR #28 |
+| ~~3~~ | ~~Merge PR #28~~ | ✅ done | — |
+| **4** | **Run Track B: `harness_check` with Gemma 4 26B A4B AWQ** | ⏳ next | ~1hr, $0 |
+| 5 | Post-fix pokemon Stage C baseline (2 episodes) | ⏳ | ~30min |
+| 6 | Build `filter_top_k.py` | ⏳ gated on baseline | 1–2hr |
+| 7 | Build `game_reward_fns.py` | ⏳ gated on baseline | ~2hr |
+| 8 | Run Phase 1 RFT on A100-40GB | ⏳ gated on 6 | ~3hr, $0 |
+| 9 | Re-run autoresearch with LoRA | ⏳ gated on 8 | ~1hr |
+| 10 | Phase 1 gate decision (+10% rule) | ⏳ | 15min |
+| 11 | Phase 2 GRPO (if step 10 PASS) | ⏳ | ~$25–50 cloud spot |
+| 12 | Phase 3 self-improvement loop | ⏳ | 1 day setup |
 
-| GPU | $/hr (rough) | Phase 1 cost (one run) | Phase 2 cost (one GRPO sweep) | Total cycle |
-|---|---|---|---|---|
-| RTX 4090 (cloud) | $0.50 | $2.50 | not viable | $2.50 (SFT only) |
-| L40S 48 GB | $1.50 | $4.50 | ~$45 | ~$50 |
-| A100 40 GB | $1.20 | $3 | $25-50 (tight) | ~$30-55 |
-| A100 80 GB | $1.60 | $3.20 | $30-65 | ~$33-68 |
-| **H100 80 GB** | $2.50 | $2.50 | $20-50 | **~$22-52** |
+**Step 4 is the cheapest next action:** just swap the model in vLLM, run existing evals.
+Costs $0 and determines whether training is the right lever.
 
-**Surprising result:** H100 ends up cheapest per training cycle despite the higher hourly rate, because FP8 cuts wall-clock by ~3×.
+## Deferred
 
-### Self-improvement loop cost (Phase 3 — the recurring spend)
-
-If you do **weekly RFT loops** (Phase 1 only, no GRPO yet) for a quarter:
-
-| GPU | Cost per loop | Cost per quarter (12 loops) |
-|---|---|---|
-| RTX 4090 (cloud spot) | ~$1.50 | ~$18 |
-| A100 40 GB | ~$3 | ~$36 |
-| H100 80 GB | ~$2.50 | ~$30 |
-
-If you graduate to **monthly GRPO loops**:
-
-| GPU | Cost per loop | Cost per quarter (3 loops) |
-|---|---|---|
-| L40S 48 GB | ~$50 | ~$150 |
-| A100 80 GB | ~$65 | ~$195 |
-| H100 80 GB | ~$50 | ~$150 |
-
-These numbers assume cloud spot. On-prem amortized over a year is cheaper if utilization > 30%.
-
-## Operational note — vLLM coexistence
-
-The current A100-40GB is **fully occupied by vLLM serving** for autoresearch (model weights + KV cache). Training on the same GPU requires:
-
-1. **Pause autoresearch** → train → redeploy (the simple option, ~30 min downtime per loop)
-2. **Two-GPU split**: vLLM stays on A100-40GB, training happens on a second GPU (RTX 4090 / L40S). Cleanest workflow, no autoresearch downtime. Cost: +cheap-GPU hours per loop.
-3. **One 80GB GPU**: vLLM + Unsloth simultaneously in different CUDA contexts, no swapping. Most ergonomic but most expensive per hour.
-
-Recommendation depends on how often you retrain. Daily → option 3. Weekly → option 2. Monthly → option 1 fine.
-
-## Decision matrix
-
-| Goal | GPU | Why |
-|---|---|---|
-| Phase 1 only, prove it works | A100-40GB you already have, pause vLLM during SFT | $0 incremental |
-| Phase 1 weekly, autoresearch always-on | Add cheap RTX 4090 / L40S beside the A100 | ~$30/quarter |
-| Phase 2 + ongoing | Move whole stack to H100-80GB single node | Best $/throughput; ergonomic |
-| Just experimenting | Cloud H100-80GB spot for the weekend | ~$25 for one full Phase 1 + Phase 2 cycle |
-
-## Gating signal — does Phase 1 actually move scores?
-
-Don't upgrade GPUs until Phase 1 SFT shows a measurable lift. Concrete go/no-go:
-
-- Run Phase 1 on the existing A100-40GB (one weekend, autoresearch paused).
-- Re-run autoresearch with the LoRA adapter loaded.
-- **Pass:** mean score > Stage A baseline + 10% on at least one game.
-- **Fail:** treat as evidence Gemma 4 E4B is too small for this benchmark; consider upgrading the model (Gemma 8B, Qwen3 14B) before scaling training compute.
-
-If the model is the bottleneck, no amount of training compute helps — pick a bigger model first.
-
-## What I'd recommend doing next
-
-In order:
-
-1. **Finish the cross-game eval** on 2048/mario/pokemon (PR #26, in progress) — establishes the no-training-yet baseline.
-2. **Build `experiments/training/filter_top_k.py`** — 50 LOC, no GPU needed. Filters trajectories. Output stats: how many tokens, how many distinct games, score distribution.
-3. **Build `experiments/training/sft_unsloth.py`** — runs the actual SFT. ~150 LOC.
-4. **Run Phase 1 on A100-40GB** with autoresearch paused. Total cost: $0, ~3 hours of inference downtime.
-5. **Re-run autoresearch with the LoRA adapter loaded** — same configs, just `--lora` flag. Compare scores.
-6. **Decide on Phase 2 GPU upgrade** based on whether Phase 1 moved the needle.
-
-This keeps the spend at $0 incremental until we have evidence the approach works.
+| Option | Re-open trigger |
+|---|---|
+| Procedure distillation (Phase 4) | Phase 2 GRPO plateaus |
+| DPO/KTO on pokemon | Post-fix Stage C baseline exists |
+| RLHF value model | Phase 2 lands |
+| Qwen3.6-35B-A3B upgrade | Community confirms vLLM image input |
