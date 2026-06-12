@@ -193,12 +193,19 @@ class Subgoal:
     ``suggested_tools`` is a hint to the action LLM about which primitive
     tools are most useful for this subgoal (e.g. ``["move_to"]`` for
     NavigateToMap). Empty list means no constraint.
+
+    ``critical`` exempts the subgoal from the stagnation escape valve: a
+    milestone-gateway nav (e.g. ``NavigateToMap(ViridianMart)``, the M6
+    parcel gate) is the objective itself, so dropping it on stagnation just
+    strands the planner — there is no better goal to switch to. Critical
+    subgoals stay in the planner prompt past the threshold.
     """
 
     name: str
     description: str
     completion: Callable[[dict[str, Any]], bool]
     suggested_tools: list[str] = field(default_factory=list)
+    critical: bool = False
 
 
 # ── generic score-milestone helpers ─────────────────────────────────
@@ -295,8 +302,30 @@ def build_score_milestone_stack(
                     f"milestone {spec.name!r} declares requires_location="
                     f"{spec.requires_location!r} but no nav_factory was supplied"
                 )
-            stack.append(nav_factory(spec.requires_location))
+            bridge = nav_factory(spec.requires_location)
+            # The gateway nav IS the milestone objective — exempt it from the
+            # escape valve so stagnation can't strand the planner off the one
+            # map it must reach (M6's ViridianMart wall, baseline n=3 ceiling).
+            bridge.critical = True
+            stack.append(bridge)
     return [*stack, *(preamble or [])]
+
+
+def subgoal_survives_escape_valve(
+    subgoal: "Subgoal", stagnation_steps: int, threshold: int
+) -> bool:
+    """Whether an active subgoal stays in the planner prompt under stagnation.
+
+    The escape valve (Stage R F2) drops a subgoal once it has been stagnant
+    for ``threshold`` steps so the planner can break out of a trap. A
+    ``critical`` subgoal is exempt: it is the milestone gateway itself, so
+    dropping it strands the planner rather than freeing it.
+
+    The exemption is soft — a critical subgoal stays in the *prompt*, it does
+    not pin the planner to an action. A genuinely unreachable gateway is a
+    reflexion/episode-reset concern, not this per-step valve's.
+    """
+    return stagnation_steps < threshold or subgoal.critical
 
 
 @dataclass
