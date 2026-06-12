@@ -87,7 +87,10 @@ Per the original out-of-scope note ("If Stage J doesn't lift, Stage K becomes th
 | Stage K (PR #75, post-fix) | ~57.14% | cumulative cross-episode memory (FLAT) |
 | Stage L (PR #85) | 51.43% | map-aware procedure keys + iter-TTL (NEUTRAL+) |
 | Stage M (PR #86) | 51.43% | multi-signal procedure quality (FLAT — selector tuning a 4-proc cache) |
-| Stage N + O (PR #87) | TBD | bootstrap-neutral signals + broadened acquisition (pending n=5) |
+| Stage N + O (PR #87, merged 2026-05-16) | 51.43% | bootstrap-neutral signals + broadened acquisition (n=5 complete) |
+| Stage Q (PR #92, merged 2026-05-19) | — | exit-tile coords + perf-gated cache prune |
+| Stage R (PR #97, merged 2026-05-22) | — | subgoals + Reflexion + v3 soft+escape-valve planner |
+| Stage S (PRs #103/#104, merged 2026-05-22) | 71.43% (5/7), 85.71% (6/7) @ 1200 steps | `MilestoneSpec.requires_location` auto-bridge — chain past Viridian via M6/M7 |
 
 ## Mechanism — how thinking-mode integrates
 

@@ -152,7 +152,7 @@ If the model is the bottleneck, no amount of training compute helps — pick a b
 
 In order:
 
-1. **Finish the cross-game eval** on 2048/mario/pokemon (PR #26, in progress) — establishes the no-training-yet baseline.
+1. **Finish the cross-game eval** on 2048/mario/pokemon (PR #26, merged 2026-05-02; baselines extended through 2026-05-23 — see `docs/architecture.md` "Current work (MVA)" for the latest numbers) — establishes the no-training-yet baseline.
 2. **Build `experiments/training/filter_top_k.py`** — 50 LOC, no GPU needed. Filters trajectories. Output stats: how many tokens, how many distinct games, score distribution.
 3. **Build `experiments/training/sft_unsloth.py`** — runs the actual SFT. ~150 LOC.
 4. **Run Phase 1 on A100-40GB** with autoresearch paused. Total cost: $0, ~3 hours of inference downtime.
