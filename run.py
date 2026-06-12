@@ -41,6 +41,8 @@ class ExperimentConfigName(StrEnum):
     GEMMA_26B = "gemma_26b"
     GEMMA_26B_NO_PROCEDURES = "gemma_26b_no_procedures"
     QWEN35_A3B_INT4 = "qwen35_a3b_int4"
+    QWEN36_A3B_REASONING = "qwen36_a3b_reasoning"
+    QWEN36_CANARY_POKEMON = "qwen36_canary_pokemon"
     QWEN3_THINKING = "qwen3_thinking"
 
 

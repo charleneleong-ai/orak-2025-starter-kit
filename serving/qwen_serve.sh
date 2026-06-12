@@ -34,17 +34,33 @@
 set -euo pipefail
 
 MODEL="${1:-${QWEN_MODEL:-Qwen/Qwen3.5-35B-A3B-GPTQ-Int4}}"
+# Consume the model positional (if given) and forward any remaining args
+# verbatim to vLLM — lets callers pass e.g. --speculative-config for
+# n-gram speculative decoding without editing this script.
+[[ $# -gt 0 ]] && shift
+EXTRA_VLLM_ARGS=("$@")
 PORT="${QWEN_PORT:-8000}"
-GPU_UTIL="${QWEN_GPU_UTIL:-0.90}"
-MAX_MODEL_LEN="${QWEN_MAX_MODEL_LEN:-16384}"
 VENV="${QWEN_VENV:-/workspace/vllm-serve/.venv}"
 
-# Auto-enable Qwen reasoning parser for Thinking-mode variants so vLLM strips
-# <think>...</think> blocks server-side and returns them in `reasoning_content`
-# (the agent harness sees only the post-think tool-call output). Override
-# with QWEN_REASONING_PARSER=foo to force, or QWEN_REASONING_PARSER=' ' to disable.
+# Tighter defaults for Qwen3.6 — weights are 24.4 GB vs Qwen3.5's 17 GB, so the
+# KV-cache budget has to come down to keep headroom on an A100-40GB.
+if [[ "${MODEL,,}" == *"qwen3.6"* ]]; then
+    GPU_UTIL="${QWEN_GPU_UTIL:-0.85}"
+    MAX_MODEL_LEN="${QWEN_MAX_MODEL_LEN:-12288}"
+else
+    GPU_UTIL="${QWEN_GPU_UTIL:-0.90}"
+    MAX_MODEL_LEN="${QWEN_MAX_MODEL_LEN:-16384}"
+fi
+
+# Auto-enable Qwen reasoning parser for Thinking-mode variants AND Qwen3.6
+# (which ships reasoning on by default) so vLLM strips <think>...</think> blocks
+# server-side and returns them in `reasoning_content` (the agent harness sees
+# only the post-think tool-call output). Override with QWEN_REASONING_PARSER=foo
+# to force, or QWEN_REASONING_PARSER=' ' to disable.
 if [[ -z "${QWEN_REASONING_PARSER+x}" ]]; then
-    if [[ "${MODEL,,}" == *"thinking"* ]]; then
+    if [[ "${MODEL,,}" == *"thinking"* ]] || \
+       [[ "${MODEL,,}" == *"qwen3.6"* ]] || \
+       [[ "${MODEL,,}" == *"reasoning"* ]]; then
         QWEN_REASONING_PARSER="qwen3"
     else
         QWEN_REASONING_PARSER=""
@@ -104,4 +120,5 @@ exec "${VENV}/bin/python" -m vllm.entrypoints.openai.api_server \
     --enable-auto-tool-choice \
     --tool-call-parser hermes \
     --dtype auto \
-    "${reasoning_args[@]}"
+    "${reasoning_args[@]}" \
+    "${EXTRA_VLLM_ARGS[@]}"

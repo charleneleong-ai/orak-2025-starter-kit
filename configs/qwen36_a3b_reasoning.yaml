@@ -1,0 +1,52 @@
+# @package _global_
+#
+# Qwen 3.6 35B-A3B (Reasoning) GPTQ-Int4 — cross-game n=3 ceiling check.
+#
+# Successor scenario to qwen35_a3b_int4.yaml. Same MoE family (35B total /
+# 3B active params, INT4 quant native to A100), different lineage —
+# Qwen3.6 launched April 2026 with built-in reasoning mode. Artificial
+# Analysis Intelligence Index 31 (Qwen3.5 non-reasoning) → 43 (Qwen3.6
+# reasoning), +12pp drop-in upgrade.
+#
+# Routes all 4 games to qwen36 (vs qwen35 scenario which routed only
+# pokemon + starcraft and parked mario/2048 on gemma_26b). The cross-game
+# n=3 sweep uses --games to subset, so per-game agent configs must exist
+# for every game.
+#
+# Quantization note: no official Qwen GPTQ-Int4. Using community quant
+# palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4 (24.4 GB, GPTQ success rate
+# 97.42%, perplexity 6.18 ≈ 97.9% of BF16). The NVIDIA NVFP4 variant
+# needs Hopper+ FP4 compute (won't run on A100). AWQ-Int4 is also
+# community.
+#
+# Serve:  ./serving/qwen_serve.sh palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4
+# Launch: ./experiments/qwen36_cross_game_n3/run_sweep.sh
+
+ENV: ${oc.env:ENV, "dev"}
+CWD: ${hydra:runtime.cwd}
+LOG_LEVEL: ${oc.env:LOG_LEVEL, "DEBUG"}
+
+defaults:
+  - twenty_fourty_eight: base
+  - super_mario: base
+  - pokemon_red: base
+  - star_craft: base
+  - override twenty_fourty_eight/agent: qwen36_a3b_reasoning
+  - override super_mario/agent: qwen36_a3b_reasoning
+  - override pokemon_red/agent: qwen36_a3b_reasoning
+  - override star_craft/agent: qwen36_a3b_reasoning
+  - override star_craft/env: linux_default
+  - _self_
+
+pokemon_red:
+  wandb:
+    tags: ["qwen", "qwen3.6-35b-a3b-reasoning", "pokemon_red", "cross_game_n3", "stage_d_planner"]
+super_mario:
+  wandb:
+    tags: ["qwen", "qwen3.6-35b-a3b-reasoning", "super_mario", "cross_game_n3", "stage_d_planner"]
+twenty_fourty_eight:
+  wandb:
+    tags: ["qwen", "qwen3.6-35b-a3b-reasoning", "twenty_fourty_eight", "cross_game_n3", "stage_d_planner"]
+star_craft:
+  wandb:
+    tags: ["qwen", "qwen3.6-35b-a3b-reasoning", "star_craft", "cross_game_n3", "stage_d_planner"]

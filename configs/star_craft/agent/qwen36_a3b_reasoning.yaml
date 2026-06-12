@@ -1,0 +1,23 @@
+# Qwen 3.6 35B-A3B-GPTQ-Int4 (Reasoning mode) for StarCraft II — A100-40GB.
+# Mirror of pokemon_red/qwen36_a3b_reasoning.yaml. Vision OFF — the SC2
+# adapter feeds structured unit/resource text from pysc2.
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: false
+max_tokens: 8192
+max_model_len: 12288
+game_config_path: "star_craft"
+track: "TRACK1"
+use_vector_memory: true
+vector_memory_max: 100
+vector_memory_top_k: 3
+vector_memory_threshold: 0.5
+vector_memory_use_mmr: true
+vector_memory_mmr_lambda: 0.5
+vector_memory_decay_alpha: 0.5
+vector_memory_decay_window: 20
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600
