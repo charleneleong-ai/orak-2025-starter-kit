@@ -1,0 +1,33 @@
+# Qwen 3.6 35B-A3B-GPTQ-Int4 (Reasoning mode) for Pokemon Red — A100-40GB.
+# Successor to qwen35_a3b_int4.yaml. Same MoE shape (35B total / 3B active),
+# Qwen3.6 lineage with built-in <think> reasoning blocks stripped server-side
+# by vLLM's qwen3 reasoning parser (see serving/qwen_serve.sh).
+#
+# max_tokens bumped 4096 → 8192 to accommodate reasoning chain output.
+# max_model_len trimmed 16384 → 12288 to balance KV-cache against larger
+# 24.4 GB weights (vs Qwen3.5's 17 GB).
+class_name: "agents.macla.unified.UnifiedMaclaAgent"
+model: "palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4"
+temperature: 0.7
+server_type: "vllm"
+supports_vision: false
+# Bumped 8192 -> 10240: Qwen3.6's reasoning chain was hitting the 8192 cap
+# before emitting an action, so the parser fell back to pressing A on 97% of
+# pokemon steps (Method: fallback "length limit reached"). max_model_len 16384
+# is the memory ceiling on the A100-40GB (24.4 GB weights + ~15 GB KV @ util
+# 0.90), leaving ~6k prompt budget over the 10240 completion.
+max_tokens: 10240
+max_model_len: 16384
+game_config_path: "pokemon_red"
+track: "TRACK1"
+use_vector_memory: true
+vector_memory_max: 100
+vector_memory_top_k: 3
+vector_memory_threshold: 0.5
+vector_memory_use_mmr: true
+vector_memory_mmr_lambda: 0.5
+vector_memory_decay_alpha: 0.5
+vector_memory_decay_window: 20
+use_subtask_planning: true
+subtask_replan_every: 5
+subtask_observation_chars: 600

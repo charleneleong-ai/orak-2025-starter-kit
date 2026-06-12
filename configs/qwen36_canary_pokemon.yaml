@@ -1,0 +1,24 @@
+# @package _global_
+#
+# Pokemon-only canary scenario for Qwen 3.6 35B-A3B-Reasoning. Short
+# (max_steps=50) one-game run to verify the model swap works before
+# committing to the full multi-hour cross-game n=3 sweep:
+#   - vLLM loads palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4 on A100-40GB
+#   - qwen3 reasoning parser strips <think> blocks cleanly
+#   - step latency is in the same ballpark as Qwen3.5 (target <30s/step)
+#   - no thread leak (weave fixes c5222e9 + b590844 hold)
+#   - VRAM headroom remains positive across the 50-step warmup
+#
+# Launch:
+#   ./serving/qwen_serve.sh palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4   # in another shell
+#   python run.py -c qwen36_canary_pokemon --local --games pokemon_red
+
+defaults:
+  - qwen36_a3b_reasoning
+  - _self_
+
+pokemon_red:
+  env:
+    max_steps: 50
+  wandb:
+    tags: ["qwen", "qwen3.6-35b-a3b-reasoning", "pokemon_red", "canary"]
