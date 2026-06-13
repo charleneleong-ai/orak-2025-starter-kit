@@ -111,6 +111,19 @@ if [[ -n "${QWEN_REASONING_PARSER// }" ]]; then
     echo "[serve] reasoning parser: ${QWEN_REASONING_PARSER}"
 fi
 
+# Prefix caching (vLLM's equivalent of SGLang RadixAttention) reuses KV cache
+# across requests sharing a prefix — the dominant lever for agentic eval, where
+# every step re-sends a long near-identical prompt and parallel rollouts share a
+# system prefix. OFF by default to preserve the historical baseline; set
+# QWEN_PREFIX_CACHING=1 for the cache-on arm of the canary A/B
+# (experiments/sglang_vs_vllm_ab/README.md). vLLM's v1 engine may default it on
+# depending on version — this makes the choice explicit.
+prefix_cache_args=()
+if [[ "${QWEN_PREFIX_CACHING:-0}" == "1" ]]; then
+    prefix_cache_args=(--enable-prefix-caching)
+    echo "[serve] prefix caching: enabled"
+fi
+
 exec "${VENV}/bin/python" -m vllm.entrypoints.openai.api_server \
     --model "${MODEL}" \
     --port "${PORT}" \
@@ -121,4 +134,5 @@ exec "${VENV}/bin/python" -m vllm.entrypoints.openai.api_server \
     --tool-call-parser hermes \
     --dtype auto \
     "${reasoning_args[@]}" \
+    "${prefix_cache_args[@]}" \
     "${EXTRA_VLLM_ARGS[@]}"
