@@ -85,6 +85,24 @@ local-mac = [
 local-gpu = [
     "vllm>=0.6.0; sys_platform == 'linux'",
 ]
+# GSPO offline training. Install when ready to run the gradient loop in
+# experiments/gspo/train.py — kept out of the base resolution so the
+# base install stays light and sweep daemons aren't disturbed by
+# accidental uv sync drift.
+#   uv sync --extra gspo-training
+#
+# Stack: unsloth wraps bitsandbytes + peft + accelerate with custom
+# Triton kernels (~2x faster training, ~50% less VRAM than vanilla
+# HF+peft+bnb, supports Gemma-4 MoE). trl provides reference GRPO/GSPO
+# config defaults; our train.py uses a custom torch loop on top of
+# Unsloth's FastLanguageModel so we can compute pi_old logprobs via
+# peft.disable_adapters() instead of going through trl's online
+# generation path.
+gspo-training = [
+    "unsloth>=2024.12.0",
+    "trl>=0.20.0",
+    "datasets>=3.0.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["agents", "config", "evaluation_utils"]
